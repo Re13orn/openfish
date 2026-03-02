@@ -1,0 +1,80 @@
+version: 1
+
+defaults:
+  reply_language: zh-CN
+  risk_mode: conservative
+  codex_bin: codex
+  approval_policy:
+    require_for:
+      - destructive_file_operations
+      - broad_refactors
+      - commands_outside_test_flow
+      - dependency_changes
+    allow_without_approval:
+      - read_only_analysis
+      - git_status
+      - git_diff
+      - test_commands
+
+projects:
+  myapp:
+    name: myapp
+    path: /Users/you/work/myapp
+    default_branch: main
+    test_command: pnpm test
+    dev_command: pnpm dev
+    allowed_directories:
+      - /Users/you/work/myapp
+    description: Main web application used for day-to-day development.
+    stack:
+      - TypeScript
+      - Next.js
+      - PostgreSQL
+    tags:
+      - frontend
+      - primary
+    notes:
+      - Prefer minimal changes.
+      - Run targeted tests before broader test suites.
+    memory_seed:
+      summary: |
+        Main user-facing web app. Authentication, dashboard, and settings live here.
+      architecture_notes:
+        - src/app contains route entry points.
+        - src/server contains backend integration code.
+        - auth logic is spread across middleware and server actions.
+    codex:
+      profile: default
+      sandbox_mode: workspace-write
+      ask_for_approval: on-request
+      additional_allowed_directories: []
+
+  backend-api:
+    name: backend-api
+    path: /Users/you/work/backend-api
+    default_branch: main
+    test_command: pytest -q
+    dev_command: uvicorn app.main:app --reload
+    allowed_directories:
+      - /Users/you/work/backend-api
+    description: Internal API service for background jobs and auth support.
+    stack:
+      - Python
+      - FastAPI
+      - SQLAlchemy
+    tags:
+      - backend
+    notes:
+      - Migrations are sensitive; require approval before applying schema changes.
+    memory_seed:
+      summary: |
+        Backend API service. Most incident work is related to auth, queue consumers, or DB access.
+      architecture_notes:
+        - app/api contains route handlers.
+        - app/services contains domain logic.
+        - app/db contains persistence and migrations.
+    codex:
+      profile: default
+      sandbox_mode: workspace-write
+      ask_for_approval: on-request
+      additional_allowed_directories: []

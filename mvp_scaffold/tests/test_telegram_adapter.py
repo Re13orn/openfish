@@ -1,0 +1,69 @@
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+pytest.importorskip("telegram")
+from telegram.error import TelegramError, TimedOut
+
+from src.telegram_adapter import TelegramBotService
+
+
+class RouterStub:
+    pass
+
+
+class MessageStub:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.sent_texts: list[str] = []
+
+    async def reply_text(self, text: str):
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        self.sent_texts.append(text)
+        return outcome
+
+
+def _service() -> TelegramBotService:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    return TelegramBotService(config=config, router=RouterStub())
+
+
+def test_safe_reply_success() -> None:
+    service = _service()
+    message = MessageStub([object()])
+
+    ok = asyncio.run(service._safe_reply_text(message, "hello", context="test"))
+
+    assert ok is True
+    assert message.sent_texts == ["hello"]
+
+
+def test_safe_reply_retries_after_timeout(monkeypatch) -> None:
+    service = _service()
+    message = MessageStub([TimedOut(), object()])
+
+    async def _no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("src.telegram_adapter.asyncio.sleep", _no_sleep)
+    ok = asyncio.run(service._safe_reply_text(message, "hello", context="test"))
+
+    assert ok is True
+    assert message.sent_texts == ["hello"]
+
+
+def test_safe_reply_returns_false_on_telegram_error() -> None:
+    service = _service()
+    message = MessageStub([TelegramError("bad request")])
+
+    ok = asyncio.run(service._safe_reply_text(message, "hello", context="test"))
+
+    assert ok is False
+    assert message.sent_texts == []

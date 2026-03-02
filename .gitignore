@@ -1,0 +1,26 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local runtime data
+mvp_scaffold/.venv/
+mvp_scaffold/data/
+mvp_scaffold/projects.yaml
+
+# Build / artifacts
+*.zip

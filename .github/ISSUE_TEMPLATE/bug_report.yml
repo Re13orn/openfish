@@ -1,0 +1,49 @@
+name: Bug Report
+description: Report a reproducible problem.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please include enough detail to reproduce it.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+      placeholder: Brief description of the issue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction Steps
+      description: Exact steps to reproduce.
+      placeholder: |
+        1. Run ...
+        2. Send Telegram command ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Screenshots
+      description: Redact secrets before pasting.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / Commit
+      placeholder: e.g. v0.1.0 or commit SHA

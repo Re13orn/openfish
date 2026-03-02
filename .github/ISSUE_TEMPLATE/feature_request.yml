@@ -1,0 +1,36 @@
+name: Feature Request
+description: Suggest an improvement.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please keep proposals aligned with OpenFish principles: single-user, local-first, conservative by default.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What pain point are you trying to solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: What should be added or changed?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope Impact
+      description: Note if this introduces multi-user, cloud-only, or plugin-platform behavior.

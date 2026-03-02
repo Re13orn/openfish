@@ -1,0 +1,74 @@
+"""Canonical audit event codes."""
+
+PROJECT_SELECTED = "project.selected"
+TASK_CREATED = "task.created"
+TASK_STARTED = "task.started"
+TASK_WAITING_APPROVAL = "task.waiting_approval"
+TASK_APPROVAL_RESUMED = "task.approval_resumed"
+TASK_COMPLETED = "task.completed"
+TASK_FAILED = "task.failed"
+TASK_CANCELLED = "task.cancelled"
+TASK_REJECTED = "task.rejected"
+TASK_UNKNOWN_EVENT = "task.unknown_event"
+TASK_LAST_VIEWED = "task.last_viewed"
+TASK_RETRIED = "task.retried"
+
+APPROVAL_REQUESTED = "approval.requested"
+APPROVAL_GRANTED = "approval.granted"
+APPROVAL_REJECTED = "approval.rejected"
+
+MEMORY_VIEWED = "memory.viewed"
+NOTE_ADDED = "memory.note_added"
+DIFF_VIEWED = "repo.diff_viewed"
+UPLOAD_RECEIVED = "upload.received"
+UPLOAD_REJECTED = "upload.rejected"
+UPLOAD_POLICY_VIEWED = "upload.policy_viewed"
+START_VIEWED = "ui.start_viewed"
+TASK_QUEUE_BLOCKED = "task.queue_blocked"
+TEMPLATES_VIEWED = "template.viewed"
+TEMPLATE_RUN = "template.run"
+
+UNKNOWN_EVENT = "system.unknown_event"
+
+
+ALL_EVENTS = {
+    PROJECT_SELECTED,
+    TASK_CREATED,
+    TASK_STARTED,
+    TASK_WAITING_APPROVAL,
+    TASK_APPROVAL_RESUMED,
+    TASK_COMPLETED,
+    TASK_FAILED,
+    TASK_CANCELLED,
+    TASK_REJECTED,
+    TASK_UNKNOWN_EVENT,
+    TASK_LAST_VIEWED,
+    TASK_RETRIED,
+    APPROVAL_REQUESTED,
+    APPROVAL_GRANTED,
+    APPROVAL_REJECTED,
+    MEMORY_VIEWED,
+    NOTE_ADDED,
+    DIFF_VIEWED,
+    UPLOAD_RECEIVED,
+    UPLOAD_REJECTED,
+    UPLOAD_POLICY_VIEWED,
+    START_VIEWED,
+    TASK_QUEUE_BLOCKED,
+    TEMPLATES_VIEWED,
+    TEMPLATE_RUN,
+    UNKNOWN_EVENT,
+}
+
+TASK_EVENT_TYPES = {
+    TASK_CREATED,
+    TASK_STARTED,
+    TASK_WAITING_APPROVAL,
+    TASK_APPROVAL_RESUMED,
+    TASK_COMPLETED,
+    TASK_FAILED,
+    TASK_CANCELLED,
+    TASK_REJECTED,
+    TASK_UNKNOWN_EVENT,
+    APPROVAL_REQUESTED,
+}

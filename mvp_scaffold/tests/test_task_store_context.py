@@ -1,0 +1,107 @@
+from pathlib import Path
+
+from src.db import Database
+from src.models import CommandContext
+from src.task_store import TaskStore
+
+
+def _setup_store(tmp_path: Path) -> tuple[Database, TaskStore]:
+    repo_root = Path(__file__).resolve().parents[2]
+    schema_path = repo_root / "schema.sql"
+    migrations_dir = repo_root / "mvp_scaffold" / "migrations"
+    db_path = tmp_path / "app.db"
+
+    db = Database(path=db_path, schema_path=schema_path, migrations_dir=migrations_dir)
+    db.connect()
+    db.initialize_schema()
+
+    conn = db.get_connection()
+    conn.execute(
+        """
+        INSERT INTO projects (project_key, name, path)
+        VALUES ('p1', 'Project 1', '/tmp')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO projects (project_key, name, path)
+        VALUES ('p2', 'Project 2', '/tmp')
+        """
+    )
+    for key in ("p1", "p2"):
+        row = conn.execute("SELECT id FROM projects WHERE project_key = ?", (key,)).fetchone()
+        assert row is not None
+        conn.execute("INSERT INTO project_state (project_id) VALUES (?)", (int(row["id"]),))
+    conn.commit()
+
+    return db, TaskStore(db)
+
+
+def test_chat_context_active_project_overrides_user_default(tmp_path: Path) -> None:
+    db, store = _setup_store(tmp_path)
+    user = store.ensure_user(
+        CommandContext(
+            telegram_user_id="123",
+            telegram_chat_id="chat-default",
+            telegram_message_id="1",
+            text="/use p1",
+        )
+    )
+
+    store.set_active_project(user.id, "p1")
+    db.get_connection().execute(
+        """
+        INSERT INTO chat_context (telegram_chat_id, user_id, active_project_key)
+        VALUES ('chat-1', ?, 'p2')
+        """,
+        (user.id,),
+    )
+    db.get_connection().commit()
+
+    assert store.get_active_project_key(user.id, "chat-1") == "p2"
+    assert store.get_active_project_key(user.id, "chat-2") == "p1"
+
+
+def test_cancel_waiting_approval_resolves_pending_approval(tmp_path: Path) -> None:
+    db, store = _setup_store(tmp_path)
+    user = store.ensure_user(
+        CommandContext(
+            telegram_user_id="123",
+            telegram_chat_id="chat-default",
+            telegram_message_id="1",
+            text="/do something",
+        )
+    )
+    project_id = store.get_project_id("p1")
+    task_id = store.create_task(
+        user_id=user.id,
+        project_id=project_id,
+        chat_id="chat-default",
+        message_id="2",
+        command_type="do",
+        original_request="dangerous op",
+    )
+    store.mark_task_waiting_approval(
+        task_id=task_id,
+        summary="等待审批",
+        pending_action="需要审批",
+        codex_session_id="sess-1",
+    )
+    approval_id = store.create_approval_request(
+        task_id=task_id,
+        requested_action="需要审批",
+        requested_by_user_id=user.id,
+    )
+
+    cancelled = store.cancel_latest_active_task(project_id)
+    assert cancelled is not None
+    assert cancelled.status == "cancelled"
+
+    row = db.get_connection().execute(
+        "SELECT status, decision_note, decided_at FROM approvals WHERE id = ?",
+        (approval_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["status"] == "cancelled"
+    assert row["decision_note"] == "Cancelled by user"
+    assert row["decided_at"] is not None

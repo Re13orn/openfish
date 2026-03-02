@@ -1,0 +1,1 @@
+"""OpenFish assistant package."""
