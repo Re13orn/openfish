@@ -79,6 +79,8 @@ Supported commands:
 - `/do <task>`
 - `/templates`
 - `/run <template> [extra]`
+- `/skills`
+- `/skill-install <source>`
 - `/last`
 - `/retry [extra]`
 - `/status`

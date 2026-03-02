@@ -27,6 +27,10 @@ START_VIEWED = "ui.start_viewed"
 TASK_QUEUE_BLOCKED = "task.queue_blocked"
 TEMPLATES_VIEWED = "template.viewed"
 TEMPLATE_RUN = "template.run"
+SKILLS_VIEWED = "skill.viewed"
+SKILL_INSTALL_REQUESTED = "skill.install_requested"
+SKILL_INSTALLED = "skill.installed"
+SKILL_INSTALL_FAILED = "skill.install_failed"
 
 UNKNOWN_EVENT = "system.unknown_event"
 
@@ -57,6 +61,10 @@ ALL_EVENTS = {
     TASK_QUEUE_BLOCKED,
     TEMPLATES_VIEWED,
     TEMPLATE_RUN,
+    SKILLS_VIEWED,
+    SKILL_INSTALL_REQUESTED,
+    SKILL_INSTALLED,
+    SKILL_INSTALL_FAILED,
     UNKNOWN_EVENT,
 }
 

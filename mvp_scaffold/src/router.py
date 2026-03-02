@@ -18,6 +18,8 @@ from src.formatters import (
     format_memory,
     format_project_busy,
     format_projects,
+    format_skill_install_result,
+    format_skills_list,
     format_start,
     format_status,
     format_templates,
@@ -30,6 +32,7 @@ from src.project_registry import ProjectRegistry
 from src.redaction import redact_text
 from src.repo_inspector import RepoInspector
 from src.security_guard import has_symlink_in_path, is_sensitive_file_name
+from src.skills_service import SkillsService
 from src.task_templates import BUILTIN_TEMPLATES
 from src.task_store import TaskStore
 
@@ -63,6 +66,7 @@ class CommandRouter:
         codex,
         repo: RepoInspector,
         approvals: ApprovalService,
+        skills_service: SkillsService | None = None,
     ) -> None:
         self.config = config
         self.projects = projects
@@ -71,6 +75,7 @@ class CommandRouter:
         self.codex = codex
         self.repo = repo
         self.approvals = approvals
+        self.skills_service = skills_service
         self._project_locks: dict[int, LockType] = {}
         self._project_locks_guard = Lock()
 
@@ -96,6 +101,10 @@ class CommandRouter:
             return self._handle_templates(ctx)
         if command == "/run":
             return self._handle_run_template(ctx, argument)
+        if command == "/skills":
+            return self._handle_skills(ctx)
+        if command == "/skill-install":
+            return self._handle_skill_install(ctx, argument)
         if command == "/use":
             return self._handle_use(ctx, argument)
         if command == "/last":
@@ -355,6 +364,67 @@ class CommandRouter:
             request_text=request_text,
             run_mode=run_mode,
             next_step=next_step,
+        )
+
+    def _handle_skills(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.skills_service is None:
+            return CommandResult("当前未启用 skills 功能。")
+
+        listed = self.skills_service.list_skills()
+        self.audit.log(
+            action=audit_events.SKILLS_VIEWED,
+            message="用户查看已安装 skills",
+            user_id=user.id,
+            details={
+                "skills_root": str(listed.skills_root),
+                "visible_count": listed.total_count,
+                "hidden_count": listed.hidden_count,
+            },
+        )
+        return CommandResult(
+            format_skills_list(
+                skills_root=str(listed.skills_root),
+                skills=listed.skills,
+                total_count=listed.total_count,
+                hidden_count=listed.hidden_count,
+                omitted_count=listed.omitted_count,
+            )
+        )
+
+    def _handle_skill_install(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.skills_service is None:
+            return CommandResult("当前未启用 skills 功能。")
+        if not argument:
+            return CommandResult("用法: /skill-install <source>")
+
+        source = argument.strip()
+        self.audit.log(
+            action=audit_events.SKILL_INSTALL_REQUESTED,
+            message=f"请求安装 skill: {source}",
+            user_id=user.id,
+            details={"source": source[:200]},
+        )
+        result = self.skills_service.install_skill(source)
+        self.audit.log(
+            action=audit_events.SKILL_INSTALLED if result.ok else audit_events.SKILL_INSTALL_FAILED,
+            message=f"skill 安装结果: {'成功' if result.ok else '失败'}",
+            severity="info" if result.ok else "warning",
+            user_id=user.id,
+            details={
+                "source": result.source[:200],
+                "summary": result.summary[:250],
+                "command": result.command,
+            },
+        )
+        return CommandResult(
+            format_skill_install_result(
+                source=result.source,
+                ok=result.ok,
+                summary=result.summary,
+                command=result.command,
+            )
         )
 
     def _handle_use(self, ctx: CommandContext, project_key: str) -> CommandResult:

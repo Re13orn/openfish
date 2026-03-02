@@ -19,3 +19,10 @@ def test_progress_ack_for_retry() -> None:
     text = reporter.ack_text("/retry")
     assert text is not None
     assert "读取最近任务" in text
+
+
+def test_progress_ack_for_skill_install() -> None:
+    reporter = ProgressReporter()
+    text = reporter.ack_text("/skill-install")
+    assert text is not None
+    assert "安装 Skill" in text

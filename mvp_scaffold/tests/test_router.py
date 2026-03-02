@@ -7,6 +7,7 @@ from src.codex_runner import CodexRunResult
 from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
 from src.repo_inspector import RepoState
 from src.router import CommandRouter
+from src.skills_service import SkillInstallResult, SkillsListResult
 from src.task_store import PendingApprovalRecord, TaskRecord
 
 
@@ -291,7 +292,39 @@ class TasksStub:
         )
 
 
-def _build_router(tasks: TasksStub, audit: AuditStub, codex: CodexStub) -> CommandRouter:
+class SkillsStub:
+    def __init__(self) -> None:
+        self.listed = SkillsListResult(
+            skills_root=Path("/tmp/.codex/skills"),
+            skills=["android-pentest", "ios-pentest"],
+            total_count=2,
+            hidden_count=1,
+            omitted_count=0,
+        )
+        self.install_result = SkillInstallResult(
+            ok=True,
+            source="openfish/skills/sample",
+            summary="Skill 安装成功。",
+            stdout="ok",
+            stderr="",
+            command=["codex", "skills", "install", "openfish/skills/sample"],
+        )
+
+    def list_skills(self, *, limit: int = 30) -> SkillsListResult:
+        _ = limit
+        return self.listed
+
+    def install_skill(self, source: str) -> SkillInstallResult:
+        self.install_result.source = source
+        return self.install_result
+
+
+def _build_router(
+    tasks: TasksStub,
+    audit: AuditStub,
+    codex: CodexStub,
+    skills: SkillsStub | None = None,
+) -> CommandRouter:
     config = SimpleNamespace(
         allowed_telegram_user_ids={"123"},
         enable_document_upload=True,
@@ -307,6 +340,7 @@ def _build_router(tasks: TasksStub, audit: AuditStub, codex: CodexStub) -> Comma
         codex=codex,
         repo=RepoStub(),
         approvals=ApprovalService(),
+        skills_service=skills,
     )
 
 
@@ -532,3 +566,43 @@ def test_queue_busy_returns_hint() -> None:
     assert "已有任务在执行中" in result.reply_text
     codes = [event[0] for event in audit.events]
     assert audit_events.TASK_QUEUE_BLOCKED in codes
+
+
+def test_skills_lists_installed_entries() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    skills = SkillsStub()
+    router = _build_router(tasks, audit, codex, skills=skills)
+
+    result = router.handle(_ctx("/skills"))
+
+    assert "android-pentest" in result.reply_text
+    codes = [event[0] for event in audit.events]
+    assert audit_events.SKILLS_VIEWED in codes
+
+
+def test_skill_install_success() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    skills = SkillsStub()
+    router = _build_router(tasks, audit, codex, skills=skills)
+
+    result = router.handle(_ctx("/skill-install openfish/skills/sample"))
+
+    assert "Skill 安装: 成功" in result.reply_text
+    codes = [event[0] for event in audit.events]
+    assert audit_events.SKILL_INSTALL_REQUESTED in codes
+    assert audit_events.SKILL_INSTALLED in codes
+
+
+def test_skill_install_without_argument() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex, skills=SkillsStub())
+
+    result = router.handle(_ctx("/skill-install"))
+
+    assert "用法: /skill-install <source>" in result.reply_text

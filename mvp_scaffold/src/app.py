@@ -11,6 +11,7 @@ from src.db import Database
 from src.project_registry import ProjectRegistry
 from src.repo_inspector import RepoInspector
 from src.router import CommandRouter
+from src.skills_service import SkillsService
 from src.task_store import TaskStore
 from src.telegram_adapter import TelegramBotService
 
@@ -29,6 +30,12 @@ class Application:
         self.audit = AuditLogger(self.db)
         self.approvals = ApprovalService()
         self.codex = CodexRunner(config)
+        self.skills = SkillsService(
+            codex_bin=config.codex_bin,
+            skills_root=config.codex_home / "skills",
+            enable_install=config.enable_skill_install,
+            timeout_seconds=config.skill_install_timeout_seconds,
+        )
         self.repo = RepoInspector()
         self.router = CommandRouter(
             config=config,
@@ -38,6 +45,7 @@ class Application:
             codex=self.codex,
             repo=self.repo,
             approvals=self.approvals,
+            skills_service=self.skills,
         )
         self.bot = TelegramBotService(config=config, router=self.router)
 

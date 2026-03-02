@@ -31,6 +31,9 @@ class AppConfig:
     codex_default_sandbox_mode: str
     codex_default_approval_mode: str
     codex_command_timeout_seconds: int
+    codex_home: Path
+    enable_skill_install: bool
+    skill_install_timeout_seconds: int
     poll_interval_seconds: int
     max_telegram_message_length: int
     enable_document_upload: bool
@@ -67,6 +70,9 @@ def load_config() -> AppConfig:
         codex_default_sandbox_mode=os.getenv("CODEX_DEFAULT_SANDBOX_MODE", "workspace-write"),
         codex_default_approval_mode=os.getenv("CODEX_DEFAULT_APPROVAL_MODE", "on-request"),
         codex_command_timeout_seconds=int(os.getenv("CODEX_COMMAND_TIMEOUT_SECONDS", "1800")),
+        codex_home=Path(os.path.expanduser(os.getenv("CODEX_HOME", "~/.codex"))),
+        enable_skill_install=_parse_bool(os.getenv("ENABLE_SKILL_INSTALL"), default=True),
+        skill_install_timeout_seconds=int(os.getenv("SKILL_INSTALL_TIMEOUT_SECONDS", "600")),
         poll_interval_seconds=int(os.getenv("TELEGRAM_POLL_INTERVAL_SECONDS", "2")),
         max_telegram_message_length=int(os.getenv("MAX_TELEGRAM_MESSAGE_LENGTH", "3500")),
         enable_document_upload=_parse_bool(os.getenv("ENABLE_DOCUMENT_UPLOAD"), default=True),

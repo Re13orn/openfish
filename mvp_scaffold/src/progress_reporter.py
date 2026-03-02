@@ -8,6 +8,7 @@ class ProgressReporter:
         "/do": ["校验项目", "启动 Codex", "汇总结果"],
         "/ask": ["校验项目", "加载上下文", "启动 Codex"],
         "/run": ["加载模板", "校验项目", "启动 Codex"],
+        "/skill-install": ["校验来源", "安装 Skill", "汇总结果"],
         "/retry": ["读取最近任务", "校验项目", "启动 Codex"],
         "/resume": ["定位可恢复任务", "继续 Codex 会话", "汇总状态"],
         "/approve": ["确认待审批任务", "继续执行", "汇总结果"],

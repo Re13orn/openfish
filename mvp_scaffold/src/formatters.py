@@ -44,6 +44,8 @@ def format_help() -> str:
         "/do <task>\n"
         "/templates\n"
         "/run <template> [附加说明]\n"
+        "/skills\n"
+        "/skill-install <source>\n"
         "/last\n"
         "/retry [附加说明]\n"
         "/resume\n"
@@ -262,3 +264,43 @@ def format_templates(templates: list[tuple[str, str, str]]) -> str:
 
 def format_project_busy() -> str:
     return "当前项目已有任务在执行中，请稍后重试。可用 /status 查看状态。"
+
+
+def format_skills_list(
+    *,
+    skills_root: str,
+    skills: list[str],
+    total_count: int,
+    hidden_count: int,
+    omitted_count: int,
+) -> str:
+    lines = [f"Skills 目录: {skills_root}"]
+    if total_count == 0:
+        lines.append("可见 skills: 暂无")
+    else:
+        lines.append(f"可见 skills: {total_count}")
+        lines.extend(f"- {item}" for item in skills)
+        if omitted_count > 0:
+            lines.append(f"... 还有 {omitted_count} 个未展示")
+    if hidden_count > 0:
+        lines.append(f"（已隐藏系统 skills: {hidden_count}）")
+    lines.append("安装用法: /skill-install <source>")
+    return "\n".join(lines)
+
+
+def format_skill_install_result(
+    *,
+    source: str,
+    ok: bool,
+    summary: str,
+    command: list[str] | None,
+) -> str:
+    status = "成功" if ok else "失败"
+    lines = [
+        f"Skill 安装: {status}",
+        f"来源: {source}",
+        f"摘要: {summary}",
+    ]
+    if command:
+        lines.append(f"命令: {' '.join(command)}")
+    return "\n".join(lines)
