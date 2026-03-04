@@ -18,7 +18,8 @@ class MessageStub:
         self.outcomes = list(outcomes)
         self.sent_texts: list[str] = []
 
-    async def reply_text(self, text: str):
+    async def reply_text(self, text: str, **kwargs):  # noqa: ANN003
+        _ = kwargs
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -102,3 +103,9 @@ def test_run_polling_retries_on_network_error(monkeypatch) -> None:
     assert apps == []
     assert len(first_app.error_handlers) == 1
     assert len(second_app.error_handlers) == 1
+
+
+def test_menu_text_maps_to_status_command() -> None:
+    service = _service()
+    assert service._map_menu_to_command("状态") == "/status"
+    assert service._map_menu_to_command("unknown") is None
