@@ -19,7 +19,10 @@ def test_format_status_without_active_project() -> None:
         repo_dirty=None,
         last_codex_session_id=None,
         most_recent_task_summary=None,
+        recent_failed_summary=None,
         pending_approval=False,
+        next_schedule_id=None,
+        next_schedule_hhmm=None,
         next_step=None,
     )
     assert "未选择活跃项目" in format_status(snapshot)
@@ -69,3 +72,4 @@ def test_help_contains_last_and_retry() -> None:
     assert "/skills" in text
     assert "/skill-install <source>" in text
     assert "/schedule-add <HH:MM> <ask|do> <text>" in text
+    assert "/schedule-run <id>" in text

@@ -25,7 +25,10 @@ class StatusSnapshot:
     repo_dirty: bool | None
     last_codex_session_id: str | None
     most_recent_task_summary: str | None
+    recent_failed_summary: str | None
     pending_approval: bool
+    next_schedule_id: int | None
+    next_schedule_hhmm: str | None
     next_step: str | None
 
 
@@ -393,13 +396,17 @@ class TaskStore:
                 repo_dirty=None,
                 last_codex_session_id=None,
                 most_recent_task_summary=None,
+                recent_failed_summary=None,
                 pending_approval=False,
+                next_schedule_id=None,
+                next_schedule_hhmm=None,
                 next_step=None,
             )
 
         row = connection.execute(
             """
             SELECT
+                p.id AS project_id,
                 p.name AS active_project_name,
                 p.path AS project_path,
                 ps.current_branch,
@@ -425,12 +432,56 @@ class TaskStore:
                 repo_dirty=None,
                 last_codex_session_id=None,
                 most_recent_task_summary=None,
+                recent_failed_summary=None,
                 pending_approval=False,
+                next_schedule_id=None,
+                next_schedule_hhmm=None,
                 next_step=None,
             )
 
         repo_dirty_raw = row["repo_dirty"]
         repo_dirty = None if repo_dirty_raw is None else bool(int(repo_dirty_raw))
+        project_id = int(row["project_id"])
+
+        next_schedule_id: int | None = None
+        next_schedule_hhmm: str | None = None
+        try:
+            next_schedule_row = connection.execute(
+                """
+                SELECT id, minute_of_day
+                FROM scheduled_tasks
+                WHERE project_id = ?
+                  AND enabled = 1
+                ORDER BY minute_of_day ASC, id ASC
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+            if next_schedule_row is not None:
+                next_schedule_id = int(next_schedule_row["id"])
+                next_schedule_hhmm = self._minute_to_hhmm(int(next_schedule_row["minute_of_day"]))
+        except sqlite3.OperationalError:
+            logger.debug("scheduled_tasks table not available when loading status snapshot.")
+
+        failed_row = connection.execute(
+            """
+            SELECT latest_error, latest_summary
+            FROM tasks
+            WHERE project_id = ?
+              AND status = 'failed'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (project_id,),
+        ).fetchone()
+        recent_failed_summary = None
+        if failed_row is not None:
+            recent_failed_summary = (
+                str(failed_row["latest_error"])
+                if failed_row["latest_error"]
+                else (str(failed_row["latest_summary"]) if failed_row["latest_summary"] else None)
+            )
+
         return StatusSnapshot(
             active_project_key=active_project_key,
             active_project_name=str(row["active_project_name"]) if row["active_project_name"] else None,
@@ -443,7 +494,10 @@ class TaskStore:
             most_recent_task_summary=(
                 str(row["last_task_summary"]) if row["last_task_summary"] else None
             ),
+            recent_failed_summary=recent_failed_summary,
             pending_approval=row["pending_approval_task_id"] is not None,
+            next_schedule_id=next_schedule_id,
+            next_schedule_hhmm=next_schedule_hhmm,
             next_step=str(row["next_step"]) if row["next_step"] else None,
         )
 
@@ -530,6 +584,18 @@ class TaskStore:
             WHERE id = ?
             """,
             (task_id,),
+        ).fetchone()
+        return self._row_to_task(row)
+
+    def get_task_for_project(self, *, task_id: int, project_id: int) -> TaskRecord | None:
+        row = self.db.get_connection().execute(
+            """
+            SELECT id, command_type, original_request, status, codex_session_id, latest_summary
+            FROM tasks
+            WHERE id = ?
+              AND project_id = ?
+            """,
+            (task_id, project_id),
         ).fetchone()
         return self._row_to_task(row)
 
@@ -754,6 +820,51 @@ class TaskStore:
         ).fetchall()
         return [self._row_to_scheduled_task(row) for row in rows]
 
+    def get_scheduled_task(self, *, schedule_id: int, project_id: int) -> ScheduledTaskRecord | None:
+        row = self.db.get_connection().execute(
+            """
+            SELECT
+                id,
+                user_id,
+                project_id,
+                telegram_chat_id,
+                command_type,
+                request_text,
+                minute_of_day,
+                enabled,
+                last_triggered_on,
+                last_task_id,
+                last_run_status,
+                last_run_summary
+            FROM scheduled_tasks
+            WHERE id = ? AND project_id = ?
+            """,
+            (schedule_id, project_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_scheduled_task(row)
+
+    def set_scheduled_task_enabled(
+        self,
+        *,
+        schedule_id: int,
+        project_id: int,
+        enabled: bool,
+    ) -> bool:
+        connection = self.db.get_connection()
+        cursor = connection.execute(
+            """
+            UPDATE scheduled_tasks
+            SET enabled = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND project_id = ?
+            """,
+            (1 if enabled else 0, schedule_id, project_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+
     def delete_scheduled_task(self, *, schedule_id: int, project_id: int) -> bool:
         connection = self.db.get_connection()
         cursor = connection.execute(
@@ -771,13 +882,15 @@ class TaskStore:
         *,
         minute_of_day: int,
         trigger_date: str,
+        include_missed_before: bool = False,
         limit: int = 10,
     ) -> list[ScheduledTaskRecord]:
         connection = self.db.get_connection()
+        minute_operator = "<=" if include_missed_before else "="
         try:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
-                """
+                f"""
                 SELECT
                     id,
                     user_id,
@@ -793,7 +906,7 @@ class TaskStore:
                     last_run_summary
                 FROM scheduled_tasks
                 WHERE enabled = 1
-                  AND minute_of_day = ?
+                  AND minute_of_day {minute_operator} ?
                   AND (last_triggered_on IS NULL OR last_triggered_on < ?)
                 ORDER BY id ASC
                 LIMIT ?
@@ -865,6 +978,11 @@ class TaskStore:
             last_run_status=str(row["last_run_status"]) if row["last_run_status"] else None,
             last_run_summary=str(row["last_run_summary"]) if row["last_run_summary"] else None,
         )
+
+    def _minute_to_hhmm(self, minute_of_day: int) -> str:
+        hour = minute_of_day // 60
+        minute = minute_of_day % 60
+        return f"{hour:02d}:{minute:02d}"
 
     def _insert_task_event(
         self,

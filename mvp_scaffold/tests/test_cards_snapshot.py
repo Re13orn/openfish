@@ -11,7 +11,10 @@ def test_status_card_snapshot() -> None:
         repo_dirty=False,
         last_codex_session_id="sess-1",
         most_recent_task_summary="修复登录接口 500 并补充测试",
+        recent_failed_summary="pytest tests/auth failed",
         pending_approval=True,
+        next_schedule_id=3,
+        next_schedule_hhmm="09:30",
         next_step="执行 /approve 继续",
     )
     assert format_status(snapshot) == (
@@ -22,6 +25,8 @@ def test_status_card_snapshot() -> None:
         "工作区: 干净\n"
         "会话: sess-1\n"
         "任务: 修复登录接口 500 并补充测试\n"
+        "定时: #3 09:30\n"
+        "最近失败: pytest tests/auth failed\n"
         "审批: 待处理\n"
         "下一步: 执行 /approve 继续"
     )

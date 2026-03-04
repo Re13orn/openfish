@@ -102,6 +102,18 @@ class CodexStub:
         self.calls.append("resume_last")
         return self.resume_result
 
+    def resume_session(
+        self,
+        project: ProjectConfig,
+        session_id: str,
+        instruction: str,
+    ) -> CodexRunResult:
+        _ = project
+        _ = session_id
+        _ = instruction
+        self.calls.append("resume_session")
+        return self.resume_result
+
 
 class TasksStub:
     def __init__(self) -> None:
@@ -289,7 +301,10 @@ class TasksStub:
             repo_dirty=None,
             last_codex_session_id=None,
             most_recent_task_summary=None,
+            recent_failed_summary=None,
             pending_approval=False,
+            next_schedule_id=None,
+            next_schedule_hhmm=None,
             next_step=None,
         )
 
@@ -336,6 +351,51 @@ class TasksStub:
     def get_project_key_by_id(self, project_id: int) -> str | None:
         _ = project_id
         return "demo"
+
+    def get_scheduled_task(self, *, schedule_id: int, project_id: int) -> ScheduledTaskRecord | None:
+        for item in self.scheduled_tasks:
+            if item.id == schedule_id and item.project_id == project_id:
+                return item
+        return None
+
+    def set_scheduled_task_enabled(self, *, schedule_id: int, project_id: int, enabled: bool) -> bool:
+        for idx, item in enumerate(self.scheduled_tasks):
+            if item.id == schedule_id and item.project_id == project_id:
+                self.scheduled_tasks[idx] = ScheduledTaskRecord(
+                    id=item.id,
+                    user_id=item.user_id,
+                    project_id=item.project_id,
+                    telegram_chat_id=item.telegram_chat_id,
+                    command_type=item.command_type,
+                    request_text=item.request_text,
+                    minute_of_day=item.minute_of_day,
+                    enabled=enabled,
+                    last_triggered_on=item.last_triggered_on,
+                    last_task_id=item.last_task_id,
+                    last_run_status=item.last_run_status,
+                    last_run_summary=item.last_run_summary,
+                )
+                return True
+        return False
+
+    def record_scheduled_task_run(
+        self,
+        *,
+        schedule_id: int,
+        task_id: int | None,
+        status: str,
+        summary: str,
+    ) -> None:
+        _ = schedule_id
+        _ = task_id
+        _ = status
+        _ = summary
+
+    def get_task_for_project(self, *, task_id: int, project_id: int) -> TaskRecord | None:
+        _ = project_id
+        if self.latest_task and self.latest_task.id == task_id:
+            return self.latest_task
+        return None
 
 
 class SkillsStub:
@@ -665,7 +725,7 @@ def test_schedule_add_list_delete() -> None:
     deleted = router.handle(_ctx("/schedule-del 1"))
 
     assert "定期任务已创建: #1" in created.reply_text
-    assert "#1 09:30 /ask" in listed.reply_text
+    assert "#1 09:30 /ask [启用]" in listed.reply_text
     assert "已删除定期任务 #1" in deleted.reply_text
     codes = [event[0] for event in audit.events]
     assert audit_events.SCHEDULE_CREATED in codes
@@ -710,3 +770,42 @@ def test_run_scheduled_task_runs_codex() -> None:
     assert result.metadata.get("status") == "completed"
     codes = [event[0] for event in audit.events]
     assert audit_events.SCHEDULE_TRIGGERED in codes
+
+
+def test_schedule_run_and_toggle_commands() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("定时执行完成", ok=True))
+    router = _build_router(tasks, audit, codex)
+    _ = router.handle(_ctx("/schedule-add 10:00 do 每日修复"))
+
+    paused = router.handle(_ctx("/schedule-pause 1"))
+    enabled = router.handle(_ctx("/schedule-enable 1"))
+    ran = router.handle(_ctx("/schedule-run 1"))
+
+    assert "已暂停" in paused.reply_text
+    assert "已启用" in enabled.reply_text
+    assert "已触发定期任务 #1" in ran.reply_text
+    codes = [event[0] for event in audit.events]
+    assert audit_events.SCHEDULE_TOGGLED in codes
+    assert audit_events.SCHEDULE_MANUAL_RUN in codes
+
+
+def test_resume_with_task_id_uses_resume_session() -> None:
+    tasks = TasksStub()
+    tasks.latest_task = TaskRecord(
+        id=42,
+        command_type="do",
+        original_request="old task",
+        status="failed",
+        codex_session_id="sess-task-42",
+        latest_summary="failed",
+    )
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("恢复成功", ok=True), resume_result=_codex_result("恢复成功", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    result = router.handle(_ctx("/resume 42 继续并修复剩余问题"))
+
+    assert "任务 #1: 已完成" in result.reply_text
+    assert "resume_session" in codex.calls

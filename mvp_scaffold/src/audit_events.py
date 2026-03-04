@@ -34,6 +34,8 @@ SKILL_INSTALL_FAILED = "skill.install_failed"
 SCHEDULE_CREATED = "schedule.created"
 SCHEDULE_VIEWED = "schedule.viewed"
 SCHEDULE_DELETED = "schedule.deleted"
+SCHEDULE_TOGGLED = "schedule.toggled"
+SCHEDULE_MANUAL_RUN = "schedule.manual_run"
 SCHEDULE_TRIGGERED = "schedule.triggered"
 SCHEDULE_FAILED = "schedule.failed"
 
@@ -73,6 +75,8 @@ ALL_EVENTS = {
     SCHEDULE_CREATED,
     SCHEDULE_VIEWED,
     SCHEDULE_DELETED,
+    SCHEDULE_TOGGLED,
+    SCHEDULE_MANUAL_RUN,
     SCHEDULE_TRIGGERED,
     SCHEDULE_FAILED,
     UNKNOWN_EVENT,

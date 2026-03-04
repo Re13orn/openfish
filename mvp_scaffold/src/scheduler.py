@@ -13,11 +13,20 @@ logger = logging.getLogger(__name__)
 class ScheduledTaskService:
     """Polls due periodic tasks and triggers execution through CommandRouter."""
 
-    def __init__(self, *, tasks, router, poll_interval_seconds: int, enabled: bool = True) -> None:  # noqa: ANN001
+    def __init__(
+        self,
+        *,
+        tasks,
+        router,
+        poll_interval_seconds: int,
+        enabled: bool = True,
+        missed_run_policy: str = "skip",
+    ) -> None:  # noqa: ANN001
         self.tasks = tasks
         self.router = router
         self.poll_interval_seconds = max(5, poll_interval_seconds)
         self.enabled = enabled
+        self.missed_run_policy = missed_run_policy if missed_run_policy in {"skip", "catchup_once"} else "skip"
         self._stop_event = Event()
         self._thread: Thread | None = None
 
@@ -54,6 +63,7 @@ class ScheduledTaskService:
         due = self.tasks.claim_due_scheduled_tasks(
             minute_of_day=minute_of_day,
             trigger_date=trigger_date,
+            include_missed_before=self.missed_run_policy == "catchup_once",
         )
         for item in due:
             try:

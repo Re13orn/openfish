@@ -202,3 +202,17 @@ def test_fallback_handles_flag_error_then_untrusted_directory() -> None:
     assert "--ask-for-approval" in runner.commands[0]
     assert "--ask-for-approval" not in runner.commands[1]
     assert "--skip-git-repo-check" in runner.commands[2]
+
+
+def test_resume_session_uses_explicit_session_command() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    result = runner.resume_session(_project(), "sess-123", "continue")
+
+    assert result.ok is True
+    assert len(runner.commands) == 1
+    assert runner.commands[0][:4] == ["codex", "exec", "resume", "sess-123"]

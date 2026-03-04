@@ -53,6 +53,7 @@ class Application:
             router=self.router,
             poll_interval_seconds=self.config.schedule_poll_interval_seconds,
             enabled=self.config.enable_scheduler,
+            missed_run_policy=self.config.schedule_missed_run_policy,
         )
         self.bot = TelegramBotService(config=config, router=self.router)
 

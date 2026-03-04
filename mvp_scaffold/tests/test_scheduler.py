@@ -7,11 +7,20 @@ class TasksStub:
     def __init__(self) -> None:
         self.claimed = False
         self.recorded: list[tuple[int, int | None, str, str]] = []
+        self.last_include_missed_before: bool | None = None
 
-    def claim_due_scheduled_tasks(self, *, minute_of_day: int, trigger_date: str, limit: int = 10):  # noqa: ANN001
+    def claim_due_scheduled_tasks(
+        self,
+        *,
+        minute_of_day: int,
+        trigger_date: str,
+        include_missed_before: bool = False,
+        limit: int = 10,
+    ):  # noqa: ANN001
         _ = minute_of_day
         _ = trigger_date
         _ = limit
+        self.last_include_missed_before = include_missed_before
         if self.claimed:
             return []
         self.claimed = True
@@ -63,3 +72,19 @@ def test_scheduler_poll_once_records_result() -> None:
     assert task_id == 7
     assert status == "completed"
     assert summary == "ok"
+
+
+def test_scheduler_uses_catchup_policy_flag() -> None:
+    tasks = TasksStub()
+    router = RouterStub()
+    service = ScheduledTaskService(
+        tasks=tasks,
+        router=router,
+        poll_interval_seconds=20,
+        enabled=True,
+        missed_run_policy="catchup_once",
+    )
+
+    service.poll_once()
+
+    assert tasks.last_include_missed_before is True

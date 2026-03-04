@@ -92,6 +92,25 @@ def test_schedule_claim_due_once_per_day(tmp_path: Path) -> None:
     assert len(due_next_day) == 1
 
 
+def test_schedule_claim_due_with_catchup_once(tmp_path: Path) -> None:
+    _, store, user_id, project_id = _setup_store(tmp_path)
+    store.create_scheduled_task(
+        user_id=user_id,
+        project_id=project_id,
+        chat_id="chat-1",
+        command_type="do",
+        request_text="每日执行",
+        minute_of_day=8 * 60,
+    )
+
+    due = store.claim_due_scheduled_tasks(
+        minute_of_day=10 * 60,
+        trigger_date="2026-03-04",
+        include_missed_before=True,
+    )
+    assert len(due) == 1
+
+
 def test_schedule_record_run_result(tmp_path: Path) -> None:
     db, store, user_id, project_id = _setup_store(tmp_path)
     schedule_id = store.create_scheduled_task(

@@ -38,6 +38,7 @@ class AppConfig:
     max_telegram_message_length: int
     enable_scheduler: bool
     schedule_poll_interval_seconds: int
+    schedule_missed_run_policy: str
     enable_document_upload: bool
     max_upload_size_bytes: int
     upload_temp_dir_name: str
@@ -59,6 +60,10 @@ def load_config() -> AppConfig:
             "txt,md,markdown,json,yaml,yml,xml,csv,log,ini,toml,py,js,ts,tsx,jsx,go,rs,java,kt,swift,sql,html,css,apk",
         )
     )
+    schedule_missed_run_policy = os.getenv("SCHEDULE_MISSED_RUN_POLICY", "skip").strip().lower()
+    if schedule_missed_run_policy not in {"skip", "catchup_once"}:
+        schedule_missed_run_policy = "skip"
+
     return AppConfig(
         telegram_bot_token=os.environ["TELEGRAM_BOT_TOKEN"],
         allowed_telegram_user_ids=allowed_user_ids,
@@ -79,6 +84,7 @@ def load_config() -> AppConfig:
         max_telegram_message_length=int(os.getenv("MAX_TELEGRAM_MESSAGE_LENGTH", "3500")),
         enable_scheduler=_parse_bool(os.getenv("ENABLE_SCHEDULER"), default=True),
         schedule_poll_interval_seconds=int(os.getenv("SCHEDULE_POLL_INTERVAL_SECONDS", "20")),
+        schedule_missed_run_policy=schedule_missed_run_policy,
         enable_document_upload=_parse_bool(os.getenv("ENABLE_DOCUMENT_UPLOAD"), default=True),
         max_upload_size_bytes=int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(200 * 1024 * 1024))),
         upload_temp_dir_name=os.getenv("UPLOAD_TEMP_DIR_NAME", ".codex_telegram_uploads"),

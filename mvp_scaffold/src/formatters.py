@@ -48,6 +48,9 @@ def format_help() -> str:
         "/skill-install <source>\n"
         "/schedule-add <HH:MM> <ask|do> <text>\n"
         "/schedule-list\n"
+        "/schedule-run <id>\n"
+        "/schedule-pause <id>\n"
+        "/schedule-enable <id>\n"
         "/schedule-del <id>\n"
         "/last\n"
         "/retry [附加说明]\n"
@@ -104,6 +107,16 @@ def format_status(snapshot: StatusSnapshot) -> str:
             f"工作区: {repo_state}",
             f"会话: {snapshot.last_codex_session_id or '暂无'}",
             f"任务: {_clip(snapshot.most_recent_task_summary, 120) if snapshot.most_recent_task_summary else '暂无'}",
+            (
+                f"定时: #{snapshot.next_schedule_id} {snapshot.next_schedule_hhmm}"
+                if snapshot.next_schedule_id and snapshot.next_schedule_hhmm
+                else "定时: 暂无"
+            ),
+            (
+                f"最近失败: {_clip(snapshot.recent_failed_summary, 100)}"
+                if snapshot.recent_failed_summary
+                else "最近失败: 暂无"
+            ),
             f"审批: {'待处理' if snapshot.pending_approval else '无'}",
             f"下一步: {_clip(snapshot.next_step, 100) if snapshot.next_step else '暂无'}",
         ],
@@ -318,19 +331,29 @@ def format_schedule_added(*, schedule_id: int, hhmm: str, command_type: str, req
     )
 
 
-def format_schedule_list(items: list[tuple[int, str, str, str, str | None]]) -> str:
+def format_schedule_list(items: list[tuple[int, str, bool, str, str, str | None]]) -> str:
     if not items:
         return "当前项目没有定期任务。"
 
     lines = ["定期任务："]
     for item in items:
-        schedule_id, hhmm, command_type, request_text, last_status = item
+        schedule_id, hhmm, enabled, command_type, request_text, last_status = item
         status_text = f" | 上次: {last_status}" if last_status else ""
-        lines.append(f"- #{schedule_id} {hhmm} /{command_type}{status_text}")
+        enabled_text = "启用" if enabled else "暂停"
+        lines.append(f"- #{schedule_id} {hhmm} /{command_type} [{enabled_text}]{status_text}")
         lines.append(f"  {_clip(request_text, 80)}")
-    lines.append("新增用法: /schedule-add <HH:MM> <ask|do> <text>")
+    lines.append("新增: /schedule-add <HH:MM> <ask|do> <text>")
+    lines.append("控制: /schedule-run <id> /schedule-pause <id> /schedule-enable <id>")
     return "\n".join(lines)
 
 
 def format_schedule_deleted(schedule_id: int) -> str:
     return f"已删除定期任务 #{schedule_id}。"
+
+
+def format_schedule_toggled(schedule_id: int, *, enabled: bool) -> str:
+    return f"定期任务 #{schedule_id} 已{'启用' if enabled else '暂停'}。"
+
+
+def format_schedule_run_result(schedule_id: int, result_text: str) -> str:
+    return f"已触发定期任务 #{schedule_id}\n{result_text}"

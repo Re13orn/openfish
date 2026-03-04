@@ -60,22 +60,44 @@ class CodexRunner:
             command.append("--json")
         command.append(instruction)
 
-        proc = self._run_subprocess(command, cwd=project.path)
-        used_json = self.config.codex_json_output
-        if proc.returncode != 0 and self._looks_like_resume_command_error(proc.stderr):
-            fallback_prompt = (
-                "Continue the previous task context if available and report remaining blockers.\n\n"
-                f"Instruction: {instruction}"
-            )
-            fallback_command = self._build_command(
-                project.path, fallback_prompt, use_json=self.config.codex_json_output
-            )
-            fallback_proc, used_json, resolved_command = self._execute_with_optional_fallback(
-                fallback_command, project.path
-            )
-            return self._build_result(fallback_proc, used_json, resolved_command)
+        return self._run_resume_with_fallback(
+            project=project,
+            command=command,
+            instruction=instruction,
+        )
 
-        return self._build_result(proc, used_json, command)
+    def resume_session(
+        self,
+        project: ProjectConfig,
+        session_id: str,
+        instruction: str,
+    ) -> CodexRunResult:
+        """Resume a specific Codex session if CLI supports explicit session target."""
+
+        attempts: list[list[str]] = [
+            [self.config.codex_bin, "exec", "resume", session_id],
+            [self.config.codex_bin, "exec", "resume", "--session", session_id],
+        ]
+        for command in attempts:
+            if self.config.codex_json_output:
+                command.append("--json")
+            command.append(instruction)
+            result = self._run_resume_with_fallback(
+                project=project,
+                command=command,
+                instruction=instruction,
+                fallback_to_exec=False,
+            )
+            if result.ok:
+                return result
+            if not self._looks_like_resume_command_error(result.stderr):
+                return result
+
+        fallback_instruction = (
+            f"Prefer resuming session {session_id} if possible.\n"
+            f"{instruction}"
+        )
+        return self.resume_last(project, fallback_instruction)
 
     def _build_result(
         self,
@@ -203,6 +225,31 @@ class CodexRunner:
         return "resume" in lower and (
             "unknown" in lower or "unexpected argument" in lower or "invalid value" in lower
         )
+
+    def _run_resume_with_fallback(
+        self,
+        *,
+        project: ProjectConfig,
+        command: list[str],
+        instruction: str,
+        fallback_to_exec: bool = True,
+    ) -> CodexRunResult:
+        proc = self._run_subprocess(command, cwd=project.path)
+        used_json = self.config.codex_json_output
+        if proc.returncode != 0 and fallback_to_exec and self._looks_like_resume_command_error(proc.stderr):
+            fallback_prompt = (
+                "Continue the previous task context if available and report remaining blockers.\n\n"
+                f"Instruction: {instruction}"
+            )
+            fallback_command = self._build_command(
+                project.path, fallback_prompt, use_json=self.config.codex_json_output
+            )
+            fallback_proc, used_json, resolved_command = self._execute_with_optional_fallback(
+                fallback_command, project.path
+            )
+            return self._build_result(fallback_proc, used_json, resolved_command)
+
+        return self._build_result(proc, used_json, command)
 
     def _extract_session_id(self, stdout: str, stderr: str) -> str | None:
         for text in (stdout, stderr):

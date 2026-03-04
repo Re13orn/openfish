@@ -83,11 +83,14 @@ Supported commands:
 - `/skill-install <source>`
 - `/schedule-add <HH:MM> <ask|do> <text>`
 - `/schedule-list`
+- `/schedule-run <id>`
+- `/schedule-pause <id>`
+- `/schedule-enable <id>`
 - `/schedule-del <id>`
 - `/last`
 - `/retry [extra]`
 - `/status`
-- `/resume`
+- `/resume [task_id] [instruction]`
 - `/approve`
 - `/reject`
 - `/upload_policy`
@@ -174,6 +177,7 @@ DEFAULT_RISK_MODE=conservative
 CODEX_BIN=codex
 ENABLE_SCHEDULER=true
 SCHEDULE_POLL_INTERVAL_SECONDS=20
+SCHEDULE_MISSED_RUN_POLICY=skip
 ```
 
 ### Project registry

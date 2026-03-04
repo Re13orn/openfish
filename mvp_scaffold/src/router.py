@@ -23,6 +23,8 @@ from src.formatters import (
     format_schedule_added,
     format_schedule_deleted,
     format_schedule_list,
+    format_schedule_run_result,
+    format_schedule_toggled,
     format_start,
     format_status,
     format_templates,
@@ -112,6 +114,12 @@ class CommandRouter:
             return self._handle_schedule_add(ctx, argument)
         if command == "/schedule-list":
             return self._handle_schedule_list(ctx)
+        if command == "/schedule-run":
+            return self._handle_schedule_run(ctx, argument)
+        if command == "/schedule-pause":
+            return self._handle_schedule_toggle(ctx, argument, enabled=False)
+        if command == "/schedule-enable":
+            return self._handle_schedule_toggle(ctx, argument, enabled=True)
         if command == "/schedule-del":
             return self._handle_schedule_delete(ctx, argument)
         if command == "/use":
@@ -179,13 +187,15 @@ class CommandRouter:
             next_step="该任务由定期调度触发。",
         )
         status = result.metadata.get("status") if result.metadata else None
+        task_id_value = result.metadata.get("task_id") if result.metadata else None
+        task_id = task_id_value if isinstance(task_id_value, int) else None
         self.audit.log(
             action=audit_events.SCHEDULE_TRIGGERED if status != "failed" else audit_events.SCHEDULE_FAILED,
             message=f"定期任务触发: #{schedule.id}",
             severity="info" if status != "failed" else "warning",
             user_id=schedule.user_id,
             project_id=schedule.project_id,
-            task_id=(int(result.metadata["task_id"]) if result.metadata and result.metadata.get("task_id") else None),
+            task_id=task_id,
             details={"schedule_id": schedule.id, "status": status or "unknown"},
         )
         return result
@@ -536,6 +546,7 @@ class CommandRouter:
             (
                 item.id,
                 self._minute_to_hhmm(item.minute_of_day),
+                item.enabled,
                 item.command_type,
                 item.request_text,
                 item.last_run_status,
@@ -543,6 +554,69 @@ class CommandRouter:
             for item in schedules
         ]
         return CommandResult(format_schedule_list(items))
+
+    def _handle_schedule_run(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        schedule_id = self._parse_schedule_id(argument)
+        if schedule_id is None:
+            return CommandResult("用法: /schedule-run <id>")
+        schedule = self.tasks.get_scheduled_task(
+            schedule_id=schedule_id,
+            project_id=active.project_id,
+        )
+        if schedule is None:
+            return CommandResult(f"未找到定期任务 #{schedule_id}。")
+
+        self.audit.log(
+            action=audit_events.SCHEDULE_MANUAL_RUN,
+            message=f"手动触发定期任务 #{schedule_id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"schedule_id": schedule_id},
+        )
+        result = self.run_scheduled_task(schedule)
+        metadata = result.metadata or {}
+        task_id_raw = metadata.get("task_id")
+        task_id = task_id_raw if isinstance(task_id_raw, int) else None
+        status = str(metadata.get("status") or "unknown")
+        self.tasks.record_scheduled_task_run(
+            schedule_id=schedule.id,
+            task_id=task_id,
+            status=status,
+            summary=result.reply_text,
+        )
+        return CommandResult(format_schedule_run_result(schedule.id, result.reply_text))
+
+    def _handle_schedule_toggle(
+        self,
+        ctx: CommandContext,
+        argument: str,
+        *,
+        enabled: bool,
+    ) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        schedule_id = self._parse_schedule_id(argument)
+        if schedule_id is None:
+            return CommandResult(f"用法: /schedule-{'enable' if enabled else 'pause'} <id>")
+        updated = self.tasks.set_scheduled_task_enabled(
+            schedule_id=schedule_id,
+            project_id=active.project_id,
+            enabled=enabled,
+        )
+        if not updated:
+            return CommandResult(f"未找到定期任务 #{schedule_id}。")
+        self.audit.log(
+            action=audit_events.SCHEDULE_TOGGLED,
+            message=f"{'启用' if enabled else '暂停'}定期任务 #{schedule_id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"schedule_id": schedule_id, "enabled": enabled},
+        )
+        return CommandResult(format_schedule_toggled(schedule_id, enabled=enabled))
 
     def _handle_schedule_delete(self, ctx: CommandContext, argument: str) -> CommandResult:
         active = self._resolve_active_project(ctx)
@@ -699,20 +773,34 @@ class CommandRouter:
         if isinstance(active, CommandResult):
             return active
 
-        resumable = self.tasks.get_latest_resumable_task(active.project_id)
+        task_id_arg, resume_note = self._parse_resume_argument(instruction)
+        if task_id_arg is not None:
+            resumable = self.tasks.get_task_for_project(
+                task_id=task_id_arg,
+                project_id=active.project_id,
+            )
+            if resumable is None:
+                return CommandResult(f"任务 #{task_id_arg} 不存在或不属于当前项目。")
+        else:
+            resumable = self.tasks.get_latest_resumable_task(active.project_id)
         if resumable is None:
             return CommandResult("没有可恢复任务。请先运行 /do 或 /ask。")
+        if resumable.status in {"cancelled", "rejected"}:
+            return CommandResult(f"任务 #{resumable.id} 当前状态为 {resumable.status}，不可恢复。")
 
-        resume_instruction = (
-            instruction
-            or "继续上一个任务，并用简洁摘要说明剩余阻塞。"
+        default_instruction = (
+            f"继续任务 #{resumable.id}，并用简洁摘要说明剩余阻塞。"
+            if task_id_arg is not None
+            else "继续上一个任务，并用简洁摘要说明剩余阻塞。"
         )
+        resume_instruction = resume_note or default_instruction
         return self._run_codex_task(
             ctx=ctx,
             active=active,
             command_type="resume",
             request_text=resume_instruction,
             run_mode="resume",
+            resume_session_id=resumable.codex_session_id,
             next_step="可用 /status 查看最新状态。",
         )
 
@@ -886,6 +974,7 @@ class CommandRouter:
         request_text: str,
         run_mode: str,
         next_step: str,
+        resume_session_id: str | None = None,
     ) -> CommandResult:
         lock_or_result = self._try_acquire_project_lock(active=active, operation=run_mode)
         if isinstance(lock_or_result, CommandResult):
@@ -921,7 +1010,14 @@ class CommandRouter:
             if run_mode == "ask":
                 codex_result = self.codex.ask(active.project, request_text)
             elif run_mode == "resume":
-                codex_result = self.codex.resume_last(active.project, request_text)
+                if resume_session_id:
+                    codex_result = self.codex.resume_session(
+                        active.project,
+                        resume_session_id,
+                        request_text,
+                    )
+                else:
+                    codex_result = self.codex.resume_last(active.project, request_text)
             else:
                 codex_result = self.codex.run(active.project, request_text)
 
@@ -1154,3 +1250,20 @@ class CommandRouter:
         hour = minute_of_day // 60
         minute = minute_of_day % 60
         return f"{hour:02d}:{minute:02d}"
+
+    def _parse_schedule_id(self, argument: str) -> int | None:
+        if not argument:
+            return None
+        try:
+            return int(argument.strip())
+        except ValueError:
+            return None
+
+    def _parse_resume_argument(self, argument: str) -> tuple[int | None, str]:
+        text = argument.strip()
+        if not text:
+            return None, ""
+        first, _, tail = text.partition(" ")
+        if first.isdigit():
+            return int(first), tail.strip()
+        return None, text
