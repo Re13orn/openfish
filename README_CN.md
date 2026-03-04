@@ -24,6 +24,12 @@
 OpenFish 面向一个可信 Owner，目标是让你离开工位时也能通过 Telegram 持续推进本地项目开发。
 系统坚持本地优先：代码、执行、状态、审批、审计都留在你的机器上。
 
+## 架构图
+
+![OpenFish 架构图](docs/ARCHITECTURE.png)
+
+架构说明文档： [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
 ## 产品定位
 
 OpenFish 适合：
@@ -83,6 +89,7 @@ bash scripts/install_start.sh
 
 面向使用者：
 
+- 架构说明：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 安装部署与使用手册：[docs/安装部署和使用手册.md](docs/安装部署和使用手册.md)
 
 内部文档：

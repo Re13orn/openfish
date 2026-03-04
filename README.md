@@ -24,6 +24,12 @@
 OpenFish is a local-first remote coding assistant for one trusted owner.
 It lets you control local repositories from Telegram while execution, state, approvals, and audit logs remain on your machine.
 
+## Architecture
+
+![OpenFish Architecture](docs/ARCHITECTURE.png)
+
+Detailed architecture notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
 ## Product Scope
 
 OpenFish is built for:
@@ -84,6 +90,7 @@ Telegram quick buttons cover all command capabilities:
 User-facing docs:
 
 - Chinese homepage: [README_CN.md](README_CN.md)
+- Architecture details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Install/Deploy/Usage manual (Chinese): [docs/安装部署和使用手册.md](docs/安装部署和使用手册.md)
 
 Internal docs:
