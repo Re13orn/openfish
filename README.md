@@ -1,18 +1,38 @@
-# OpenFish
+<p align="center">
+  <img src="docs/logo.png" alt="OpenFish Logo" width="220" />
+</p>
 
-A single-user, Telegram-driven personal Codex assistant that runs on your own computer.
+<h1 align="center">OpenFish</h1>
+<p align="center"><strong>Single-User, Telegram-Driven Local Codex Assistant</strong></p>
 
-This project lets you interact with local development projects remotely through Telegram while keeping execution, project access, state, and audit logs on your machine.
+<p align="center">
+  <a href="LICENSE">MIT License</a> |
+  <a href="CONTRIBUTING.md">Contributing</a> |
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
-The assistant is intentionally narrow in scope:
+<p align="center">
+  Project-Centric Continuity | Conservative by Default | Mobile-Friendly Telegram UX
+</p>
+
+<p align="center">
+  <a href="#what-it-does">Quick Start</a> |
+  <a href="#core-ideas">Core Ideas</a> |
+  <a href="#suggested-architecture">Architecture</a> |
+  <a href="#current-command-set">Commands</a>
+</p>
+
+OpenFish is a practical remote coding assistant for one technical owner.
+It runs on your own machine, uses Telegram as the control surface, and executes Codex strictly within registered local projects.
+
+The product focus is intentionally narrow:
 - **single user**,
 - **local-first**,
-- **project-scoped**,
-- **Codex CLI as the execution engine**,
-- **Telegram as the remote interface**,
-- **SQLite + YAML for durable state**.
+- **project-scoped continuity**,
+- **Codex CLI as execution engine**,
+- **SQLite + YAML durable state**.
 
-It is **not** a multi-user bot platform, cloud service, or general-purpose agent framework.
+It is **not** a multi-user bot platform, cloud-hosted agent runtime, or general-purpose remote shell.
 
 ## Chinese manual
 
