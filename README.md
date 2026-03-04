@@ -6,51 +6,58 @@
 <p align="center"><strong>Single-User, Telegram-Driven Local Codex Assistant</strong></p>
 
 <p align="center">
-  <a href="README_CN.md">Chinese</a> |
+  <a href="README_CN.md">中文版</a> |
   <a href="LICENSE">MIT License</a> |
   <a href="CONTRIBUTING.md">Contributing</a> |
+  <a href="SECURITY.md">Security</a> |
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+<p align="center">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-1f6feb" />
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white" />
+  <img alt="PRs" src="https://img.shields.io/badge/PRs-welcome-2ea043" />
+  <img alt="Architecture" src="https://img.shields.io/badge/Architecture-Single--Process-7a3cff" />
+  <img alt="Powered by" src="https://img.shields.io/badge/Powered%20by-Codex%20CLI-d97706" />
+</p>
+
 OpenFish is a local-first remote coding assistant for one trusted owner.
-You control local projects from Telegram, while execution, state, approvals, and audit logs stay on your machine.
+It lets you control local repositories from Telegram while execution, state, approvals, and audit logs remain on your machine.
 
-## What It Is
+## Product Scope
 
-- Single-user only (allowlisted Telegram account)
-- Project-centric continuity (state persists per project)
-- Local execution with Codex CLI
-- Conservative by default (path guard + approval flow)
-- Mobile-friendly summaries for Telegram
+OpenFish is built for:
 
-## What It Is Not
+- single-user operation
+- project-scoped continuity
+- conservative execution boundaries
+- concise mobile-friendly Telegram interaction
 
-- Multi-user bot platform
-- Public remote shell
-- Cloud orchestration framework
-- Plugin marketplace
+OpenFish is not:
+
+- a multi-user bot platform
+- a public remote shell
+- a cloud orchestration system
 
 ## Core Capabilities
 
 - Project lifecycle: list, select, add, disable, archive
-- Task execution: ask, do, resume, retry, cancel
-- Scheduling: create/list/run/pause/enable/delete periodic tasks
-- Memory and notes: per-project summaries and notes
-- Approval workflow: approve/reject risky continuation
-- Diff/status visibility: quick mobile-friendly task and repo status
-- Document upload analysis with extension/size/path checks
+- Task lifecycle: ask, do, resume, retry, cancel
+- Scheduling: add/list/run/pause/enable/delete periodic tasks
+- Approval flow: approve/reject continuation
+- Project memory: notes, recent summaries, status snapshots
+- Safe file analysis: upload with extension/size/path checks
 
 ## Quick Start
 
 ```bash
-# from repository root
 cd mvp_scaffold
 bash scripts/install_start.sh
 ```
 
-Then follow the interactive setup (`configure`) to generate `.env` and `projects.yaml`, and start the service.
+Use `configure` in the installer to generate `.env` and `projects.yaml`, then start the service.
 
-## Command Reference
+## Command Overview
 
 Core commands:
 
@@ -61,46 +68,41 @@ Core commands:
 
 Extended commands:
 
-- Project lifecycle: `/project-add`, `/project-disable`, `/project-archive`
-- Templates/skills: `/templates`, `/run`, `/skills`, `/skill-install`
-- Scheduling: `/schedule-add`, `/schedule-list`, `/schedule-run`, `/schedule-pause`, `/schedule-enable`, `/schedule-del`
-- Utility: `/start`, `/last`, `/retry`, `/upload_policy`
+- `/project-add`, `/project-disable`, `/project-archive`
+- `/templates`, `/run`, `/skills`, `/skill-install`
+- `/schedule-add`, `/schedule-list`, `/schedule-run`, `/schedule-pause`, `/schedule-enable`, `/schedule-del`
+- `/start`, `/last`, `/retry`, `/upload_policy`
 
 Telegram quick buttons cover all command capabilities:
 
-- No-arg commands run directly by tap
-- Param commands enter guided input mode and apply command prefix to the next message
+- no-arg commands execute directly
+- arg-required commands enter guided input mode and apply prefix to the next message
 
-## Documentation Map
+## Documentation
 
-- Chinese install/deploy/usage manual: [docs/安装部署和使用手册.md](docs/安装部署和使用手册.md)
-- Chinese product design story: [docs/系统设计理念与开发历程.md](docs/系统设计理念与开发历程.md)
-- Chinese 5-minute pitch: [docs/5分钟精简路演版.md](docs/5分钟精简路演版.md)
-- GitHub release checklist (Chinese): [docs/GitHub开源发布清单.md](docs/GitHub开源发布清单.md)
-- Full product spec: [SPEC.md](SPEC.md)
-- Agent constraints and design rules: [AGENTS.md](AGENTS.md)
+User-facing docs:
 
-## Architecture (High-Level)
+- Chinese homepage: [README_CN.md](README_CN.md)
+- Install/Deploy/Usage manual (Chinese): [docs/安装部署和使用手册.md](docs/安装部署和使用手册.md)
 
-```text
-Telegram Bot API
-    -> telegram_adapter
-    -> command_router
-       -> project_registry (YAML)
-       -> task_store/state (SQLite)
-       -> approval_service
-       -> codex_runner
-```
+Internal docs:
+
+- Product spec: [docs/internal/SPEC.md](docs/internal/SPEC.md)
+- Agent design rules: [docs/internal/AGENTS.md](docs/internal/AGENTS.md)
+- Product design story: [docs/internal/系统设计理念与开发历程.md](docs/internal/系统设计理念与开发历程.md)
+- 5-minute pitch: [docs/internal/5分钟精简路演版.md](docs/internal/5分钟精简路演版.md)
+- GitHub release checklist: [docs/internal/GitHub开源发布清单.md](docs/internal/GitHub开源发布清单.md)
+
+## Repository Layout
+
+- Runtime app: `mvp_scaffold/`
+- Docs: `docs/`
+- Internal docs: `docs/internal/`
+- Config samples: `env.example`, `projects.example.yaml`
+- DB schema: `schema.sql`
 
 ## Security Notes
 
-- Rotate bot token immediately if exposed in logs or screenshots.
-- Do not commit `.env`, runtime data, or local project config containing secrets.
-- Keep project paths explicit and limited to trusted directories.
-
-## Repository Structure
-
-- Runtime app: `mvp_scaffold/`
-- Docs and collateral: `docs/`
-- Config samples: `env.example`, `projects.example.yaml`
-- DB schema: `schema.sql`
+- Rotate bot token immediately if it appears in logs/screenshots.
+- Do not commit `.env`, runtime data, or local secret-bearing config.
+- Keep allowed project directories minimal and explicit.
