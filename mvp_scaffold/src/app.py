@@ -68,6 +68,7 @@ class Application:
             self.bot.run_polling()
         finally:
             self.scheduler.stop()
+            self.db.close_all()
 
     def _configure_logging(self) -> None:
         logging.basicConfig(

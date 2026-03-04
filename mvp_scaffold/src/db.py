@@ -3,6 +3,7 @@
 from pathlib import Path
 import re
 import sqlite3
+from threading import Lock, local
 
 
 MIGRATION_FILE_PATTERN = re.compile(r"^(\d+)_([a-zA-Z0-9_]+)\.sql$")
@@ -15,14 +16,25 @@ class Database:
         self.path = path
         self.schema_path = schema_path
         self.migrations_dir = migrations_dir
-        self.connection: sqlite3.Connection | None = None
+        self._local = local()
+        self._all_connections: list[sqlite3.Connection] = []
+        self._connections_lock = Lock()
 
     def connect(self) -> sqlite3.Connection:
+        """Create (or reuse) a connection bound to the current thread."""
+
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.path)
-        self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA foreign_keys = ON;")
-        return self.connection
+        existing = getattr(self._local, "connection", None)
+        if existing is not None:
+            return existing
+
+        connection = sqlite3.connect(self.path, timeout=30.0)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON;")
+        self._local.connection = connection
+        with self._connections_lock:
+            self._all_connections.append(connection)
+        return connection
 
     def initialize_schema(self) -> None:
         """Apply the repository SQL schema if needed."""
@@ -35,9 +47,24 @@ class Database:
         connection.commit()
 
     def get_connection(self) -> sqlite3.Connection:
-        if self.connection is None:
+        connection = getattr(self._local, "connection", None)
+        if connection is None:
             return self.connect()
-        return self.connection
+        return connection
+
+    def close_all(self) -> None:
+        """Close all thread-local connections created by this process."""
+
+        with self._connections_lock:
+            connections = list(self._all_connections)
+            self._all_connections.clear()
+        for connection in connections:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                continue
+        if hasattr(self._local, "connection"):
+            del self._local.connection
 
     def _ensure_baseline_migration(self, connection: sqlite3.Connection) -> None:
         row = connection.execute("SELECT COUNT(1) AS count FROM schema_migrations").fetchone()
