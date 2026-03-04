@@ -20,6 +20,9 @@ from src.formatters import (
     format_projects,
     format_skill_install_result,
     format_skills_list,
+    format_schedule_added,
+    format_schedule_deleted,
+    format_schedule_list,
     format_start,
     format_status,
     format_templates,
@@ -34,7 +37,7 @@ from src.repo_inspector import RepoInspector
 from src.security_guard import has_symlink_in_path, is_sensitive_file_name
 from src.skills_service import SkillsService
 from src.task_templates import BUILTIN_TEMPLATES
-from src.task_store import TaskStore
+from src.task_store import ScheduledTaskRecord, TaskStore
 
 
 @dataclass(slots=True)
@@ -105,6 +108,12 @@ class CommandRouter:
             return self._handle_skills(ctx)
         if command == "/skill-install":
             return self._handle_skill_install(ctx, argument)
+        if command == "/schedule-add":
+            return self._handle_schedule_add(ctx, argument)
+        if command == "/schedule-list":
+            return self._handle_schedule_list(ctx)
+        if command == "/schedule-del":
+            return self._handle_schedule_delete(ctx, argument)
         if command == "/use":
             return self._handle_use(ctx, argument)
         if command == "/last":
@@ -136,6 +145,50 @@ class CommandRouter:
         if text.startswith("/"):
             return CommandResult("未知命令，请使用 /help。")
         return self._handle_plain_text(ctx, text)
+
+    def run_scheduled_task(self, schedule: ScheduledTaskRecord) -> CommandResult:
+        project_key = self.tasks.get_project_key_by_id(schedule.project_id)
+        if not project_key:
+            return CommandResult("定期任务执行失败：关联项目不存在。", metadata={"status": "failed"})
+        project = self.projects.get(project_key)
+        if project is None:
+            return CommandResult("定期任务执行失败：项目不在注册表中。", metadata={"status": "failed"})
+        if not self.projects.is_path_allowed(project, project.path):
+            return CommandResult("定期任务执行失败：项目路径超出允许范围。", metadata={"status": "failed"})
+        if not project.path.exists():
+            return CommandResult("定期任务执行失败：项目路径不存在。", metadata={"status": "failed"})
+
+        active = ActiveProjectContext(
+            user=UserRecord(id=schedule.user_id, telegram_user_id=str(schedule.user_id)),
+            project_key=project_key,
+            project=project,
+            project_id=schedule.project_id,
+        )
+        ctx = CommandContext(
+            telegram_user_id=str(schedule.user_id),
+            telegram_chat_id=schedule.telegram_chat_id,
+            telegram_message_id=None,
+            text=f"/{schedule.command_type} {schedule.request_text}",
+        )
+        result = self._run_codex_task(
+            ctx=ctx,
+            active=active,
+            command_type=schedule.command_type,
+            request_text=schedule.request_text,
+            run_mode=schedule.command_type,
+            next_step="该任务由定期调度触发。",
+        )
+        status = result.metadata.get("status") if result.metadata else None
+        self.audit.log(
+            action=audit_events.SCHEDULE_TRIGGERED if status != "failed" else audit_events.SCHEDULE_FAILED,
+            message=f"定期任务触发: #{schedule.id}",
+            severity="info" if status != "failed" else "warning",
+            user_id=schedule.user_id,
+            project_id=schedule.project_id,
+            task_id=(int(result.metadata["task_id"]) if result.metadata and result.metadata.get("task_id") else None),
+            details={"schedule_id": schedule.id, "status": status or "unknown"},
+        )
+        return result
 
     def _handle_start(self, ctx: CommandContext) -> CommandResult:
         user = self.tasks.ensure_user(ctx)
@@ -426,6 +479,96 @@ class CommandRouter:
                 command=result.command,
             )
         )
+
+    def _handle_schedule_add(self, ctx: CommandContext, argument: str) -> CommandResult:
+        parsed = self._parse_schedule_add_argument(argument)
+        if parsed is None:
+            return CommandResult("用法: /schedule-add <HH:MM> <ask|do> <text>")
+
+        hhmm, minute_of_day, command_type, request_text = parsed
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+
+        schedule_id = self.tasks.create_scheduled_task(
+            user_id=active.user.id,
+            project_id=active.project_id,
+            chat_id=ctx.telegram_chat_id,
+            command_type=command_type,
+            request_text=request_text,
+            minute_of_day=minute_of_day,
+        )
+        self.audit.log(
+            action=audit_events.SCHEDULE_CREATED,
+            message=f"创建定期任务 #{schedule_id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={
+                "schedule_id": schedule_id,
+                "hhmm": hhmm,
+                "command_type": command_type,
+                "request_preview": request_text[:200],
+            },
+        )
+        return CommandResult(
+            format_schedule_added(
+                schedule_id=schedule_id,
+                hhmm=hhmm,
+                command_type=command_type,
+                request_text=request_text,
+            )
+        )
+
+    def _handle_schedule_list(self, ctx: CommandContext) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+
+        schedules = self.tasks.list_scheduled_tasks(active.project_id)
+        self.audit.log(
+            action=audit_events.SCHEDULE_VIEWED,
+            message="查看定期任务列表",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"count": len(schedules)},
+        )
+        items = [
+            (
+                item.id,
+                self._minute_to_hhmm(item.minute_of_day),
+                item.command_type,
+                item.request_text,
+                item.last_run_status,
+            )
+            for item in schedules
+        ]
+        return CommandResult(format_schedule_list(items))
+
+    def _handle_schedule_delete(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if not argument:
+            return CommandResult("用法: /schedule-del <id>")
+        try:
+            schedule_id = int(argument.strip())
+        except ValueError:
+            return CommandResult("任务 id 必须是数字。")
+
+        deleted = self.tasks.delete_scheduled_task(
+            schedule_id=schedule_id,
+            project_id=active.project_id,
+        )
+        if not deleted:
+            return CommandResult(f"未找到定期任务 #{schedule_id}。")
+        self.audit.log(
+            action=audit_events.SCHEDULE_DELETED,
+            message=f"删除定期任务 #{schedule_id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"schedule_id": schedule_id},
+        )
+        return CommandResult(format_schedule_deleted(schedule_id))
 
     def _handle_use(self, ctx: CommandContext, project_key: str) -> CommandResult:
         if not project_key:
@@ -852,7 +995,10 @@ class CommandRouter:
             task_id=task_id,
             details={"reason": safe_reason[:200]},
         )
-        return CommandResult(redact_text(format_approval_required(task_id=task_id, reason=safe_reason)))
+        return CommandResult(
+            redact_text(format_approval_required(task_id=task_id, reason=safe_reason)),
+            metadata={"task_id": task_id, "status": "waiting_approval"},
+        )
 
     def _finalize_task_execution(
         self,
@@ -921,7 +1067,8 @@ class CommandRouter:
                 summary=safe_summary,
                 session_id=codex_result.session_id,
                 next_action=next_action,
-            )
+            ),
+            metadata={"task_id": task_id, "status": task_status},
         )
 
     def _resolve_active_project(self, ctx: CommandContext) -> ActiveProjectContext | CommandResult:
@@ -975,3 +1122,35 @@ class CommandRouter:
                 lock = Lock()
                 self._project_locks[project_id] = lock
             return lock
+
+    def _parse_schedule_add_argument(
+        self, argument: str
+    ) -> tuple[str, int, str, str] | None:
+        hhmm, _, tail = argument.partition(" ")
+        if not hhmm or not tail:
+            return None
+        command_type, _, request_text = tail.strip().partition(" ")
+        command_type = command_type.lstrip("/")
+        if command_type not in {"ask", "do"}:
+            return None
+        request_text = request_text.strip()
+        if not request_text:
+            return None
+        hour_text, sep, minute_text = hhmm.strip().partition(":")
+        if sep != ":":
+            return None
+        try:
+            hour = int(hour_text)
+            minute = int(minute_text)
+        except ValueError:
+            return None
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            return None
+        normalized_hhmm = f"{hour:02d}:{minute:02d}"
+        minute_of_day = hour * 60 + minute
+        return normalized_hhmm, minute_of_day, command_type, request_text
+
+    def _minute_to_hhmm(self, minute_of_day: int) -> str:
+        hour = minute_of_day // 60
+        minute = minute_of_day % 60
+        return f"{hour:02d}:{minute:02d}"

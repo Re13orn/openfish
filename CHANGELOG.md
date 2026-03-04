@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- Minimal periodic task scheduling:
+  - `/schedule-add <HH:MM> <ask|do> <text>`
+  - `/schedule-list`
+  - `/schedule-del <id>`
+- Local background scheduler service that polls due tasks and triggers Codex runs.
+- SQLite migration `0003_scheduled_tasks.sql` for durable scheduled task state and last-run results.
+
 ## [0.1.0] - 2026-03-02
 
 ### Added

@@ -36,6 +36,8 @@ class AppConfig:
     skill_install_timeout_seconds: int
     poll_interval_seconds: int
     max_telegram_message_length: int
+    enable_scheduler: bool
+    schedule_poll_interval_seconds: int
     enable_document_upload: bool
     max_upload_size_bytes: int
     upload_temp_dir_name: str
@@ -75,6 +77,8 @@ def load_config() -> AppConfig:
         skill_install_timeout_seconds=int(os.getenv("SKILL_INSTALL_TIMEOUT_SECONDS", "600")),
         poll_interval_seconds=int(os.getenv("TELEGRAM_POLL_INTERVAL_SECONDS", "2")),
         max_telegram_message_length=int(os.getenv("MAX_TELEGRAM_MESSAGE_LENGTH", "3500")),
+        enable_scheduler=_parse_bool(os.getenv("ENABLE_SCHEDULER"), default=True),
+        schedule_poll_interval_seconds=int(os.getenv("SCHEDULE_POLL_INTERVAL_SECONDS", "20")),
         enable_document_upload=_parse_bool(os.getenv("ENABLE_DOCUMENT_UPLOAD"), default=True),
         max_upload_size_bytes=int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(200 * 1024 * 1024))),
         upload_temp_dir_name=os.getenv("UPLOAD_TEMP_DIR_NAME", ".codex_telegram_uploads"),

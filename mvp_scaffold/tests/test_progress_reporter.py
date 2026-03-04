@@ -26,3 +26,10 @@ def test_progress_ack_for_skill_install() -> None:
     text = reporter.ack_text("/skill-install")
     assert text is not None
     assert "安装 Skill" in text
+
+
+def test_progress_ack_for_schedule_add() -> None:
+    reporter = ProgressReporter()
+    text = reporter.ack_text("/schedule-add")
+    assert text is not None
+    assert "写入定期任务" in text

@@ -8,7 +8,7 @@ from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
 from src.repo_inspector import RepoState
 from src.router import CommandRouter
 from src.skills_service import SkillInstallResult, SkillsListResult
-from src.task_store import PendingApprovalRecord, TaskRecord
+from src.task_store import PendingApprovalRecord, ScheduledTaskRecord, TaskRecord
 
 
 def _ctx(text: str) -> CommandContext:
@@ -121,6 +121,8 @@ class TasksStub:
             codex_session_id="sess-9",
             latest_summary="old summary",
         )
+        self.scheduled_tasks: list[ScheduledTaskRecord] = []
+        self.next_schedule_id = 1
 
     def ensure_user(self, ctx: CommandContext) -> UserRecord:
         _ = ctx
@@ -290,6 +292,50 @@ class TasksStub:
             pending_approval=False,
             next_step=None,
         )
+
+    def create_scheduled_task(
+        self,
+        *,
+        user_id: int,
+        project_id: int,
+        chat_id: str,
+        command_type: str,
+        request_text: str,
+        minute_of_day: int,
+    ) -> int:
+        schedule_id = self.next_schedule_id
+        self.next_schedule_id += 1
+        self.scheduled_tasks.append(
+            ScheduledTaskRecord(
+                id=schedule_id,
+                user_id=user_id,
+                project_id=project_id,
+                telegram_chat_id=chat_id,
+                command_type=command_type,
+                request_text=request_text,
+                minute_of_day=minute_of_day,
+                enabled=True,
+                last_triggered_on=None,
+                last_task_id=None,
+                last_run_status=None,
+                last_run_summary=None,
+            )
+        )
+        return schedule_id
+
+    def list_scheduled_tasks(self, project_id: int) -> list[ScheduledTaskRecord]:
+        return [item for item in self.scheduled_tasks if item.project_id == project_id]
+
+    def delete_scheduled_task(self, *, schedule_id: int, project_id: int) -> bool:
+        for idx, item in enumerate(self.scheduled_tasks):
+            if item.id == schedule_id and item.project_id == project_id:
+                self.scheduled_tasks.pop(idx)
+                return True
+        return False
+
+    def get_project_key_by_id(self, project_id: int) -> str | None:
+        _ = project_id
+        return "demo"
 
 
 class SkillsStub:
@@ -606,3 +652,61 @@ def test_skill_install_without_argument() -> None:
     result = router.handle(_ctx("/skill-install"))
 
     assert "用法: /skill-install <source>" in result.reply_text
+
+
+def test_schedule_add_list_delete() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    created = router.handle(_ctx("/schedule-add 09:30 ask 每日检查登录流程风险"))
+    listed = router.handle(_ctx("/schedule-list"))
+    deleted = router.handle(_ctx("/schedule-del 1"))
+
+    assert "定期任务已创建: #1" in created.reply_text
+    assert "#1 09:30 /ask" in listed.reply_text
+    assert "已删除定期任务 #1" in deleted.reply_text
+    codes = [event[0] for event in audit.events]
+    assert audit_events.SCHEDULE_CREATED in codes
+    assert audit_events.SCHEDULE_VIEWED in codes
+    assert audit_events.SCHEDULE_DELETED in codes
+
+
+def test_schedule_add_invalid_usage() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    result = router.handle(_ctx("/schedule-add 25:10 ask test"))
+    assert "用法: /schedule-add" in result.reply_text
+
+
+def test_run_scheduled_task_runs_codex() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("定期任务执行完成", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    scheduled = ScheduledTaskRecord(
+        id=10,
+        user_id=1,
+        project_id=tasks.project_id,
+        telegram_chat_id="1",
+        command_type="ask",
+        request_text="请总结今日风险",
+        minute_of_day=60,
+        enabled=True,
+        last_triggered_on=None,
+        last_task_id=None,
+        last_run_status=None,
+        last_run_summary=None,
+    )
+    result = router.run_scheduled_task(scheduled)
+
+    assert codex.calls == ["ask"]
+    assert result.metadata is not None
+    assert result.metadata.get("status") == "completed"
+    codes = [event[0] for event in audit.events]
+    assert audit_events.SCHEDULE_TRIGGERED in codes

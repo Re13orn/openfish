@@ -11,6 +11,7 @@ from src.db import Database
 from src.project_registry import ProjectRegistry
 from src.repo_inspector import RepoInspector
 from src.router import CommandRouter
+from src.scheduler import ScheduledTaskService
 from src.skills_service import SkillsService
 from src.task_store import TaskStore
 from src.telegram_adapter import TelegramBotService
@@ -47,6 +48,12 @@ class Application:
             approvals=self.approvals,
             skills_service=self.skills,
         )
+        self.scheduler = ScheduledTaskService(
+            tasks=self.tasks,
+            router=self.router,
+            poll_interval_seconds=self.config.schedule_poll_interval_seconds,
+            enabled=self.config.enable_scheduler,
+        )
         self.bot = TelegramBotService(config=config, router=self.router)
 
     def run(self) -> None:
@@ -56,7 +63,11 @@ class Application:
         self.db.connect()
         self.db.initialize_schema()
         self.tasks.sync_projects_from_registry(self.projects)
-        self.bot.run_polling()
+        self.scheduler.start()
+        try:
+            self.bot.run_polling()
+        finally:
+            self.scheduler.stop()
 
     def _configure_logging(self) -> None:
         logging.basicConfig(

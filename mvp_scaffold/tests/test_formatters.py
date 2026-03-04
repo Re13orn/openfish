@@ -68,3 +68,4 @@ def test_help_contains_last_and_retry() -> None:
     assert "/retry [附加说明]" in text
     assert "/skills" in text
     assert "/skill-install <source>" in text
+    assert "/schedule-add <HH:MM> <ask|do> <text>" in text

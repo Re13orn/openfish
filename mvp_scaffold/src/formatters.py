@@ -46,6 +46,9 @@ def format_help() -> str:
         "/run <template> [附加说明]\n"
         "/skills\n"
         "/skill-install <source>\n"
+        "/schedule-add <HH:MM> <ask|do> <text>\n"
+        "/schedule-list\n"
+        "/schedule-del <id>\n"
         "/last\n"
         "/retry [附加说明]\n"
         "/resume\n"
@@ -304,3 +307,30 @@ def format_skill_install_result(
     if command:
         lines.append(f"命令: {' '.join(command)}")
     return "\n".join(lines)
+
+
+def format_schedule_added(*, schedule_id: int, hhmm: str, command_type: str, request_text: str) -> str:
+    return (
+        f"定期任务已创建: #{schedule_id}\n"
+        f"时间: {hhmm}\n"
+        f"类型: /{command_type}\n"
+        f"内容: {_clip(request_text, 120)}"
+    )
+
+
+def format_schedule_list(items: list[tuple[int, str, str, str, str | None]]) -> str:
+    if not items:
+        return "当前项目没有定期任务。"
+
+    lines = ["定期任务："]
+    for item in items:
+        schedule_id, hhmm, command_type, request_text, last_status = item
+        status_text = f" | 上次: {last_status}" if last_status else ""
+        lines.append(f"- #{schedule_id} {hhmm} /{command_type}{status_text}")
+        lines.append(f"  {_clip(request_text, 80)}")
+    lines.append("新增用法: /schedule-add <HH:MM> <ask|do> <text>")
+    return "\n".join(lines)
+
+
+def format_schedule_deleted(schedule_id: int) -> str:
+    return f"已删除定期任务 #{schedule_id}。"

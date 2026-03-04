@@ -81,6 +81,9 @@ Supported commands:
 - `/run <template> [extra]`
 - `/skills`
 - `/skill-install <source>`
+- `/schedule-add <HH:MM> <ask|do> <text>`
+- `/schedule-list`
+- `/schedule-del <id>`
 - `/last`
 - `/retry [extra]`
 - `/status`
@@ -109,6 +112,7 @@ Command Router
     ├─ Task Store
     ├─ Project Memory Store
     ├─ Approval Gate
+    ├─ Scheduled Task Service
     └─ Codex Runner
              ↓
          Codex CLI
@@ -168,6 +172,8 @@ LOG_LEVEL=INFO
 DEFAULT_REPLY_LANGUAGE=zh-CN
 DEFAULT_RISK_MODE=conservative
 CODEX_BIN=codex
+ENABLE_SCHEDULER=true
+SCHEDULE_POLL_INTERVAL_SECONDS=20
 ```
 
 ### Project registry
