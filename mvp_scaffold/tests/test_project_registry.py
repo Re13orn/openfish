@@ -50,3 +50,42 @@ def test_project_registry_add_disable_archive(tmp_path: Path) -> None:
 
     archived = registry.archive_project(key="demo")
     assert archived is True
+
+
+def test_project_registry_default_root_load_and_set(tmp_path: Path) -> None:
+    config_path = tmp_path / "projects.yaml"
+    root_path = tmp_path / "workspace"
+    config_path.write_text(
+        f"default_project_root: {root_path}\nprojects: {{}}\n",
+        encoding="utf-8",
+    )
+
+    registry = ProjectRegistry(config_path)
+    registry.load()
+    assert registry.default_project_root == root_path.resolve()
+
+    updated = registry.set_default_project_root(tmp_path / "workspace2")
+    assert updated == (tmp_path / "workspace2").resolve()
+    assert updated.exists()
+    assert registry.default_project_root == updated
+
+
+def test_project_registry_add_project_can_create_missing_directory(tmp_path: Path) -> None:
+    config_path = tmp_path / "projects.yaml"
+    config_path.write_text("projects: {}\n", encoding="utf-8")
+    target = tmp_path / "new_project"
+
+    registry = ProjectRegistry(config_path)
+    registry.load()
+    registry.add_project(
+        key="demo_new",
+        path=target,
+        name="Demo New",
+        create_if_missing=True,
+    )
+
+    assert target.exists()
+    assert target.is_dir()
+    loaded = registry.get("demo_new")
+    assert loaded is not None
+    assert loaded.path == target.resolve()

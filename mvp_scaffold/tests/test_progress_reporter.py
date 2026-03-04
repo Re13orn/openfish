@@ -47,3 +47,10 @@ def test_progress_ack_for_project_add() -> None:
     text = reporter.ack_text("/project-add")
     assert text is not None
     assert "写入项目注册表" in text
+
+
+def test_progress_ack_for_project_root() -> None:
+    reporter = ProgressReporter()
+    text = reporter.ack_text("/project-root")
+    assert text is not None
+    assert "写入默认项目根目录" in text

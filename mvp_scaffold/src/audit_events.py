@@ -1,6 +1,7 @@
 """Canonical audit event codes."""
 
 PROJECT_SELECTED = "project.selected"
+PROJECT_ROOT_UPDATED = "project.root_updated"
 PROJECT_ADDED = "project.added"
 PROJECT_DISABLED = "project.disabled"
 PROJECT_ARCHIVED = "project.archived"
@@ -47,6 +48,7 @@ UNKNOWN_EVENT = "system.unknown_event"
 
 ALL_EVENTS = {
     PROJECT_SELECTED,
+    PROJECT_ROOT_UPDATED,
     PROJECT_ADDED,
     PROJECT_DISABLED,
     PROJECT_ARCHIVED,

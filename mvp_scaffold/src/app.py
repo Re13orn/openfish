@@ -79,7 +79,10 @@ class Application:
 
     def _run_startup_health_checks(self) -> None:
         if not self.projects.projects:
-            raise ValueError("Project registry is empty. Add at least one project in projects.yaml.")
+            logger.warning(
+                "Project registry is empty. Service will start, but you should add a project via /project-add."
+            )
+            return
 
         for key, project in self.projects.projects.items():
             if not project.is_active:

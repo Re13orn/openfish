@@ -46,6 +46,7 @@ class AuditStub:
 
 class ProjectsStub:
     def __init__(self) -> None:
+        self.default_project_root = Path("/tmp/openfish_projects")
         self.projects = {
             "demo": ProjectConfig(
                 key="demo",
@@ -69,13 +70,26 @@ class ProjectsStub:
         _ = candidate_path
         return True
 
-    def add_project(self, *, key: str, path: Path, name: str | None = None) -> None:
+    def add_project(
+        self,
+        *,
+        key: str,
+        path: Path,
+        name: str | None = None,
+        create_if_missing: bool = False,
+    ) -> None:
+        _ = create_if_missing
         self.projects[key] = ProjectConfig(
             key=key,
             name=name or key,
             path=path,
             allowed_directories=[path],
         )
+
+    def set_default_project_root(self, root_path: Path) -> Path:
+        resolved = root_path.expanduser().resolve()
+        self.default_project_root = resolved
+        return resolved
 
     def set_project_active(self, *, key: str, is_active: bool) -> bool:
         project = self.projects.get(key)
@@ -462,6 +476,7 @@ def _build_router(
 ) -> CommandRouter:
     config = SimpleNamespace(
         allowed_telegram_user_ids={"123"},
+        default_project_root=Path("/tmp/openfish_projects"),
         enable_document_upload=True,
         max_upload_size_bytes=1024,
         upload_temp_dir_name=".codex_telegram_uploads",
@@ -857,3 +872,45 @@ def test_project_add_disable_archive_commands() -> None:
     assert audit_events.PROJECT_ADDED in codes
     assert audit_events.PROJECT_DISABLED in codes
     assert audit_events.PROJECT_ARCHIVED in codes
+
+
+def test_project_add_without_path_uses_default_root() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    result = router.handle(_ctx("/project-add demo_new Demo New"))
+
+    assert "项目已新增并切换" in result.reply_text
+    assert "目录来源: 默认根目录" in result.reply_text
+    assert "/tmp/openfish_projects/demo_new" in result.reply_text
+
+
+def test_project_add_without_path_requires_default_root() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+    router.projects.default_project_root = None
+    router.config.default_project_root = None
+
+    result = router.handle(_ctx("/project-add demo_new"))
+
+    assert "未设置默认项目根目录" in result.reply_text
+
+
+def test_project_root_show_and_set() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    show = router.handle(_ctx("/project-root"))
+    updated = router.handle(_ctx("/project-root /tmp/new_projects_root"))
+
+    assert "默认项目根目录: /tmp/openfish_projects" in show.reply_text
+    assert "默认项目根目录已设置:" in updated.reply_text
+    assert "new_projects_root" in updated.reply_text
+    codes = [event[0] for event in audit.events]
+    assert audit_events.PROJECT_ROOT_UPDATED in codes

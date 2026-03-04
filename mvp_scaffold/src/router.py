@@ -106,6 +106,8 @@ class CommandRouter:
             return CommandResult(format_help())
         if command == "/projects":
             return CommandResult(format_projects(self.projects.list_keys()))
+        if command == "/project-root":
+            return self._handle_project_root(ctx, argument)
         if command == "/project-add":
             return self._handle_project_add(ctx, argument)
         if command == "/project-disable":
@@ -239,22 +241,26 @@ class CommandRouter:
         user = self.tasks.ensure_user(ctx)
         parsed = self._parse_project_add_argument(argument)
         if parsed is None:
-            return CommandResult("用法: /project-add <key> <abs_path> [name]")
+            return CommandResult("用法: /project-add <key> [abs_path] [name]")
         key, path, name = parsed
 
         if not PROJECT_ADD_KEY_PATTERN.match(key):
             return CommandResult("项目 key 非法。只允许字母数字/._-，长度 1-64。")
-        if not path.is_absolute():
-            return CommandResult("项目路径必须是绝对路径。")
-        resolved_path = path.expanduser().resolve()
-        if not resolved_path.exists() or not resolved_path.is_dir():
-            return CommandResult(f"项目路径不存在或不是目录: {resolved_path}")
+        resolved_path_or_error = self._resolve_project_add_path(key=key, path=path)
+        if isinstance(resolved_path_or_error, CommandResult):
+            return resolved_path_or_error
+        resolved_path, used_default_root = resolved_path_or_error
         existing = self.projects.get_any(key)
         if existing is not None:
             return CommandResult(f"项目已存在: {key}")
 
         try:
-            self.projects.add_project(key=key, path=resolved_path, name=name)
+            self.projects.add_project(
+                key=key,
+                path=resolved_path,
+                name=name,
+                create_if_missing=True,
+            )
         except ValueError as exc:
             return CommandResult(str(exc))
 
@@ -278,7 +284,39 @@ class CommandRouter:
             "项目已新增并切换。\n"
             f"项目: {key}\n"
             f"路径: {resolved_path}\n"
+            f"目录来源: {'默认根目录' if used_default_root else '指定目录'}\n"
             "可用 /status 查看状态。"
+        )
+
+    def _handle_project_root(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        text = argument.strip()
+        if not text:
+            current = self._get_default_project_root()
+            if current is None:
+                return CommandResult(
+                    "当前未设置默认项目根目录。\n"
+                    "请使用 /project-root <abs_path> 设置后，再用 /project-add <key> 快速创建项目。"
+                )
+            return CommandResult(f"默认项目根目录: {current}")
+
+        path = Path(text).expanduser()
+        if not path.is_absolute():
+            return CommandResult("默认项目根目录必须是绝对路径。")
+        try:
+            resolved = self.projects.set_default_project_root(path)
+        except ValueError as exc:
+            return CommandResult(str(exc))
+
+        self.audit.log(
+            action=audit_events.PROJECT_ROOT_UPDATED,
+            message="更新默认项目根目录",
+            user_id=user.id,
+            details={"path": str(resolved)},
+        )
+        return CommandResult(
+            f"默认项目根目录已设置: {resolved}\n"
+            "后续可用 /project-add <key> [name] 自动创建目录并新增项目。"
         )
 
     def _handle_project_disable(self, ctx: CommandContext, argument: str) -> CommandResult:
@@ -1380,14 +1418,51 @@ class CommandRouter:
             return int(first), tail.strip()
         return None, text
 
-    def _parse_project_add_argument(self, argument: str) -> tuple[str, Path, str] | None:
+    def _parse_project_add_argument(self, argument: str) -> tuple[str, Path | None, str] | None:
         text = argument.strip()
         if not text:
             return None
         parts = text.split()
-        if len(parts) < 2:
-            return None
         key = parts[0].strip()
-        path = Path(parts[1].strip())
-        display_name = " ".join(parts[2:]).strip() if len(parts) > 2 else key
-        return key, path, display_name
+        if len(parts) == 1:
+            return key, None, key
+
+        second = parts[1].strip()
+        if second.startswith("/") or second.startswith("~"):
+            path = Path(second)
+            display_name = " ".join(parts[2:]).strip() if len(parts) > 2 else key
+            return key, path, display_name
+
+        display_name = " ".join(parts[1:]).strip() or key
+        return key, None, display_name
+
+    def _resolve_project_add_path(
+        self,
+        *,
+        key: str,
+        path: Path | None,
+    ) -> tuple[Path, bool] | CommandResult:
+        if path is not None:
+            if not path.is_absolute():
+                return CommandResult("项目路径必须是绝对路径。")
+            return path.expanduser().resolve(), False
+
+        default_root = self._get_default_project_root()
+        if default_root is None:
+            return CommandResult(
+                "未设置默认项目根目录，无法省略项目路径。\n"
+                "请先执行 /project-root <abs_path>，或使用 /project-add <key> <abs_path> [name]。"
+            )
+        return (default_root / key).expanduser().resolve(), True
+
+    def _get_default_project_root(self) -> Path | None:
+        if self.projects.default_project_root is not None:
+            return self.projects.default_project_root
+        config_root = getattr(self.config, "default_project_root", None)
+        if isinstance(config_root, Path):
+            return config_root.expanduser().resolve()
+        if isinstance(config_root, str) and config_root.strip():
+            candidate = Path(config_root.strip()).expanduser()
+            if candidate.is_absolute():
+                return candidate.resolve()
+        return None

@@ -68,6 +68,7 @@ bash scripts/install_start.sh
 
 扩展命令：
 
+- `/project-root [abs_path]`
 - `/project-add`, `/project-disable`, `/project-archive`
 - `/templates`, `/run`, `/skills`, `/skill-install`
 - `/schedule-add`, `/schedule-list`, `/schedule-run`, `/schedule-pause`, `/schedule-enable`, `/schedule-del`

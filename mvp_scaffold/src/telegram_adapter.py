@@ -46,6 +46,7 @@ class TelegramBotService:
         "approve": "/approve",
         "reject": "/reject",
         "resume": "/resume",
+        "project_root_show": "/project-root",
         "project_disable_current": "/project-disable",
         "project_archive_current": "/project-archive",
     }
@@ -60,6 +61,7 @@ class TelegramBotService:
         "skill_install": "/skill-install",
         "schedule_add": "/schedule-add",
         "project_add": "/project-add",
+        "project_root": "/project-root",
         "use": "/use",
         "project_disable": "/project-disable",
         "project_archive": "/project-archive",
@@ -76,7 +78,8 @@ class TelegramBotService:
         "run": "请输入模板 key 与可选说明（示例: review_repo 重点看 CI）。下一条消息将按 /run 执行。",
         "skill_install": "请输入 skill 来源。下一条消息将按 /skill-install 执行。",
         "schedule_add": "请输入计划（示例: 09:30 ask 检查项目状态）。下一条消息将按 /schedule-add 执行。",
-        "project_add": "请输入新增项目参数（示例: demo /abs/path 项目名）。下一条消息将按 /project-add 执行。",
+        "project_add": "请输入新增项目参数（示例: demo 项目名，或 demo /abs/path 项目名）。下一条消息将按 /project-add 执行。",
+        "project_root": "请输入默认项目根目录（示例: /Users/you/workspace/projects）。下一条消息将按 /project-root 执行。",
         "use": "请输入项目 key。下一条消息将按 /use 执行。",
         "project_disable": "请输入要停用的项目 key。下一条消息将按 /project-disable 执行。",
         "project_archive": "请输入要归档的项目 key。下一条消息将按 /project-archive 执行。",
@@ -497,6 +500,10 @@ class TelegramBotService:
                 [InlineKeyboardButton(text="查看项目列表", callback_data="cmd:projects")],
                 [
                     InlineKeyboardButton(text="新增项目", callback_data="prompt:project_add"),
+                    InlineKeyboardButton(text="设置默认根目录", callback_data="prompt:project_root"),
+                ],
+                [
+                    InlineKeyboardButton(text="查看默认根目录", callback_data="cmd:project_root_show"),
                     InlineKeyboardButton(text="手输切换", callback_data="prompt:use"),
                 ],
                 [

@@ -21,9 +21,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `/resume [task_id] [instruction]` now supports task-scoped resume with session-aware fallback.
 - Telegram polling now auto-recovers from long network outages with indefinite exponential backoff retry.
 - Project lifecycle commands:
-  - `/project-add <key> <abs_path> [name]`
+  - `/project-add <key> [abs_path] [name]`
   - `/project-disable <key>`
   - `/project-archive <key>`
+- Project creation defaults:
+  - `/project-root [abs_path]` to view/set the default project root directory.
+  - `/project-add <key> [abs_path] [name]` now supports omitting path and auto-creates project directory under default root.
 - Telegram 按钮面板增强：
   - 主菜单新增工具/帮助入口，分层面板覆盖全部命令能力。
   - 参数命令支持“输入引导”模式，点击后下一条消息自动按对应命令执行。

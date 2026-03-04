@@ -22,6 +22,7 @@ class AppConfig:
     telegram_bot_token: str
     allowed_telegram_user_ids: set[str]
     projects_config_path: Path
+    default_project_root: Path | None
     sqlite_path: Path
     schema_path: Path
     migrations_dir: Path
@@ -71,6 +72,11 @@ def load_config() -> AppConfig:
         telegram_bot_token=os.environ["TELEGRAM_BOT_TOKEN"],
         allowed_telegram_user_ids=allowed_user_ids,
         projects_config_path=Path(os.getenv("PROJECTS_CONFIG_PATH", "./projects.yaml")),
+        default_project_root=(
+            Path(os.path.expanduser(os.getenv("DEFAULT_PROJECT_ROOT", ""))).resolve()
+            if os.getenv("DEFAULT_PROJECT_ROOT", "").strip()
+            else None
+        ),
         sqlite_path=Path(os.getenv("SQLITE_PATH", "./data/app.db")),
         schema_path=Path(os.getenv("SCHEMA_PATH", str(repo_root / "schema.sql"))),
         migrations_dir=Path(os.getenv("MIGRATIONS_DIR", str(app_root / "migrations"))),

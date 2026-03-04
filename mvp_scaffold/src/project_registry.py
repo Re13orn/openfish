@@ -17,11 +17,16 @@ class ProjectRegistry:
     def __init__(self, config_path: Path) -> None:
         self.config_path = config_path
         self.projects: dict[str, ProjectConfig] = {}
+        self.default_project_root: Path | None = None
 
     def load(self) -> None:
         data = self._read_config()
         raw_projects = data.get("projects", {})
         self.projects = {}
+        self.default_project_root = None
+        default_root_raw = data.get("default_project_root")
+        if isinstance(default_root_raw, str) and default_root_raw.strip():
+            self.default_project_root = self._resolve_project_path(default_root_raw.strip())
 
         for key, value in raw_projects.items():
             if not isinstance(value, dict):
@@ -90,6 +95,7 @@ class ProjectRegistry:
         key: str,
         path: Path,
         name: str | None = None,
+        create_if_missing: bool = False,
     ) -> None:
         normalized_key = key.strip()
         if not PROJECT_KEY_PATTERN.match(normalized_key):
@@ -98,6 +104,11 @@ class ProjectRegistry:
         if not normalized_path.is_absolute():
             raise ValueError("项目路径必须是绝对路径。")
         resolved_path = normalized_path.resolve()
+        if create_if_missing:
+            try:
+                resolved_path.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise ValueError(f"无法创建项目目录: {resolved_path} ({exc})") from exc
         if not resolved_path.exists() or not resolved_path.is_dir():
             raise ValueError(f"项目路径不存在或不是目录: {resolved_path}")
 
@@ -114,6 +125,22 @@ class ProjectRegistry:
         }
         self._write_config(data)
         self.load()
+
+    def set_default_project_root(self, root_path: Path) -> Path:
+        normalized = root_path.expanduser()
+        if not normalized.is_absolute():
+            raise ValueError("默认项目根目录必须是绝对路径。")
+        resolved = normalized.resolve()
+        try:
+            resolved.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ValueError(f"无法创建默认项目根目录: {resolved} ({exc})") from exc
+
+        data = self._read_config()
+        data["default_project_root"] = str(resolved)
+        self._write_config(data)
+        self.load()
+        return resolved
 
     def set_project_active(self, *, key: str, is_active: bool) -> bool:
         data = self._read_config()

@@ -69,8 +69,9 @@ def test_help_contains_last_and_retry() -> None:
     text = format_help()
     assert "/last" in text
     assert "/retry [附加说明]" in text
+    assert "/project-root [abs_path]" in text
     assert "/skills" in text
     assert "/skill-install <source>" in text
-    assert "/project-add <key> <abs_path> [name]" in text
+    assert "/project-add <key> [abs_path] [name]" in text
     assert "/schedule-add <HH:MM> <ask|do> <text>" in text
     assert "/schedule-run <id>" in text
