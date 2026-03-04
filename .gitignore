@@ -21,6 +21,7 @@ __pycache__/
 mvp_scaffold/.venv/
 mvp_scaffold/data/
 mvp_scaffold/projects.yaml
+**/.codex_telegram_uploads/
 
 # Build / artifacts
 *.zip

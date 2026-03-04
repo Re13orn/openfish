@@ -118,16 +118,17 @@ class CodexStub:
         self.run_result = run_result
         self.resume_result = resume_result or run_result
         self.calls: list[str] = []
+        self.prompts: list[str] = []
 
     def run(self, project: ProjectConfig, prompt: str) -> CodexRunResult:
         _ = project
-        _ = prompt
+        self.prompts.append(prompt)
         self.calls.append("run")
         return self.run_result
 
     def ask(self, project: ProjectConfig, question: str) -> CodexRunResult:
         _ = project
-        _ = question
+        self.prompts.append(question)
         self.calls.append("ask")
         return self.run_result
 
@@ -696,6 +697,7 @@ def test_templates_and_run_template_commands() -> None:
     assert "可用模板" in templates_result.reply_text
     assert "任务 #1: 已完成" in run_result.reply_text
     assert codex.calls == ["ask"]
+    assert any(".codex_telegram_uploads" in prompt for prompt in codex.prompts)
     codes = [event[0] for event in audit.events]
     assert audit_events.TEMPLATES_VIEWED in codes
     assert audit_events.TEMPLATE_RUN in codes

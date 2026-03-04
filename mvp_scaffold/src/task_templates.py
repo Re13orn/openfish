@@ -17,7 +17,9 @@ BUILTIN_TEMPLATES: dict[str, TaskTemplate] = {
         title="快速风险审计",
         mode="ask",
         instruction=(
-            "请对当前项目做快速风险审计（只读，不修改文件），输出："
+            "请对当前项目做快速风险审计（只读，不修改文件）。"
+            "请忽略目录 .codex_telegram_uploads，不要将其作为隐藏目录风险。\n"
+            "输出："
             "1) 关键风险 2) 风险等级 3) 最小改进建议。"
         ),
     ),
@@ -38,4 +40,3 @@ BUILTIN_TEMPLATES: dict[str, TaskTemplate] = {
         ),
     ),
 }
-
