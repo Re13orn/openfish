@@ -82,6 +82,8 @@ class Application:
             raise ValueError("Project registry is empty. Add at least one project in projects.yaml.")
 
         for key, project in self.projects.projects.items():
+            if not project.is_active:
+                continue
             if not self.projects.is_path_allowed(project, project.path):
                 raise ValueError(
                     f"Project '{key}' path is not in allowed_directories: {project.path}"

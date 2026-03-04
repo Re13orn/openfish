@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from threading import Lock
 from _thread import LockType
 from uuid import uuid4
@@ -40,6 +41,9 @@ from src.security_guard import has_symlink_in_path, is_sensitive_file_name
 from src.skills_service import SkillsService
 from src.task_templates import BUILTIN_TEMPLATES
 from src.task_store import ScheduledTaskRecord, TaskStore
+
+
+PROJECT_ADD_KEY_PATTERN = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
 
 
 @dataclass(slots=True)
@@ -102,6 +106,12 @@ class CommandRouter:
             return CommandResult(format_help())
         if command == "/projects":
             return CommandResult(format_projects(self.projects.list_keys()))
+        if command == "/project-add":
+            return self._handle_project_add(ctx, argument)
+        if command == "/project-disable":
+            return self._handle_project_disable(ctx, argument)
+        if command == "/project-archive":
+            return self._handle_project_archive(ctx, argument)
         if command == "/templates":
             return self._handle_templates(ctx)
         if command == "/run":
@@ -224,6 +234,108 @@ class CommandRouter:
                 allowed_extensions=sorted(self.config.allowed_upload_extensions),
             )
         )
+
+    def _handle_project_add(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        parsed = self._parse_project_add_argument(argument)
+        if parsed is None:
+            return CommandResult("用法: /project-add <key> <abs_path> [name]")
+        key, path, name = parsed
+
+        if not PROJECT_ADD_KEY_PATTERN.match(key):
+            return CommandResult("项目 key 非法。只允许字母数字/._-，长度 1-64。")
+        if not path.is_absolute():
+            return CommandResult("项目路径必须是绝对路径。")
+        resolved_path = path.expanduser().resolve()
+        if not resolved_path.exists() or not resolved_path.is_dir():
+            return CommandResult(f"项目路径不存在或不是目录: {resolved_path}")
+        existing = self.projects.get_any(key)
+        if existing is not None:
+            return CommandResult(f"项目已存在: {key}")
+
+        try:
+            self.projects.add_project(key=key, path=resolved_path, name=name)
+        except ValueError as exc:
+            return CommandResult(str(exc))
+
+        self.tasks.sync_projects_from_registry(self.projects)
+        self.tasks.set_active_project(user.id, key, ctx.telegram_chat_id)
+        project_id = self.tasks.get_project_id(key)
+        self.audit.log(
+            action=audit_events.PROJECT_ADDED,
+            message=f"新增项目: {key}",
+            user_id=user.id,
+            project_id=project_id,
+            details={"path": str(resolved_path), "name": name},
+        )
+        project = self.projects.get_any(key)
+        if project is not None:
+            self._refresh_repo_state(
+                project_id=project_id,
+                project=project,
+            )
+        return CommandResult(
+            "项目已新增并切换。\n"
+            f"项目: {key}\n"
+            f"路径: {resolved_path}\n"
+            "可用 /status 查看状态。"
+        )
+
+    def _handle_project_disable(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        project_key = argument.strip() if argument.strip() else self.tasks.get_active_project_key(
+            user.id, ctx.telegram_chat_id
+        )
+        if not project_key:
+            return CommandResult("用法: /project-disable <key>")
+
+        exists = self.projects.get_any(project_key)
+        if exists is None:
+            return CommandResult(f"项目不存在: {project_key}")
+        ok = self.projects.set_project_active(key=project_key, is_active=False)
+        if not ok:
+            return CommandResult(f"项目不存在: {project_key}")
+
+        self.tasks.sync_projects_from_registry(self.projects)
+        current_active = self.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+        if current_active == project_key:
+            self.tasks.clear_active_project(user.id, ctx.telegram_chat_id)
+        project_id = self.tasks.get_project_id(project_key)
+        self.audit.log(
+            action=audit_events.PROJECT_DISABLED,
+            message=f"停用项目: {project_key}",
+            user_id=user.id,
+            project_id=project_id,
+        )
+        return CommandResult(f"项目已停用: {project_key}\n可用 /projects 查看可选项目。")
+
+    def _handle_project_archive(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        project_key = argument.strip() if argument.strip() else self.tasks.get_active_project_key(
+            user.id, ctx.telegram_chat_id
+        )
+        if not project_key:
+            return CommandResult("用法: /project-archive <key>")
+
+        exists = self.projects.get_any(project_key)
+        if exists is None:
+            return CommandResult(f"项目不存在: {project_key}")
+        ok = self.projects.archive_project(key=project_key)
+        if not ok:
+            return CommandResult(f"项目不存在: {project_key}")
+
+        self.tasks.sync_projects_from_registry(self.projects)
+        current_active = self.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+        if current_active == project_key:
+            self.tasks.clear_active_project(user.id, ctx.telegram_chat_id)
+        project_id = self.tasks.get_project_id(project_key)
+        self.audit.log(
+            action=audit_events.PROJECT_ARCHIVED,
+            message=f"归档项目: {project_key}",
+            user_id=user.id,
+            project_id=project_id,
+        )
+        return CommandResult(f"项目已归档并停用: {project_key}\n可用 /projects 查看可选项目。")
 
     def _handle_plain_text(self, ctx: CommandContext, text: str) -> CommandResult:
         active = self._resolve_active_project(ctx)
@@ -1267,3 +1379,15 @@ class CommandRouter:
         if first.isdigit():
             return int(first), tail.strip()
         return None, text
+
+    def _parse_project_add_argument(self, argument: str) -> tuple[str, Path, str] | None:
+        text = argument.strip()
+        if not text:
+            return None
+        parts = text.split()
+        if len(parts) < 2:
+            return None
+        key = parts[0].strip()
+        path = Path(parts[1].strip())
+        display_name = " ".join(parts[2:]).strip() if len(parts) > 2 else key
+        return key, path, display_name

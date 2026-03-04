@@ -40,3 +40,10 @@ def test_progress_ack_for_schedule_run() -> None:
     text = reporter.ack_text("/schedule-run")
     assert text is not None
     assert "触发执行" in text
+
+
+def test_progress_ack_for_project_add() -> None:
+    reporter = ProgressReporter()
+    text = reporter.ack_text("/project-add")
+    assert text is not None
+    assert "写入项目注册表" in text

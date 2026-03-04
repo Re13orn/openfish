@@ -46,25 +46,46 @@ class AuditStub:
 
 class ProjectsStub:
     def __init__(self) -> None:
-        self.project = ProjectConfig(
-            key="demo",
-            name="Demo",
-            path=Path("/tmp"),
-            allowed_directories=[Path("/tmp")],
-        )
+        self.projects = {
+            "demo": ProjectConfig(
+                key="demo",
+                name="Demo",
+                path=Path("/tmp"),
+                allowed_directories=[Path("/tmp")],
+            )
+        }
 
     def get(self, key: str) -> ProjectConfig | None:
-        if key == "demo":
-            return self.project
-        return None
+        return self.projects.get(key)
+
+    def get_any(self, key: str) -> ProjectConfig | None:
+        return self.projects.get(key)
 
     def list_keys(self) -> list[str]:
-        return ["demo"]
+        return sorted(self.projects.keys())
 
     def is_path_allowed(self, project: ProjectConfig, candidate_path: Path) -> bool:
         _ = project
         _ = candidate_path
         return True
+
+    def add_project(self, *, key: str, path: Path, name: str | None = None) -> None:
+        self.projects[key] = ProjectConfig(
+            key=key,
+            name=name or key,
+            path=path,
+            allowed_directories=[path],
+        )
+
+    def set_project_active(self, *, key: str, is_active: bool) -> bool:
+        project = self.projects.get(key)
+        if project is None:
+            return False
+        project.is_active = is_active
+        return True
+
+    def archive_project(self, *, key: str) -> bool:
+        return self.set_project_active(key=key, is_active=False)
 
 
 class RepoStub:
@@ -140,6 +161,9 @@ class TasksStub:
         _ = ctx
         return self.user
 
+    def sync_projects_from_registry(self, projects) -> None:  # noqa: ANN001
+        _ = projects
+
     def set_active_project(self, user_id: int, project_key: str, chat_id: str | None = None) -> None:
         _ = user_id
         _ = chat_id
@@ -153,6 +177,11 @@ class TasksStub:
         _ = user_id
         _ = chat_id
         return self.active_project_key
+
+    def clear_active_project(self, user_id: int, chat_id: str | None = None) -> None:
+        _ = user_id
+        _ = chat_id
+        self.active_project_key = None
 
     def create_task(
         self,
@@ -809,3 +838,22 @@ def test_resume_with_task_id_uses_resume_session() -> None:
 
     assert "任务 #1: 已完成" in result.reply_text
     assert "resume_session" in codex.calls
+
+
+def test_project_add_disable_archive_commands() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    added = router.handle(_ctx("/project-add demo2 /tmp Demo2"))
+    disabled = router.handle(_ctx("/project-disable demo2"))
+    archived = router.handle(_ctx("/project-archive demo"))
+
+    assert "项目已新增并切换" in added.reply_text
+    assert "项目已停用: demo2" in disabled.reply_text
+    assert "项目已归档并停用: demo" in archived.reply_text
+    codes = [event[0] for event in audit.events]
+    assert audit_events.PROJECT_ADDED in codes
+    assert audit_events.PROJECT_DISABLED in codes
+    assert audit_events.PROJECT_ARCHIVED in codes

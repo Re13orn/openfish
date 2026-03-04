@@ -108,4 +108,13 @@ def test_run_polling_retries_on_network_error(monkeypatch) -> None:
 def test_menu_text_maps_to_status_command() -> None:
     service = _service()
     assert service._map_menu_to_command("状态") == "/status"
+    assert service._map_menu_to_command("帮助") == "/help"
+    assert service._map_menu_to_command("工具") == "__tools__"
     assert service._map_menu_to_command("unknown") is None
+
+
+def test_callback_token_maps_to_command() -> None:
+    service = _service()
+    assert service._resolve_callback_command("status") == "/status"
+    assert service._resolve_callback_command("project_disable_current") == "/project-disable"
+    assert service._resolve_callback_command("missing") is None

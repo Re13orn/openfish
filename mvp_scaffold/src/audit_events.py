@@ -1,6 +1,9 @@
 """Canonical audit event codes."""
 
 PROJECT_SELECTED = "project.selected"
+PROJECT_ADDED = "project.added"
+PROJECT_DISABLED = "project.disabled"
+PROJECT_ARCHIVED = "project.archived"
 TASK_CREATED = "task.created"
 TASK_STARTED = "task.started"
 TASK_WAITING_APPROVAL = "task.waiting_approval"
@@ -44,6 +47,9 @@ UNKNOWN_EVENT = "system.unknown_event"
 
 ALL_EVENTS = {
     PROJECT_SELECTED,
+    PROJECT_ADDED,
+    PROJECT_DISABLED,
+    PROJECT_ARCHIVED,
     TASK_CREATED,
     TASK_STARTED,
     TASK_WAITING_APPROVAL,

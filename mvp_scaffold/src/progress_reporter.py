@@ -7,6 +7,9 @@ class ProgressReporter:
     _PHASES: dict[str, list[str]] = {
         "/do": ["校验项目", "启动 Codex", "汇总结果"],
         "/ask": ["校验项目", "加载上下文", "启动 Codex"],
+        "/project-add": ["校验参数", "写入项目注册表", "同步状态"],
+        "/project-disable": ["校验项目", "标记停用", "同步状态"],
+        "/project-archive": ["校验项目", "归档并停用", "同步状态"],
         "/run": ["加载模板", "校验项目", "启动 Codex"],
         "/skill-install": ["校验来源", "安装 Skill", "汇总结果"],
         "/schedule-add": ["校验项目", "写入定期任务", "返回配置摘要"],

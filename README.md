@@ -74,6 +74,9 @@ Important transitions should be recorded so you can understand what happened aft
 Supported commands:
 - `/start`
 - `/projects`
+- `/project-add <key> <abs_path> [name]`
+- `/project-disable <key>`
+- `/project-archive <key>`
 - `/use <project>`
 - `/ask <question>`
 - `/do <task>`
@@ -99,6 +102,10 @@ Supported commands:
 - `/note <text>`
 - `/cancel`
 - `/help`
+
+Telegram 快捷按钮已覆盖全部功能命令：
+- 无参命令可直接点击执行（如 `/status`、`/projects`、`/memory`、`/skills`）。
+- 需参数命令会进入“输入引导”模式，下一条消息自动补全前缀（如 `/note`、`/run`、`/schedule-add`、`/project-add`、`/skill-install`）。
 
 ## Suggested architecture
 

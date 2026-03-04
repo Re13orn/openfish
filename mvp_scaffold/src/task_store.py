@@ -88,8 +88,8 @@ class TaskStore:
             connection.execute(
                 """
                 INSERT INTO projects (
-                    project_key, name, path, default_branch, test_command, dev_command, description, stack_summary
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    project_key, name, path, default_branch, test_command, dev_command, description, stack_summary, is_active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_key) DO UPDATE SET
                     name = excluded.name,
                     path = excluded.path,
@@ -98,6 +98,7 @@ class TaskStore:
                     dev_command = excluded.dev_command,
                     description = excluded.description,
                     stack_summary = excluded.stack_summary,
+                    is_active = excluded.is_active,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -109,6 +110,7 @@ class TaskStore:
                     project.dev_command,
                     project.description,
                     None,
+                    1 if project.is_active else 0,
                 ),
             )
             project_id = self.get_project_id(project.key)
@@ -204,6 +206,32 @@ class TaskStore:
             return None
         value = row["default_project_key"]
         return str(value) if value else None
+
+    def clear_active_project(self, user_id: int, chat_id: str | None = None) -> None:
+        connection = self.db.get_connection()
+        connection.execute(
+            """
+            UPDATE user_preferences
+            SET default_project_key = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        if chat_id:
+            try:
+                connection.execute(
+                    """
+                    UPDATE chat_context
+                    SET active_project_key = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND telegram_chat_id = ?
+                    """,
+                    (user_id, chat_id),
+                )
+            except sqlite3.OperationalError:
+                logger.debug("chat_context table not available when clearing active project.")
+        connection.commit()
 
     def get_project_id(self, project_key: str) -> int:
         row = self.db.get_connection().execute(

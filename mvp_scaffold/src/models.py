@@ -19,6 +19,7 @@ class ProjectConfig:
     allowed_directories: list[Path] | None = None
     memory_seed_summary: str | None = None
     seed_notes: list[str] | None = None
+    is_active: bool = True
 
 
 @dataclass(slots=True)

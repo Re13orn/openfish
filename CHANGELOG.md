@@ -20,6 +20,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - SQLite migration `0003_scheduled_tasks.sql` for durable scheduled task state and last-run results.
 - `/resume [task_id] [instruction]` now supports task-scoped resume with session-aware fallback.
 - Telegram polling now auto-recovers from long network outages with indefinite exponential backoff retry.
+- Project lifecycle commands:
+  - `/project-add <key> <abs_path> [name]`
+  - `/project-disable <key>`
+  - `/project-archive <key>`
+- Telegram 按钮面板增强：
+  - 主菜单新增工具/帮助入口，分层面板覆盖全部命令能力。
+  - 参数命令支持“输入引导”模式，点击后下一条消息自动按对应命令执行。
 
 ## [0.1.0] - 2026-03-02
 
