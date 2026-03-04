@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("telegram")
-from telegram.error import TelegramError, TimedOut
+from telegram.error import NetworkError, TelegramError, TimedOut
 
 from src.telegram_adapter import TelegramBotService
 
@@ -24,6 +24,25 @@ class MessageStub:
             raise outcome
         self.sent_texts.append(text)
         return outcome
+
+
+class AppStub:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.handlers = []
+        self.error_handlers = []
+
+    def add_handler(self, handler) -> None:  # noqa: ANN001
+        self.handlers.append(handler)
+
+    def add_error_handler(self, handler) -> None:  # noqa: ANN001
+        self.error_handlers.append(handler)
+
+    def run_polling(self, **kwargs) -> None:  # noqa: ANN003
+        _ = kwargs
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
 
 
 def _service() -> TelegramBotService:
@@ -67,3 +86,19 @@ def test_safe_reply_returns_false_on_telegram_error() -> None:
 
     assert ok is False
     assert message.sent_texts == []
+
+
+def test_run_polling_retries_on_network_error(monkeypatch) -> None:
+    service = _service()
+    first_app = AppStub([NetworkError("connect")])
+    second_app = AppStub([None])
+    apps = [first_app, second_app]
+
+    monkeypatch.setattr(service, "_build_application", lambda: apps.pop(0))
+    monkeypatch.setattr("src.telegram_adapter.time.sleep", lambda _: None)
+
+    service.run_polling()
+
+    assert apps == []
+    assert len(first_app.error_handlers) == 1
+    assert len(second_app.error_handlers) == 1

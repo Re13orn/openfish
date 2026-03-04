@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import random
+import time
 
 from telegram import Update
 from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
@@ -26,7 +28,47 @@ class TelegramBotService:
         self._app: Application | None = None
 
     def run_polling(self) -> None:
-        self._app = (
+        retry_delay = float(getattr(self.config, "telegram_reconnect_initial_delay_seconds", 2.0))
+        max_retry_delay = float(getattr(self.config, "telegram_reconnect_max_delay_seconds", 300.0))
+        jitter_seconds = float(getattr(self.config, "telegram_reconnect_jitter_seconds", 1.0))
+        failure_count = 0
+        while True:
+            self._app = self._build_application()
+            self._register_handlers(self._app)
+            try:
+                self._app.run_polling(
+                    poll_interval=self.config.poll_interval_seconds,
+                    allowed_updates=Update.ALL_TYPES,
+                    close_loop=False,
+                )
+                return
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except (TimedOut, NetworkError) as exc:
+                failure_count += 1
+                logger.warning(
+                    "Telegram polling interrupted by network error (consecutive failures=%s): %s. Retry in %.1fs.",
+                    failure_count,
+                    exc,
+                    retry_delay,
+                )
+            except TelegramError as exc:
+                logger.error("Telegram polling stopped due to Telegram API error: %s", exc)
+                raise
+            except Exception:
+                failure_count += 1
+                logger.exception(
+                    "Telegram polling crashed unexpectedly (consecutive failures=%s). Retry in %.1fs.",
+                    failure_count,
+                    retry_delay,
+                )
+
+            sleep_seconds = retry_delay + random.uniform(0.0, max(0.0, jitter_seconds))
+            time.sleep(sleep_seconds)
+            retry_delay = min(retry_delay * 2, max_retry_delay)
+
+    def _build_application(self) -> Application:
+        return (
             ApplicationBuilder()
             .token(self.config.telegram_bot_token)
             .connect_timeout(20.0)
@@ -35,13 +77,23 @@ class TelegramBotService:
             .pool_timeout(30.0)
             .build()
         )
-        self._app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, self._on_text_message))
-        self._app.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, self._on_document_message))
-        self._app.run_polling(
-            poll_interval=self.config.poll_interval_seconds,
-            allowed_updates=Update.ALL_TYPES,
-            close_loop=False,
-        )
+
+    def _register_handlers(self, app: Application) -> None:
+        app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, self._on_text_message))
+        app.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, self._on_document_message))
+        app.add_error_handler(self._on_application_error)
+
+    async def _on_application_error(
+        self,
+        update: object,  # noqa: ANN401
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        _ = update
+        error = context.error
+        if isinstance(error, (TimedOut, NetworkError)):
+            logger.warning("Telegram application transient network error: %s", error)
+            return
+        logger.exception("Unhandled Telegram application error: %s", error)
 
     async def _on_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message

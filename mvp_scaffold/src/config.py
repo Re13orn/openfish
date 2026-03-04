@@ -36,6 +36,9 @@ class AppConfig:
     skill_install_timeout_seconds: int
     poll_interval_seconds: int
     max_telegram_message_length: int
+    telegram_reconnect_initial_delay_seconds: float
+    telegram_reconnect_max_delay_seconds: float
+    telegram_reconnect_jitter_seconds: float
     enable_scheduler: bool
     schedule_poll_interval_seconds: int
     schedule_missed_run_policy: str
@@ -82,6 +85,15 @@ def load_config() -> AppConfig:
         skill_install_timeout_seconds=int(os.getenv("SKILL_INSTALL_TIMEOUT_SECONDS", "600")),
         poll_interval_seconds=int(os.getenv("TELEGRAM_POLL_INTERVAL_SECONDS", "2")),
         max_telegram_message_length=int(os.getenv("MAX_TELEGRAM_MESSAGE_LENGTH", "3500")),
+        telegram_reconnect_initial_delay_seconds=float(
+            os.getenv("TELEGRAM_RECONNECT_INITIAL_DELAY_SECONDS", "2")
+        ),
+        telegram_reconnect_max_delay_seconds=float(
+            os.getenv("TELEGRAM_RECONNECT_MAX_DELAY_SECONDS", "300")
+        ),
+        telegram_reconnect_jitter_seconds=float(
+            os.getenv("TELEGRAM_RECONNECT_JITTER_SECONDS", "1")
+        ),
         enable_scheduler=_parse_bool(os.getenv("ENABLE_SCHEDULER"), default=True),
         schedule_poll_interval_seconds=int(os.getenv("SCHEDULE_POLL_INTERVAL_SECONDS", "20")),
         schedule_missed_run_policy=schedule_missed_run_policy,

@@ -19,6 +19,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Missed-run policy support for scheduler (`skip` / `catchup_once`).
 - SQLite migration `0003_scheduled_tasks.sql` for durable scheduled task state and last-run results.
 - `/resume [task_id] [instruction]` now supports task-scoped resume with session-aware fallback.
+- Telegram polling now auto-recovers from long network outages with indefinite exponential backoff retry.
 
 ## [0.1.0] - 2026-03-02
 
