@@ -50,6 +50,7 @@ def format_help() -> str:
         "/run <template> [附加说明]\n"
         "/skills\n"
         "/skill-install <source>\n"
+        "/mcp [name]\n"
         "/schedule-add <HH:MM> <ask|do> <text>\n"
         "/schedule-list\n"
         "/schedule-run <id>\n"
@@ -323,6 +324,68 @@ def format_skill_install_result(
     ]
     if command:
         lines.append(f"命令: {' '.join(command)}")
+    return "\n".join(lines)
+
+
+def format_mcp_list(items: list[tuple[str, bool, str, str | None, str | None]]) -> str:
+    if not items:
+        return "当前未配置 MCP 服务。"
+
+    lines = ["MCP 服务："]
+    for name, enabled, transport, target, auth_status in items:
+        status = "启用" if enabled else "停用"
+        auth = f" | 认证: {auth_status}" if auth_status else ""
+        lines.append(f"- {name} [{status}] {transport}{auth}")
+        if target:
+            lines.append(f"  {_clip(target, 100)}")
+    lines.append("详情: /mcp <name>")
+    return "\n".join(lines)
+
+
+def format_mcp_detail(
+    *,
+    name: str,
+    enabled: bool,
+    disabled_reason: str | None,
+    transport_type: str,
+    url: str | None,
+    command: str | None,
+    args: list[str],
+    cwd: str | None,
+    bearer_token_env_var: str | None,
+    auth_status: str | None,
+    startup_timeout_sec: int | None,
+    tool_timeout_sec: int | None,
+    enabled_tools: list[str],
+    disabled_tools: list[str],
+) -> str:
+    lines = [
+        f"MCP: {name}",
+        f"状态: {'启用' if enabled else '停用'}",
+        f"传输: {transport_type}",
+    ]
+    if disabled_reason:
+        lines.append(f"停用原因: {disabled_reason}")
+    if url:
+        lines.append(f"URL: {_clip(url, 150)}")
+    if command:
+        lines.append(f"命令: {_clip(command, 150)}")
+    if args:
+        lines.append(f"参数: {_clip(' '.join(args), 150)}")
+    if cwd:
+        lines.append(f"CWD: {_clip(cwd, 150)}")
+    if bearer_token_env_var:
+        lines.append(f"Token 环境变量: {bearer_token_env_var}")
+    if auth_status:
+        lines.append(f"认证: {auth_status}")
+    if startup_timeout_sec is not None:
+        lines.append(f"启动超时: {startup_timeout_sec}s")
+    if tool_timeout_sec is not None:
+        lines.append(f"工具超时: {tool_timeout_sec}s")
+    if enabled_tools:
+        lines.append(f"启用工具限制: {', '.join(enabled_tools)}")
+    if disabled_tools:
+        lines.append(f"禁用工具限制: {', '.join(disabled_tools)}")
     return "\n".join(lines)
 
 

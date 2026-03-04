@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from src import audit_events
 from src.approval import ApprovalService
 from src.codex_runner import CodexRunResult
+from src.mcp_service import McpDetailResult, McpListResult, McpServerDetail, McpServerSummary
 from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
 from src.repo_inspector import RepoState
 from src.router import CommandRouter
@@ -469,11 +470,62 @@ class SkillsStub:
         return self.install_result
 
 
+class McpStub:
+    def __init__(self) -> None:
+        self.list_result = McpListResult(
+            ok=True,
+            summary="ok",
+            servers=[
+                McpServerSummary(
+                    name="playwright",
+                    enabled=True,
+                    transport_type="stdio",
+                    target="npx",
+                    auth_status="unsupported",
+                )
+            ],
+            stdout="",
+            stderr="",
+            command=["codex", "mcp", "list", "--json"],
+        )
+        self.detail_result = McpDetailResult(
+            ok=True,
+            summary="ok",
+            detail=McpServerDetail(
+                name="playwright",
+                enabled=True,
+                disabled_reason=None,
+                transport_type="stdio",
+                url=None,
+                command="npx",
+                args=["@playwright/mcp@latest"],
+                cwd=None,
+                bearer_token_env_var=None,
+                auth_status="unsupported",
+                startup_timeout_sec=None,
+                tool_timeout_sec=None,
+                enabled_tools=[],
+                disabled_tools=[],
+            ),
+            stdout="",
+            stderr="",
+            command=["codex", "mcp", "get", "playwright", "--json"],
+        )
+
+    def list_servers(self) -> McpListResult:
+        return self.list_result
+
+    def get_server(self, name: str) -> McpDetailResult:
+        _ = name
+        return self.detail_result
+
+
 def _build_router(
     tasks: TasksStub,
     audit: AuditStub,
     codex: CodexStub,
     skills: SkillsStub | None = None,
+    mcp: McpStub | None = None,
 ) -> CommandRouter:
     config = SimpleNamespace(
         allowed_telegram_user_ids={"123"},
@@ -492,6 +544,7 @@ def _build_router(
         repo=RepoStub(),
         approvals=ApprovalService(),
         skills_service=skills,
+        mcp_service=mcp,
     )
 
 
@@ -758,6 +811,23 @@ def test_skill_install_without_argument() -> None:
     result = router.handle(_ctx("/skill-install"))
 
     assert "用法: /skill-install <source>" in result.reply_text
+
+
+def test_mcp_list_and_detail_commands() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    mcp = McpStub()
+    router = _build_router(tasks, audit, codex, mcp=mcp)
+
+    listed = router.handle(_ctx("/mcp"))
+    detail = router.handle(_ctx("/mcp playwright"))
+
+    assert "MCP 服务" in listed.reply_text
+    assert "playwright" in listed.reply_text
+    assert "MCP: playwright" in detail.reply_text
+    codes = [event[0] for event in audit.events]
+    assert audit_events.MCP_VIEWED in codes
 
 
 def test_schedule_add_list_delete() -> None:

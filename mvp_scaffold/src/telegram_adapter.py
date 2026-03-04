@@ -37,6 +37,7 @@ class TelegramBotService:
         "projects": "/projects",
         "templates": "/templates",
         "skills": "/skills",
+        "mcp": "/mcp",
         "schedule_list": "/schedule-list",
         "last": "/last",
         "memory": "/memory",
@@ -67,6 +68,7 @@ class TelegramBotService:
         "project_archive": "/project-archive",
         "approve": "/approve",
         "reject": "/reject",
+        "mcp": "/mcp",
     }
 
     _PROMPT_HINTS = {
@@ -85,6 +87,7 @@ class TelegramBotService:
         "project_archive": "请输入要归档的项目 key。下一条消息将按 /project-archive 执行。",
         "approve": "请输入审批备注。下一条消息将按 /approve 执行。",
         "reject": "请输入拒绝原因。下一条消息将按 /reject 执行。",
+        "mcp": "请输入 MCP 名称（留空则查看列表）。下一条消息将按 /mcp 执行。",
     }
 
     def __init__(self, config, router) -> None:
@@ -598,6 +601,10 @@ class TelegramBotService:
                 [
                     InlineKeyboardButton(text="状态", callback_data="cmd:status"),
                     InlineKeyboardButton(text="定时列表", callback_data="cmd:schedule_list"),
+                ],
+                [
+                    InlineKeyboardButton(text="MCP 列表", callback_data="cmd:mcp"),
+                    InlineKeyboardButton(text="MCP 详情", callback_data="prompt:mcp"),
                 ],
             ]
         )

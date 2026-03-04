@@ -13,6 +13,7 @@ from src.repo_inspector import RepoInspector
 from src.router import CommandRouter
 from src.scheduler import ScheduledTaskService
 from src.skills_service import SkillsService
+from src.mcp_service import McpService
 from src.task_store import TaskStore
 from src.telegram_adapter import TelegramBotService
 
@@ -37,6 +38,10 @@ class Application:
             enable_install=config.enable_skill_install,
             timeout_seconds=config.skill_install_timeout_seconds,
         )
+        self.mcp = McpService(
+            codex_bin=config.codex_bin,
+            timeout_seconds=config.codex_command_timeout_seconds,
+        )
         self.repo = RepoInspector()
         self.router = CommandRouter(
             config=config,
@@ -47,6 +52,7 @@ class Application:
             repo=self.repo,
             approvals=self.approvals,
             skills_service=self.skills,
+            mcp_service=self.mcp,
         )
         self.scheduler = ScheduledTaskService(
             tasks=self.tasks,

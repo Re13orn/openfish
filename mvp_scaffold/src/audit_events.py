@@ -35,6 +35,7 @@ SKILLS_VIEWED = "skill.viewed"
 SKILL_INSTALL_REQUESTED = "skill.install_requested"
 SKILL_INSTALLED = "skill.installed"
 SKILL_INSTALL_FAILED = "skill.install_failed"
+MCP_VIEWED = "mcp.viewed"
 SCHEDULE_CREATED = "schedule.created"
 SCHEDULE_VIEWED = "schedule.viewed"
 SCHEDULE_DELETED = "schedule.deleted"
@@ -80,6 +81,7 @@ ALL_EVENTS = {
     SKILL_INSTALL_REQUESTED,
     SKILL_INSTALLED,
     SKILL_INSTALL_FAILED,
+    MCP_VIEWED,
     SCHEDULE_CREATED,
     SCHEDULE_VIEWED,
     SCHEDULE_DELETED,

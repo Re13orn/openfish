@@ -13,6 +13,7 @@ class ProgressReporter:
         "/project-archive": ["校验项目", "归档并停用", "同步状态"],
         "/run": ["加载模板", "校验项目", "启动 Codex"],
         "/skill-install": ["校验来源", "安装 Skill", "汇总结果"],
+        "/mcp": ["读取 Codex MCP 配置", "汇总结果"],
         "/schedule-add": ["校验项目", "写入定期任务", "返回配置摘要"],
         "/schedule-list": ["读取项目定期任务", "汇总结果"],
         "/schedule-run": ["读取定期任务", "触发执行", "汇总结果"],

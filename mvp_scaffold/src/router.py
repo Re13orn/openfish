@@ -17,6 +17,8 @@ from src.formatters import (
     format_help,
     format_last_task,
     format_memory,
+    format_mcp_detail,
+    format_mcp_list,
     format_project_busy,
     format_projects,
     format_skill_install_result,
@@ -33,6 +35,7 @@ from src.formatters import (
     format_upload_rejected,
     format_use_confirmation,
 )
+from src.mcp_service import McpService
 from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
 from src.project_registry import ProjectRegistry
 from src.redaction import redact_text
@@ -76,6 +79,7 @@ class CommandRouter:
         repo: RepoInspector,
         approvals: ApprovalService,
         skills_service: SkillsService | None = None,
+        mcp_service: McpService | None = None,
     ) -> None:
         self.config = config
         self.projects = projects
@@ -85,6 +89,7 @@ class CommandRouter:
         self.repo = repo
         self.approvals = approvals
         self.skills_service = skills_service
+        self.mcp_service = mcp_service
         self._project_locks: dict[int, LockType] = {}
         self._project_locks_guard = Lock()
 
@@ -122,6 +127,8 @@ class CommandRouter:
             return self._handle_skills(ctx)
         if command == "/skill-install":
             return self._handle_skill_install(ctx, argument)
+        if command == "/mcp":
+            return self._handle_mcp(ctx, argument)
         if command == "/schedule-add":
             return self._handle_schedule_add(ctx, argument)
         if command == "/schedule-list":
@@ -637,6 +644,61 @@ class CommandRouter:
                 ok=result.ok,
                 summary=result.summary,
                 command=result.command,
+            )
+        )
+
+    def _handle_mcp(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.mcp_service is None:
+            return CommandResult("当前未启用 MCP 查看功能。")
+
+        name = argument.strip()
+        if not name:
+            result = self.mcp_service.list_servers()
+            self.audit.log(
+                action=audit_events.MCP_VIEWED,
+                message="用户查看 MCP 列表",
+                user_id=user.id,
+                severity="info" if result.ok else "warning",
+                details={"ok": result.ok, "count": len(result.servers)},
+            )
+            if not result.ok:
+                return CommandResult(f"MCP 列表读取失败：{result.summary}")
+
+            items = [
+                (item.name, item.enabled, item.transport_type, item.target, item.auth_status)
+                for item in result.servers
+            ]
+            return CommandResult(format_mcp_list(items))
+
+        result = self.mcp_service.get_server(name)
+        self.audit.log(
+            action=audit_events.MCP_VIEWED,
+            message=f"用户查看 MCP 详情: {name}",
+            user_id=user.id,
+            severity="info" if result.ok else "warning",
+            details={"ok": result.ok, "name": name[:128]},
+        )
+        if not result.ok or result.detail is None:
+            return CommandResult(f"MCP 详情读取失败：{result.summary}")
+
+        detail = result.detail
+        return CommandResult(
+            format_mcp_detail(
+                name=detail.name,
+                enabled=detail.enabled,
+                disabled_reason=detail.disabled_reason,
+                transport_type=detail.transport_type,
+                url=detail.url,
+                command=detail.command,
+                args=detail.args,
+                cwd=detail.cwd,
+                bearer_token_env_var=detail.bearer_token_env_var,
+                auth_status=detail.auth_status,
+                startup_timeout_sec=detail.startup_timeout_sec,
+                tool_timeout_sec=detail.tool_timeout_sec,
+                enabled_tools=detail.enabled_tools,
+                disabled_tools=detail.disabled_tools,
             )
         )
 

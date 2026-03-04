@@ -54,3 +54,10 @@ def test_progress_ack_for_project_root() -> None:
     text = reporter.ack_text("/project-root")
     assert text is not None
     assert "写入默认项目根目录" in text
+
+
+def test_progress_ack_for_mcp() -> None:
+    reporter = ProgressReporter()
+    text = reporter.ack_text("/mcp")
+    assert text is not None
+    assert "读取 Codex MCP 配置" in text

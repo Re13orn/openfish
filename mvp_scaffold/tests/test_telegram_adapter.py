@@ -116,5 +116,6 @@ def test_menu_text_maps_to_status_command() -> None:
 def test_callback_token_maps_to_command() -> None:
     service = _service()
     assert service._resolve_callback_command("status") == "/status"
+    assert service._resolve_callback_command("mcp") == "/mcp"
     assert service._resolve_callback_command("project_disable_current") == "/project-disable"
     assert service._resolve_callback_command("missing") is None
