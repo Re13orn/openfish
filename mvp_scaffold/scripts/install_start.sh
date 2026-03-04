@@ -13,6 +13,8 @@ PROJECTS_EXAMPLE="$REPO_ROOT/projects.example.yaml"
 PID_FILE="$APP_DIR/data/app.pid"
 LOG_DIR="$APP_DIR/data/logs"
 LOG_FILE="$LOG_DIR/app.out.log"
+STOP_GRACE_SECONDS="${STOP_GRACE_SECONDS:-20}"
+STOP_INT_GRACE_SECONDS="${STOP_INT_GRACE_SECONDS:-5}"
 
 PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 
@@ -569,7 +571,35 @@ is_running() {
   fi
   local pid
   pid="$(cat "$PID_FILE")"
-  [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1
+  if [[ -z "$pid" ]]; then
+    return 1
+  fi
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    return 1
+  fi
+  _is_expected_service_process "$pid"
+}
+
+_is_expected_service_process() {
+  local pid="$1"
+  local cmdline=""
+  cmdline="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ -n "$cmdline" ]] || return 1
+  [[ "$cmdline" == *"-m src.main"* ]]
+}
+
+_wait_process_exit() {
+  local pid="$1"
+  local grace_seconds="$2"
+  local deadline=$((SECONDS + grace_seconds))
+
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    if (( SECONDS >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+  return 0
 }
 
 start_bg() {
@@ -579,6 +609,10 @@ start_bg() {
   if is_running; then
     echo "[start] already running (pid=$(cat "$PID_FILE"))"
     return
+  fi
+  if [[ -f "$PID_FILE" ]]; then
+    echo "[start] removing stale pid file: $PID_FILE"
+    rm -f "$PID_FILE"
   fi
 
   echo "[start] launching in background"
@@ -608,29 +642,48 @@ run_fg() {
 }
 
 stop_bg() {
-  if ! is_running; then
+  if [[ ! -f "$PID_FILE" ]]; then
     echo "[stop] not running"
-    rm -f "$PID_FILE"
     return
   fi
 
   local pid
   pid="$(cat "$PID_FILE")"
+  if [[ -z "$pid" ]]; then
+    echo "[stop] empty pid file, cleaning up"
+    rm -f "$PID_FILE"
+    return
+  fi
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    echo "[stop] process not found, cleaning stale pid file"
+    rm -f "$PID_FILE"
+    return
+  fi
+  if ! _is_expected_service_process "$pid"; then
+    echo "[stop] pid=$pid is not OpenFish service process, refuse to kill. Cleaning pid file."
+    rm -f "$PID_FILE"
+    return
+  fi
+
   echo "[stop] stopping pid=$pid"
-  kill "$pid"
+  kill -TERM "$pid" >/dev/null 2>&1 || true
 
-  for _ in {1..20}; do
-    if kill -0 "$pid" >/dev/null 2>&1; then
-      sleep 0.2
-    else
-      rm -f "$PID_FILE"
-      echo "[stop] stopped"
-      return
-    fi
-  done
+  if _wait_process_exit "$pid" "$STOP_GRACE_SECONDS"; then
+    rm -f "$PID_FILE"
+    echo "[stop] stopped"
+    return
+  fi
 
-  echo "[stop] graceful stop timeout, sending SIGKILL"
-  kill -9 "$pid" >/dev/null 2>&1 || true
+  echo "[stop] graceful stop timeout (${STOP_GRACE_SECONDS}s), sending SIGINT"
+  kill -INT "$pid" >/dev/null 2>&1 || true
+  if _wait_process_exit "$pid" "$STOP_INT_GRACE_SECONDS"; then
+    rm -f "$PID_FILE"
+    echo "[stop] stopped after SIGINT"
+    return
+  fi
+
+  echo "[stop] force stop with SIGKILL"
+  kill -KILL "$pid" >/dev/null 2>&1 || true
   rm -f "$PID_FILE"
 }
 
