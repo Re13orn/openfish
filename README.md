@@ -26,7 +26,7 @@ It lets you control local repositories from Telegram while execution, state, app
 
 ## Architecture
 
-![OpenFish Architecture](docs/ARCHITECTURE.png)
+![OpenFish Architecture](docs/ARCHITECTURE_EN.png)
 
 Detailed architecture notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 

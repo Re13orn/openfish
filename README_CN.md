@@ -26,7 +26,7 @@ OpenFish 面向一个可信 Owner，目标是让你离开工位时也能通过 T
 
 ## 架构图
 
-![OpenFish 架构图](docs/ARCHITECTURE.png)
+![OpenFish 架构图](docs/ARCHITECTURE_CN.png)
 
 架构说明文档： [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 

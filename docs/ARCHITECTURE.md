@@ -11,7 +11,7 @@ OpenFish is a single-process, local-first assistant:
 
 ## Architecture Diagram
 
-![OpenFish Architecture](ARCHITECTURE.png)
+![OpenFish Architecture](ARCHITECTURE_EN.png)
 
 ## Module View
 
