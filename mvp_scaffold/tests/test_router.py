@@ -172,6 +172,7 @@ class TasksStub:
         )
         self.scheduled_tasks: list[ScheduledTaskRecord] = []
         self.next_schedule_id = 1
+        self.cleared_project_session_ids: list[int] = []
 
     def ensure_user(self, ctx: CommandContext) -> UserRecord:
         _ = ctx
@@ -249,6 +250,9 @@ class TasksStub:
 
     def update_repo_state(self, **kwargs) -> None:  # noqa: ANN003
         _ = kwargs
+
+    def clear_project_session_state(self, *, project_id: int) -> None:
+        self.cleared_project_session_ids.append(project_id)
 
     def get_latest_resumable_task(self, project_id: int) -> TaskRecord | None:
         _ = project_id
@@ -940,10 +944,25 @@ def test_project_add_disable_archive_commands() -> None:
     assert "项目已新增并切换" in added.reply_text
     assert "项目已停用: demo2" in disabled.reply_text
     assert "项目已归档并停用: demo" in archived.reply_text
+    assert tasks.cleared_project_session_ids == [tasks.project_id, tasks.project_id]
     codes = [event[0] for event in audit.events]
     assert audit_events.PROJECT_ADDED in codes
     assert audit_events.PROJECT_DISABLED in codes
     assert audit_events.PROJECT_ARCHIVED in codes
+
+
+def test_project_add_reactivates_disabled_project() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    _ = router.handle(_ctx("/project-add demo2 /tmp Demo2"))
+    _ = router.handle(_ctx("/project-disable demo2"))
+    readded = router.handle(_ctx("/project-add demo2"))
+
+    assert "项目已重新启用并切换" in readded.reply_text
+    assert "项目: demo2" in readded.reply_text
 
 
 def test_project_add_without_path_uses_default_root() -> None:

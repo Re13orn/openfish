@@ -105,3 +105,65 @@ def test_cancel_waiting_approval_resolves_pending_approval(tmp_path: Path) -> No
     assert row["status"] == "cancelled"
     assert row["decision_note"] == "Cancelled by user"
     assert row["decided_at"] is not None
+
+
+def test_clear_project_session_state_resets_runtime_fields(tmp_path: Path) -> None:
+    db, store = _setup_store(tmp_path)
+    user = store.ensure_user(
+        CommandContext(
+            telegram_user_id="123",
+            telegram_chat_id="chat-default",
+            telegram_message_id="1",
+            text="/do something",
+        )
+    )
+    project_id = store.get_project_id("p1")
+    task_id = store.create_task(
+        user_id=user.id,
+        project_id=project_id,
+        chat_id="chat-default",
+        message_id="2",
+        command_type="do",
+        original_request="do",
+    )
+    store.update_project_state_after_task(
+        project_id=project_id,
+        task_id=task_id,
+        summary="summary",
+        codex_session_id="sess-1",
+        pending_approval_task_id=task_id,
+        next_step="next",
+    )
+    db.get_connection().execute(
+        """
+        UPDATE project_state
+        SET last_test_command='pytest',
+            last_test_status='passed',
+            last_test_summary='ok'
+        WHERE project_id=?
+        """,
+        (project_id,),
+    )
+    db.get_connection().commit()
+
+    store.clear_project_session_state(project_id=project_id)
+
+    row = db.get_connection().execute(
+        """
+        SELECT last_codex_session_id, last_task_id, last_task_summary,
+               last_test_command, last_test_status, last_test_summary,
+               pending_approval_task_id, next_step
+        FROM project_state
+        WHERE project_id=?
+        """,
+        (project_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["last_codex_session_id"] is None
+    assert row["last_task_id"] is None
+    assert row["last_task_summary"] is None
+    assert row["last_test_command"] is None
+    assert row["last_test_status"] is None
+    assert row["last_test_summary"] is None
+    assert row["pending_approval_task_id"] is None
+    assert row["next_step"] is None

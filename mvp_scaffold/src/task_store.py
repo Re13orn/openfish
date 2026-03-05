@@ -412,6 +412,28 @@ class TaskStore:
         )
         connection.commit()
 
+    def clear_project_session_state(self, *, project_id: int) -> None:
+        """Clear resumable session/runtime pointers for a project."""
+
+        connection = self.db.get_connection()
+        connection.execute(
+            """
+            UPDATE project_state
+            SET last_codex_session_id = NULL,
+                last_task_id = NULL,
+                last_task_summary = NULL,
+                last_test_command = NULL,
+                last_test_status = NULL,
+                last_test_summary = NULL,
+                pending_approval_task_id = NULL,
+                next_step = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE project_id = ?
+            """,
+            (project_id,),
+        )
+        connection.commit()
+
     def get_status_snapshot(self, user_id: int, chat_id: str | None = None) -> StatusSnapshot:
         connection = self.db.get_connection()
         active_project_key = self.get_active_project_key(user_id=user_id, chat_id=chat_id)

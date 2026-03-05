@@ -253,13 +253,52 @@ class CommandRouter:
 
         if not PROJECT_ADD_KEY_PATTERN.match(key):
             return CommandResult("项目 key 非法。只允许字母数字/._-，长度 1-64。")
+        existing = self.projects.get_any(key)
+        if existing is not None:
+            if existing.is_active:
+                return CommandResult(f"项目已存在: {key}")
+
+            requested_path: Path | None = None
+            if path is not None:
+                if not path.is_absolute():
+                    return CommandResult("项目路径必须是绝对路径。")
+                requested_path = path.expanduser().resolve()
+            elif self._get_default_project_root() is not None:
+                requested_path = (self._get_default_project_root() / key).expanduser().resolve()
+
+            ok = self.projects.set_project_active(key=key, is_active=True)
+            if not ok:
+                return CommandResult(f"项目不存在: {key}")
+
+            self.tasks.sync_projects_from_registry(self.projects)
+            self.tasks.set_active_project(user.id, key, ctx.telegram_chat_id)
+            project_id = self.tasks.get_project_id(key)
+            self.audit.log(
+                action=audit_events.PROJECT_ADDED,
+                message=f"重新启用项目: {key}",
+                user_id=user.id,
+                project_id=project_id,
+                details={"requested_path": str(requested_path) if requested_path else None},
+            )
+            project = self.projects.get_any(key)
+            if project is not None:
+                self._refresh_repo_state(project_id=project_id, project=project)
+                path_hint = ""
+                if requested_path and requested_path != project.path:
+                    path_hint = f"\n提示: 已沿用原项目路径 {project.path}。"
+                return CommandResult(
+                    "项目已重新启用并切换。\n"
+                    f"项目: {key}\n"
+                    f"路径: {project.path}"
+                    f"{path_hint}\n"
+                    "可用 /status 查看状态。"
+                )
+            return CommandResult(f"项目已重新启用并切换: {key}")
+
         resolved_path_or_error = self._resolve_project_add_path(key=key, path=path)
         if isinstance(resolved_path_or_error, CommandResult):
             return resolved_path_or_error
         resolved_path, used_default_root = resolved_path_or_error
-        existing = self.projects.get_any(key)
-        if existing is not None:
-            return CommandResult(f"项目已存在: {key}")
 
         try:
             self.projects.add_project(
@@ -346,6 +385,7 @@ class CommandRouter:
         if current_active == project_key:
             self.tasks.clear_active_project(user.id, ctx.telegram_chat_id)
         project_id = self.tasks.get_project_id(project_key)
+        self.tasks.clear_project_session_state(project_id=project_id)
         self.audit.log(
             action=audit_events.PROJECT_DISABLED,
             message=f"停用项目: {project_key}",
@@ -374,6 +414,7 @@ class CommandRouter:
         if current_active == project_key:
             self.tasks.clear_active_project(user.id, ctx.telegram_chat_id)
         project_id = self.tasks.get_project_id(project_key)
+        self.tasks.clear_project_session_state(project_id=project_id)
         self.audit.log(
             action=audit_events.PROJECT_ARCHIVED,
             message=f"归档项目: {project_key}",
