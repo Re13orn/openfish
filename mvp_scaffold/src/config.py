@@ -61,9 +61,11 @@ def load_config() -> AppConfig:
     allowed_upload_extensions = _split_csv(
         os.getenv(
             "ALLOWED_UPLOAD_EXTENSIONS",
-            "txt,md,markdown,json,yaml,yml,xml,csv,log,ini,toml,py,js,ts,tsx,jsx,go,rs,java,kt,swift,sql,html,css,apk",
+            "txt,md,markdown,json,yaml,yml,xml,csv,log,ini,toml,py,js,ts,tsx,jsx,go,rs,java,kt,swift,sql,html,css,apk,zip",
         )
     )
+    normalized_upload_extensions = {ext.lower() for ext in allowed_upload_extensions}
+    normalized_upload_extensions.add("zip")
     schedule_missed_run_policy = os.getenv("SCHEDULE_MISSED_RUN_POLICY", "skip").strip().lower()
     if schedule_missed_run_policy not in {"skip", "catchup_once"}:
         schedule_missed_run_policy = "skip"
@@ -106,5 +108,5 @@ def load_config() -> AppConfig:
         enable_document_upload=_parse_bool(os.getenv("ENABLE_DOCUMENT_UPLOAD"), default=True),
         max_upload_size_bytes=int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(200 * 1024 * 1024))),
         upload_temp_dir_name=os.getenv("UPLOAD_TEMP_DIR_NAME", ".codex_telegram_uploads"),
-        allowed_upload_extensions={ext.lower() for ext in allowed_upload_extensions},
+        allowed_upload_extensions=normalized_upload_extensions,
     )
