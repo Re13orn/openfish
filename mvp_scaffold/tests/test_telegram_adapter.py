@@ -1,16 +1,36 @@
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("telegram")
-from telegram.error import NetworkError, TelegramError, TimedOut
+from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 
 from src.telegram_adapter import TelegramBotService
 
 
 class RouterStub:
     pass
+
+
+class UploadRouterStub:
+    def __init__(self) -> None:
+        self.handle_called = False
+
+    def prepare_document_upload(self, ctx, *, original_name: str, size_bytes: int):  # noqa: ANN001, ANN003
+        _ = ctx
+        return SimpleNamespace(
+            active=SimpleNamespace(project=SimpleNamespace(path=Path("/tmp"))),
+            original_name=original_name,
+            size_bytes=size_bytes,
+            local_path=Path("/tmp/upload.bin"),
+        )
+
+    def handle_uploaded_document(self, **kwargs):  # noqa: ANN003
+        _ = kwargs
+        self.handle_called = True
+        return SimpleNamespace(reply_text="ok")
 
 
 class MessageStub:
@@ -44,6 +64,14 @@ class AppStub:
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
+
+
+class DocumentTooBigStub:
+    file_name = "large.bin"
+    file_size = 999_999_999
+
+    async def get_file(self):  # noqa: ANN201
+        raise BadRequest("File is too big")
 
 
 def _service() -> TelegramBotService:
@@ -119,3 +147,37 @@ def test_callback_token_maps_to_command() -> None:
     assert service._resolve_callback_command("mcp") == "/mcp"
     assert service._resolve_callback_command("project_disable_current") == "/project-disable"
     assert service._resolve_callback_command("missing") is None
+
+
+def test_document_upload_handles_telegram_file_too_big(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = UploadRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    sent_texts: list[str] = []
+
+    async def fake_safe_reply_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+        _ = message
+        _ = context
+        _ = reply_markup
+        sent_texts.append(text)
+        return True
+
+    monkeypatch.setattr(service, "_safe_reply_text", fake_safe_reply_text)
+    update = SimpleNamespace(
+        effective_message=SimpleNamespace(
+            document=DocumentTooBigStub(),
+            caption="/upload",
+            message_id=10,
+        ),
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_document_message(update, SimpleNamespace()))
+
+    assert any("文件过大" in text for text in sent_texts)
+    assert router.handle_called is False

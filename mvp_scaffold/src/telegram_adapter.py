@@ -6,7 +6,7 @@ import random
 import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
-from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
+from telegram.error import BadRequest, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from src.formatters import format_upload_received, truncate_for_telegram
@@ -306,6 +306,28 @@ class TelegramBotService:
                 message,
                 result.reply_text,
                 context="sending upload result",
+                reply_markup=self._main_menu_markup(),
+            )
+        except BadRequest as exc:
+            error_text = str(exc).strip() or "BadRequest"
+            if "file is too big" in error_text.lower():
+                logger.info(
+                    "Telegram rejected oversized document download: name=%s size=%s",
+                    document.file_name,
+                    document.file_size,
+                )
+                await self._safe_reply_text(
+                    message,
+                    "文件过大，Telegram 无法下载该文件。请压缩后重试，或拆分后再上传。\n可用 /upload_policy 查看本地上传限制。",
+                    context="sending oversized upload hint",
+                    reply_markup=self._main_menu_markup(),
+                )
+                return
+            logger.warning("Telegram bad request while processing document: %s", error_text)
+            await self._safe_reply_text(
+                message,
+                f"上传失败：{error_text}",
+                context="sending upload bad request",
                 reply_markup=self._main_menu_markup(),
             )
         except Exception:  # pragma: no cover - defensive logging around external API callbacks
