@@ -105,6 +105,7 @@ class AppStub:
         self.outcomes = list(outcomes)
         self.handlers = []
         self.error_handlers = []
+        self.run_polling_kwargs = None
 
     def add_handler(self, handler) -> None:  # noqa: ANN001
         self.handlers.append(handler)
@@ -113,7 +114,7 @@ class AppStub:
         self.error_handlers.append(handler)
 
     def run_polling(self, **kwargs) -> None:  # noqa: ANN003
-        _ = kwargs
+        self.run_polling_kwargs = kwargs
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -184,6 +185,8 @@ def test_run_polling_retries_on_network_error(monkeypatch) -> None:
     assert apps == []
     assert len(first_app.error_handlers) == 1
     assert len(second_app.error_handlers) == 1
+    assert first_app.run_polling_kwargs["bootstrap_retries"] == -1
+    assert second_app.run_polling_kwargs["bootstrap_retries"] == -1
 
 
 def test_menu_text_maps_to_status_command() -> None:

@@ -109,6 +109,7 @@ class TelegramBotService:
             try:
                 self._app.run_polling(
                     poll_interval=self.config.poll_interval_seconds,
+                    bootstrap_retries=-1,
                     allowed_updates=Update.ALL_TYPES,
                     close_loop=False,
                 )
