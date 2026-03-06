@@ -17,6 +17,7 @@ class RouterStub:
 class WizardTasksStub:
     def __init__(self) -> None:
         self.state = None
+        self.ui_mode = None
         self.user = SimpleNamespace(id=1)
         self.active_project_key = "demo"
         self.recent_projects = ["demo", "ops"]
@@ -46,6 +47,15 @@ class WizardTasksStub:
     def list_recent_project_keys(self, *, user_id: int, limit: int = 6) -> list[str]:
         _ = user_id
         return self.recent_projects[:limit]
+
+    def get_chat_ui_mode(self, *, chat_id: str) -> str | None:
+        _ = chat_id
+        return self.ui_mode
+
+    def set_chat_ui_mode(self, *, chat_id: str, user_id: int, mode: str) -> None:
+        _ = chat_id
+        _ = user_id
+        self.ui_mode = mode
 
     def get_status_snapshot(self, user_id: int, chat_id: str | None = None):  # noqa: ANN201
         _ = user_id
@@ -90,14 +100,20 @@ class MessageStub:
     def __init__(self, outcomes):
         self.outcomes = list(outcomes)
         self.sent_texts: list[str] = []
+        self.sent_markups: list[object] = []
+        self.edit_reply_markup_calls: list[object] = []
 
     async def reply_text(self, text: str, **kwargs):  # noqa: ANN003
-        _ = kwargs
+        self.sent_markups.append(kwargs.get("reply_markup"))
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
         self.sent_texts.append(text)
         return outcome
+
+    async def edit_reply_markup(self, **kwargs):  # noqa: ANN003
+        self.edit_reply_markup_calls.append(kwargs.get("reply_markup"))
+        return object()
 
 
 class AppStub:
@@ -203,6 +219,7 @@ def test_callback_token_maps_to_command() -> None:
     assert service._resolve_callback_command("status") == "/status"
     assert service._resolve_callback_command("mcp") == "/mcp"
     assert service._resolve_callback_command("project_disable_current") == "/project-disable"
+    assert service._resolve_callback_command("ui_summary") == "/ui summary"
     assert service._resolve_callback_command("missing") is None
 
 
@@ -270,3 +287,158 @@ def test_activate_project_add_wizard_persists_state(monkeypatch) -> None:
 
     assert router.tasks.state == {"kind": "project_add", "step": "key", "data": {}}
     assert any("项目新增向导 1/4" in text for text in sent_texts)
+
+
+def test_project_add_path_step_has_default_button() -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+
+    markup = service._wizard_markup({"kind": "project_add", "step": "path", "data": {"key": "demo"}})
+    rows = markup.inline_keyboard
+
+    assert rows[0][0].text == "默认目录"
+    assert rows[0][0].callback_data == "wizard:default"
+    assert rows[0][1].text == "取消"
+
+
+def test_wizard_default_callback_advances_project_add(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    router.tasks.state = {"kind": "project_add", "step": "path", "data": {"key": "demo"}}
+    service = TelegramBotService(config=config, router=router)
+    sent_texts: list[str] = []
+
+    async def fake_safe_reply_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+        _ = message
+        _ = context
+        _ = reply_markup
+        sent_texts.append(text)
+        return True
+
+    monkeypatch.setattr(service, "_safe_reply_text", fake_safe_reply_text)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="chat-1",
+        telegram_message_id="1",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    message = MessageStub([object()])
+    asyncio.run(service._handle_wizard_callback(message, ctx, "wizard:default"))
+
+    assert router.tasks.state == {
+        "kind": "project_add",
+        "step": "name",
+        "data": {"key": "demo", "path": ""},
+    }
+    assert message.edit_reply_markup_calls == [None]
+    assert any("项目新增向导 3/4" in text for text in sent_texts)
+
+
+def test_wizard_callback_with_missing_state_reports_expired(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    sent_texts: list[str] = []
+
+    async def fake_safe_reply_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+        _ = message
+        _ = context
+        _ = reply_markup
+        sent_texts.append(text)
+        return True
+
+    monkeypatch.setattr(service, "_safe_reply_text", fake_safe_reply_text)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="chat-1",
+        telegram_message_id="1",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+    message = MessageStub([object()])
+
+    asyncio.run(service._handle_wizard_callback(message, ctx, "wizard:confirm"))
+
+    assert message.edit_reply_markup_calls == [None]
+    assert any("按钮可能已过期" in text for text in sent_texts)
+
+
+def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    captured = {}
+
+    async def fake_safe_reply_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+        _ = message
+        _ = text
+        _ = context
+        captured["markup"] = reply_markup
+        return True
+
+    monkeypatch.setattr(service, "_safe_reply_text", fake_safe_reply_text)
+
+    asyncio.run(service._send_more_panel(object()))
+
+    markup = captured["markup"]
+    rows = markup.inline_keyboard
+    assert any(button.callback_data == "cmd:ui_summary" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:ui_verbose" for row in rows for button in row)
+
+
+def test_approval_callback_clears_inline_keyboard(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    message = MessageStub([object()])
+    query = SimpleNamespace(
+        message=message,
+        data="approval:approve",
+        answer=lambda *args, **kwargs: None,
+    )
+
+    async def fake_answer(*args, **kwargs):  # noqa: ANN003
+        return None
+
+    query.answer = fake_answer
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_callback_query(update, SimpleNamespace()))
+
+    assert executed == ["/approve"]
+    assert message.edit_reply_markup_calls == [None]

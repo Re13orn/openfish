@@ -68,3 +68,5 @@ sequenceDiagram
 - Local filesystem: source repos, logs, uploaded temp files.
 
 This keeps continuity at project level across service restarts.
+
+See also: [Persistence Architecture](PERSISTENCE_ARCHITECTURE.md)

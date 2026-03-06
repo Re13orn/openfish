@@ -130,8 +130,9 @@ class CodexRunner:
             command.append("--json")
         if self.config.codex_default_sandbox_mode:
             command.extend(["--sandbox", self.config.codex_default_sandbox_mode])
-        if self.config.codex_default_approval_mode:
-            command.extend(["--ask-for-approval", self.config.codex_default_approval_mode])
+        approval_mode = self._effective_approval_mode()
+        if approval_mode:
+            command.extend(["--ask-for-approval", approval_mode])
         command.append(prompt)
         return command
 
@@ -250,6 +251,16 @@ class CodexRunner:
             return self._build_result(fallback_proc, used_json, resolved_command)
 
         return self._build_result(proc, used_json, command)
+
+    def _effective_approval_mode(self) -> str | None:
+        mode = (self.config.codex_default_approval_mode or "").strip()
+        if not mode:
+            return None
+        # OpenFish runs Codex as a non-interactive subprocess. "on-request" can block forever
+        # waiting for CLI-side approval, so rely on OpenFish's own approval workflow instead.
+        if mode == "on-request":
+            return "never"
+        return mode
 
     def _extract_session_id(self, stdout: str, stderr: str) -> str | None:
         for text in (stdout, stderr):

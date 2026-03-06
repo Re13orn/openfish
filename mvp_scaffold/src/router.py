@@ -99,7 +99,7 @@ class CommandRouter:
 
         text = ctx.text.strip()
         if not text:
-            return CommandResult(format_help())
+            return self._handle_help(ctx, "")
         command, _, remainder = text.partition(" ")
         argument = remainder.strip()
         if "@" in command:
@@ -108,7 +108,7 @@ class CommandRouter:
         if command == "/start":
             return self._handle_start(ctx)
         if command == "/help":
-            return CommandResult(format_help())
+            return self._handle_help(ctx, argument)
         if command == "/projects":
             return self._handle_projects(ctx)
         if command == "/project-root":
@@ -129,6 +129,8 @@ class CommandRouter:
             return self._handle_skill_install(ctx, argument)
         if command == "/mcp":
             return self._handle_mcp(ctx, argument)
+        if command == "/ui":
+            return self._handle_ui(ctx, argument)
         if command == "/schedule-add":
             return self._handle_schedule_add(ctx, argument)
         if command == "/schedule-list":
@@ -233,15 +235,41 @@ class CommandRouter:
             metadata={"recent_projects": recent_projects},
         )
 
+    def _chat_ui_mode(self, *, chat_id: str) -> str:
+        return self.tasks.get_chat_ui_mode(chat_id=chat_id) or "summary"
+
+    def _handle_help(self, ctx: CommandContext, argument: str) -> CommandResult:
+        mode_arg = argument.strip().lower()
+        if mode_arg == "verbose":
+            mode = "verbose"
+        elif mode_arg in {"", "show"}:
+            mode = self._chat_ui_mode(chat_id=ctx.telegram_chat_id)
+        else:
+            mode = "summary"
+        return CommandResult(format_help(mode))
+
+    def _handle_ui(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        mode_arg = argument.strip().lower()
+        current = self._chat_ui_mode(chat_id=ctx.telegram_chat_id)
+        if mode_arg in {"", "show"}:
+            return CommandResult(f"当前界面模式: {current}")
+        if mode_arg not in {"summary", "verbose"}:
+            return CommandResult("用法: /ui [show|summary|verbose]")
+        self.tasks.set_chat_ui_mode(chat_id=ctx.telegram_chat_id, user_id=user.id, mode=mode_arg)
+        return CommandResult(f"界面模式已切换为: {mode_arg}")
+
     def _handle_projects(self, ctx: CommandContext) -> CommandResult:
         user = self.tasks.ensure_user(ctx)
         active_project = self.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
         recent_projects = self.tasks.list_recent_project_keys(user_id=user.id)
+        mode = self._chat_ui_mode(chat_id=ctx.telegram_chat_id)
         return CommandResult(
             format_projects(
                 self.projects.list_keys(),
                 active_project_key=active_project,
                 recent_project_keys=recent_projects,
+                mode=mode,
             ),
             metadata={"recent_projects": recent_projects},
         )
@@ -967,8 +995,9 @@ class CommandRouter:
                 self._refresh_repo_state(project_id=project_id, project=project)
 
         snapshot = self.tasks.get_status_snapshot(user.id, ctx.telegram_chat_id)
+        mode = self._chat_ui_mode(chat_id=ctx.telegram_chat_id)
         return CommandResult(
-            redact_text(format_status(snapshot)),
+            redact_text(format_status(snapshot, mode=mode)),
             metadata={"recent_projects": self.tasks.list_recent_project_keys(user_id=user.id)},
         )
 

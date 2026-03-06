@@ -35,7 +35,69 @@ def test_format_status_without_active_project() -> None:
     )
     text = format_status(snapshot)
     assert "当前项目: 未选择" in text
+    assert "【状态·未选项目】" in text
     assert "下一步" in text
+
+
+def test_format_status_summary_mode() -> None:
+    snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id="sess-1",
+        most_recent_task_summary="修复支付回调问题",
+        recent_failed_summary="pytest failed",
+        pending_approval=True,
+        next_schedule_id=3,
+        next_schedule_hhmm="09:30",
+        next_step="批准后继续",
+    )
+    text = format_status(snapshot, mode="summary")
+    assert "路径:" not in text
+    assert "分支:" not in text
+    assert "【状态·待审批】" in text
+    assert "项目: demo" in text
+    assert "审批: 待处理" in text
+
+
+def test_format_status_running_card_title_and_empty_card_title() -> None:
+    running_snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id="sess-1",
+        most_recent_task_summary="执行代码修复",
+        recent_failed_summary=None,
+        pending_approval=False,
+        next_schedule_id=None,
+        next_schedule_hhmm=None,
+        next_step="查看 diff",
+    )
+    idle_snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id=None,
+        most_recent_task_summary=None,
+        recent_failed_summary=None,
+        pending_approval=False,
+        next_schedule_id=None,
+        next_schedule_hhmm=None,
+        next_step=None,
+    )
+
+    running_text = format_status(running_snapshot)
+    idle_text = format_status(idle_snapshot)
+
+    assert "【状态·进行中】" in running_text
+    assert "【状态·空闲】" in idle_text
+    assert "任务: 空闲" in idle_text
 
 
 def test_format_memory_snapshot() -> None:
@@ -88,6 +150,12 @@ def test_help_contains_last_and_retry() -> None:
     assert "/schedule-run <id>" in text
 
 
+def test_help_summary_mode_is_shorter() -> None:
+    text = format_help("summary")
+    assert "/ui summary|verbose" in text
+    assert "/project-add <key> [abs_path] [name]" not in text
+
+
 def test_format_projects_with_recent_section() -> None:
     text = format_projects(
         ["demo", "ops", "lab"],
@@ -98,3 +166,15 @@ def test_format_projects_with_recent_section() -> None:
     assert "最近使用:" in text
     assert "- ops" in text
     assert "其他项目:" in text
+
+
+def test_format_projects_summary_mode() -> None:
+    text = format_projects(
+        ["demo", "ops", "lab"],
+        active_project_key="demo",
+        recent_project_keys=["ops", "demo"],
+        mode="summary",
+    )
+    assert "最近使用: ops" in text
+    assert "可选项目:" in text
+    assert "其他项目:" not in text

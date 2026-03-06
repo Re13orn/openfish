@@ -11,6 +11,7 @@ def test_load_config_always_includes_zip_in_allowed_upload_extensions(monkeypatc
     assert "zip" in config.allowed_upload_extensions
     assert "txt" in config.allowed_upload_extensions
     assert "json" in config.allowed_upload_extensions
+    assert config.process_lock_path.name == "openfish.lock"
 
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ALLOWED_TELEGRAM_USER_IDS", raising=False)

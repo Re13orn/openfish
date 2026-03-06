@@ -1,16 +1,19 @@
 """Persistence helpers for project continuity and task lifecycle."""
 
 from dataclasses import dataclass
-import json
 import logging
 import sqlite3
 from typing import Any
-from uuid import uuid4
 
 from src import audit_events
+from src.approval_store import ApprovalStore
+from src.chat_state_store import ChatStateStore
 from src.db import Database
-from src.models import CommandContext, ProjectConfig, UserRecord
+from src.models import CommandContext, UserRecord
 from src.project_registry import ProjectRegistry
+from src.project_state_store import ProjectStateStore
+from src.schedule_store import ScheduleStore, ScheduledTaskRecord
+from src.task_runtime_store import TaskRuntimeStore
 
 
 logger = logging.getLogger(__name__)
@@ -58,27 +61,16 @@ class MemorySnapshot:
     project_summary: str | None
 
 
-@dataclass(slots=True)
-class ScheduledTaskRecord:
-    id: int
-    user_id: int
-    project_id: int
-    telegram_chat_id: str
-    command_type: str
-    request_text: str
-    minute_of_day: int
-    enabled: bool
-    last_triggered_on: str | None
-    last_task_id: int | None
-    last_run_status: str | None
-    last_run_summary: str | None
-
-
 class TaskStore:
     """Encapsulates SQLite operations for users, projects, and tasks."""
 
     def __init__(self, db: Database) -> None:
         self.db = db
+        self.chat_state = ChatStateStore(db, record_project_use=self._record_project_use)
+        self.approvals = ApprovalStore(db, insert_task_event=self._insert_task_event)
+        self.schedules = ScheduleStore(db)
+        self.project_state = ProjectStateStore(db)
+        self.runtime = TaskRuntimeStore(db)
 
     def sync_projects_from_registry(self, projects: ProjectRegistry) -> None:
         """Mirror YAML registry entries into SQLite project tables."""
@@ -127,7 +119,7 @@ class TaskStore:
                 "INSERT OR IGNORE INTO project_state (project_id) VALUES (?)",
                 (project_id,),
             )
-            self._seed_project_memory(connection, project_id=project_id, project=project)
+            self.project_state.seed_project_memory(connection, project_id=project_id, project=project)
         connection.commit()
 
     def ensure_user(self, ctx: CommandContext) -> UserRecord:
@@ -152,145 +144,32 @@ class TaskStore:
             raise RuntimeError("Failed to load user row after upsert.")
         return UserRecord(id=int(row["id"]), telegram_user_id=str(row["telegram_user_id"]))
 
+    # Chat-scoped state facade.
     def set_active_project(self, user_id: int, project_key: str, chat_id: str | None = None) -> None:
-        connection = self.db.get_connection()
-        connection.execute(
-            """
-            INSERT INTO user_preferences (user_id, default_project_key)
-            VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                default_project_key = excluded.default_project_key,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (user_id, project_key),
-        )
-        if chat_id:
-            try:
-                connection.execute(
-                    """
-                    INSERT INTO chat_context (telegram_chat_id, user_id, active_project_key)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(telegram_chat_id) DO UPDATE SET
-                        user_id = excluded.user_id,
-                        active_project_key = excluded.active_project_key,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (chat_id, user_id, project_key),
-                )
-            except sqlite3.OperationalError:
-                logger.debug("chat_context table not available; fallback to user_preferences only.")
-        self._record_project_use(connection, user_id=user_id, project_key=project_key)
-        connection.commit()
+        self.chat_state.set_active_project(user_id, project_key, chat_id)
 
     def get_active_project_key(self, user_id: int, chat_id: str | None = None) -> str | None:
-        connection = self.db.get_connection()
-        if chat_id:
-            try:
-                row = connection.execute(
-                    """
-                    SELECT active_project_key
-                    FROM chat_context
-                    WHERE user_id = ? AND telegram_chat_id = ?
-                    """,
-                    (user_id, chat_id),
-                ).fetchone()
-                if row and row["active_project_key"]:
-                    return str(row["active_project_key"])
-            except sqlite3.OperationalError:
-                logger.debug("chat_context table not available; fallback to user_preferences only.")
-
-        row = connection.execute(
-            "SELECT default_project_key FROM user_preferences WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        value = row["default_project_key"]
-        return str(value) if value else None
+        return self.chat_state.get_active_project_key(user_id, chat_id)
 
     def clear_active_project(self, user_id: int, chat_id: str | None = None) -> None:
-        connection = self.db.get_connection()
-        connection.execute(
-            """
-            UPDATE user_preferences
-            SET default_project_key = NULL,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ?
-            """,
-            (user_id,),
-        )
-        if chat_id:
-            try:
-                connection.execute(
-                    """
-                    UPDATE chat_context
-                    SET active_project_key = NULL,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE user_id = ? AND telegram_chat_id = ?
-                    """,
-                    (user_id, chat_id),
-                )
-            except sqlite3.OperationalError:
-                logger.debug("chat_context table not available when clearing active project.")
-        connection.commit()
+        self.chat_state.clear_active_project(user_id, chat_id)
 
     def get_chat_wizard_state(self, *, chat_id: str) -> dict[str, Any] | None:
-        connection = self.db.get_connection()
-        try:
-            row = connection.execute(
-                """
-                SELECT pending_flow_json
-                FROM chat_context
-                WHERE telegram_chat_id = ?
-                """,
-                (chat_id,),
-            ).fetchone()
-        except sqlite3.OperationalError:
-            logger.debug("pending_flow_json column not available when loading chat wizard state.")
-            return None
-        if row is None or not row["pending_flow_json"]:
-            return None
-        try:
-            payload = json.loads(str(row["pending_flow_json"]))
-        except json.JSONDecodeError:
-            logger.warning("Invalid pending_flow_json for chat_id=%s", chat_id)
-            return None
-        return payload if isinstance(payload, dict) else None
+        return self.chat_state.get_chat_wizard_state(chat_id=chat_id)
 
     def set_chat_wizard_state(self, *, chat_id: str, user_id: int, state: dict[str, Any]) -> None:
-        connection = self.db.get_connection()
-        try:
-            connection.execute(
-                """
-                INSERT INTO chat_context (telegram_chat_id, user_id, pending_flow_json)
-                VALUES (?, ?, ?)
-                ON CONFLICT(telegram_chat_id) DO UPDATE SET
-                    user_id = excluded.user_id,
-                    pending_flow_json = excluded.pending_flow_json,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (chat_id, user_id, json.dumps(state, ensure_ascii=True)),
-            )
-            connection.commit()
-        except sqlite3.OperationalError:
-            logger.debug("pending_flow_json column not available when storing chat wizard state.")
+        self.chat_state.set_chat_wizard_state(chat_id=chat_id, user_id=user_id, state=state)
 
     def clear_chat_wizard_state(self, *, chat_id: str) -> None:
-        connection = self.db.get_connection()
-        try:
-            connection.execute(
-                """
-                UPDATE chat_context
-                SET pending_flow_json = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE telegram_chat_id = ?
-                """,
-                (chat_id,),
-            )
-            connection.commit()
-        except sqlite3.OperationalError:
-            logger.debug("pending_flow_json column not available when clearing chat wizard state.")
+        self.chat_state.clear_chat_wizard_state(chat_id=chat_id)
 
+    def get_chat_ui_mode(self, *, chat_id: str) -> str | None:
+        return self.chat_state.get_chat_ui_mode(chat_id=chat_id)
+
+    def set_chat_ui_mode(self, *, chat_id: str, user_id: int, mode: str) -> None:
+        self.chat_state.set_chat_ui_mode(chat_id=chat_id, user_id=user_id, mode=mode)
+
+    # User/project registry helpers.
     def list_recent_project_keys(self, *, user_id: int, limit: int = 6) -> list[str]:
         connection = self.db.get_connection()
         try:
@@ -331,6 +210,7 @@ class TaskStore:
         value = row["project_key"]
         return str(value) if value else None
 
+    # Task lifecycle facade.
     def create_task(
         self,
         *,
@@ -341,51 +221,17 @@ class TaskStore:
         command_type: str,
         original_request: str,
     ) -> int:
-        task_uuid = str(uuid4())
-        connection = self.db.get_connection()
-        cursor = connection.execute(
-            """
-            INSERT INTO tasks (
-                task_uuid, user_id, project_id, telegram_chat_id, telegram_message_id, command_type,
-                original_request, normalized_request, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                task_uuid,
-                user_id,
-                project_id,
-                chat_id,
-                message_id,
-                command_type,
-                original_request,
-                original_request.strip(),
-                "created",
-            ),
+        return self.runtime.create_task(
+            user_id=user_id,
+            project_id=project_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            command_type=command_type,
+            original_request=original_request,
         )
-        task_id = int(cursor.lastrowid)
-        self._insert_task_event(
-            connection,
-            task_id,
-            audit_events.TASK_CREATED,
-            f"已创建任务（/{command_type}）",
-        )
-        connection.commit()
-        return task_id
 
     def mark_task_running(self, task_id: int) -> None:
-        connection = self.db.get_connection()
-        connection.execute(
-            """
-            UPDATE tasks
-            SET status = 'running',
-                started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (task_id,),
-        )
-        self._insert_task_event(connection, task_id, audit_events.TASK_STARTED, "任务开始执行")
-        connection.commit()
+        self.runtime.mark_task_running(task_id)
 
     def finalize_task(
         self,
@@ -398,34 +244,20 @@ class TaskStore:
         requires_approval: bool = False,
         pending_approval_action: str | None = None,
     ) -> None:
-        connection = self.db.get_connection()
-        completion_time = "CURRENT_TIMESTAMP" if status in {"completed", "failed", "cancelled"} else "NULL"
-        connection.execute(
-            f"""
-            UPDATE tasks
-            SET status = ?,
-                latest_summary = ?,
-                latest_error = ?,
-                codex_session_id = COALESCE(?, codex_session_id),
-                requires_approval = ?,
-                pending_approval_action = ?,
-                completed_at = {completion_time},
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (
-                status,
-                summary,
-                error,
-                codex_session_id,
-                1 if requires_approval else 0,
-                pending_approval_action,
-                task_id,
-            ),
+        self.runtime.finalize_task(
+            task_id=task_id,
+            status=status,
+            summary=summary,
+            error=error,
+            codex_session_id=codex_session_id,
+            requires_approval=requires_approval,
+            pending_approval_action=pending_approval_action,
         )
-        event_type = self._status_to_event_type(status)
-        self._insert_task_event(connection, task_id, event_type, summary[:250])
-        connection.commit()
+
+    def recover_interrupted_tasks(self) -> list[int]:
+        """Fail stale in-flight tasks after a service restart."""
+
+        return self.runtime.recover_interrupted_tasks()
 
     def add_task_artifact(
         self,
@@ -435,21 +267,14 @@ class TaskStore:
         content: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        connection = self.db.get_connection()
-        connection.execute(
-            """
-            INSERT INTO task_artifacts (task_id, artifact_type, content, metadata_json)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                task_id,
-                artifact_type,
-                content,
-                json.dumps(metadata) if metadata else None,
-            ),
+        self.runtime.add_task_artifact(
+            task_id,
+            artifact_type,
+            content=content,
+            metadata=metadata,
         )
-        connection.commit()
 
+    # Project runtime/memory facade.
     def update_project_state_after_task(
         self,
         *,
@@ -460,61 +285,24 @@ class TaskStore:
         pending_approval_task_id: int | None,
         next_step: str | None = None,
     ) -> None:
-        connection = self.db.get_connection()
-        connection.execute(
-            """
-            UPDATE project_state
-            SET last_task_id = ?,
-                last_task_summary = ?,
-                last_codex_session_id = COALESCE(?, last_codex_session_id),
-                pending_approval_task_id = ?,
-                next_step = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE project_id = ?
-            """,
-            (task_id, summary, codex_session_id, pending_approval_task_id, next_step, project_id),
+        self.project_state.update_project_state_after_task(
+            project_id=project_id,
+            task_id=task_id,
+            summary=summary,
+            codex_session_id=codex_session_id,
+            pending_approval_task_id=pending_approval_task_id,
+            next_step=next_step,
         )
-        connection.commit()
 
     def update_repo_state(self, *, project_id: int, branch: str | None, repo_dirty: bool | None) -> None:
-        connection = self.db.get_connection()
-        repo_dirty_value = None if repo_dirty is None else (1 if repo_dirty else 0)
-        connection.execute(
-            """
-            UPDATE project_state
-            SET current_branch = ?,
-                repo_dirty = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE project_id = ?
-            """,
-            (branch, repo_dirty_value, project_id),
-        )
-        connection.commit()
+        self.project_state.update_repo_state(project_id=project_id, branch=branch, repo_dirty=repo_dirty)
 
     def clear_project_session_state(self, *, project_id: int) -> None:
         """Clear resumable session/runtime pointers for a project."""
 
-        connection = self.db.get_connection()
-        connection.execute(
-            """
-            UPDATE project_state
-            SET last_codex_session_id = NULL,
-                last_task_id = NULL,
-                last_task_summary = NULL,
-                last_test_command = NULL,
-                last_test_status = NULL,
-                last_test_summary = NULL,
-                pending_approval_task_id = NULL,
-                next_step = NULL,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE project_id = ?
-            """,
-            (project_id,),
-        )
-        connection.commit()
+        self.project_state.clear_project_session_state(project_id=project_id)
 
     def get_status_snapshot(self, user_id: int, chat_id: str | None = None) -> StatusSnapshot:
-        connection = self.db.get_connection()
         active_project_key = self.get_active_project_key(user_id=user_id, chat_id=chat_id)
         if active_project_key is None:
             return StatusSnapshot(
@@ -532,25 +320,7 @@ class TaskStore:
                 next_step=None,
             )
 
-        row = connection.execute(
-            """
-            SELECT
-                p.id AS project_id,
-                p.name AS active_project_name,
-                p.path AS project_path,
-                ps.current_branch,
-                ps.repo_dirty,
-                ps.last_codex_session_id,
-                ps.last_task_summary,
-                ps.pending_approval_task_id,
-                ps.next_step
-            FROM projects p
-            LEFT JOIN project_state ps
-                ON ps.project_id = p.id
-            WHERE p.project_key = ?
-            """,
-            (active_project_key,),
-        ).fetchone()
+        row = self.project_state.get_project_status_row(active_project_key=active_project_key)
 
         if row is None:
             return StatusSnapshot(
@@ -575,34 +345,14 @@ class TaskStore:
         next_schedule_id: int | None = None
         next_schedule_hhmm: str | None = None
         try:
-            next_schedule_row = connection.execute(
-                """
-                SELECT id, minute_of_day
-                FROM scheduled_tasks
-                WHERE project_id = ?
-                  AND enabled = 1
-                ORDER BY minute_of_day ASC, id ASC
-                LIMIT 1
-                """,
-                (project_id,),
-            ).fetchone()
+            next_schedule_row = self.project_state.get_next_schedule_row(project_id=project_id)
             if next_schedule_row is not None:
                 next_schedule_id = int(next_schedule_row["id"])
                 next_schedule_hhmm = self._minute_to_hhmm(int(next_schedule_row["minute_of_day"]))
         except sqlite3.OperationalError:
             logger.debug("scheduled_tasks table not available when loading status snapshot.")
 
-        failed_row = connection.execute(
-            """
-            SELECT latest_error, latest_summary
-            FROM tasks
-            WHERE project_id = ?
-              AND status = 'failed'
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (project_id,),
-        ).fetchone()
+        failed_row = self.project_state.get_recent_failed_task_row(project_id=project_id)
         recent_failed_summary = None
         if failed_row is not None:
             recent_failed_summary = (
@@ -630,63 +380,23 @@ class TaskStore:
             next_step=str(row["next_step"]) if row["next_step"] else None,
         )
 
+    # Task lookup and approval orchestration facade.
     def get_latest_task(self, project_id: int) -> TaskRecord | None:
-        row = self.db.get_connection().execute(
-            """
-            SELECT id, command_type, original_request, status, codex_session_id, latest_summary
-            FROM tasks
-            WHERE project_id = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (project_id,),
-        ).fetchone()
+        row = self.runtime.get_latest_task_row(project_id)
         return self._row_to_task(row)
 
     def get_latest_resumable_task(self, project_id: int) -> TaskRecord | None:
-        row = self.db.get_connection().execute(
-            """
-            SELECT id, command_type, original_request, status, codex_session_id, latest_summary
-            FROM tasks
-            WHERE project_id = ?
-              AND status NOT IN ('cancelled', 'rejected')
-              AND (codex_session_id IS NOT NULL OR status IN ('created', 'running', 'failed', 'completed'))
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (project_id,),
-        ).fetchone()
+        row = self.runtime.get_latest_resumable_task_row(project_id)
         return self._row_to_task(row)
 
     def cancel_latest_active_task(self, project_id: int) -> TaskRecord | None:
-        connection = self.db.get_connection()
-        row = connection.execute(
-            """
-            SELECT id, command_type, original_request, status, codex_session_id, latest_summary
-            FROM tasks
-            WHERE project_id = ?
-              AND status IN ('created', 'running', 'waiting_approval')
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (project_id,),
-        ).fetchone()
+        row = self.runtime.get_latest_active_task_row(project_id)
         task = self._row_to_task(row)
         if task is None:
             return None
 
         if task.status == "waiting_approval":
-            connection.execute(
-                """
-                UPDATE approvals
-                SET status = 'cancelled',
-                    decision_note = 'Cancelled by user',
-                    decided_at = CURRENT_TIMESTAMP
-                WHERE task_id = ?
-                  AND status = 'pending'
-                """,
-                (task.id,),
-            )
+            self.approvals.cancel_pending_for_task(task_id=task.id)
 
         cancel_summary = "任务已取消。"
         self.finalize_task(
@@ -706,47 +416,15 @@ class TaskStore:
         )
 
     def get_task(self, task_id: int) -> TaskRecord | None:
-        row = self.db.get_connection().execute(
-            """
-            SELECT id, command_type, original_request, status, codex_session_id, latest_summary
-            FROM tasks
-            WHERE id = ?
-            """,
-            (task_id,),
-        ).fetchone()
+        row = self.runtime.get_task_row(task_id)
         return self._row_to_task(row)
 
     def get_task_for_project(self, *, task_id: int, project_id: int) -> TaskRecord | None:
-        row = self.db.get_connection().execute(
-            """
-            SELECT id, command_type, original_request, status, codex_session_id, latest_summary
-            FROM tasks
-            WHERE id = ?
-              AND project_id = ?
-            """,
-            (task_id, project_id),
-        ).fetchone()
+        row = self.runtime.get_task_for_project_row(task_id=task_id, project_id=project_id)
         return self._row_to_task(row)
 
     def get_pending_approval(self, project_id: int) -> PendingApprovalRecord | None:
-        row = self.db.get_connection().execute(
-            """
-            SELECT
-                a.id AS approval_id,
-                a.task_id AS task_id,
-                a.requested_action,
-                t.latest_summary,
-                t.codex_session_id
-            FROM approvals a
-            JOIN tasks t ON t.id = a.task_id
-            WHERE t.project_id = ?
-              AND a.status = 'pending'
-              AND t.status = 'waiting_approval'
-            ORDER BY a.id DESC
-            LIMIT 1
-            """,
-            (project_id,),
-        ).fetchone()
+        row = self.approvals.get_pending_approval_row(project_id)
         if row is None:
             return None
         return PendingApprovalRecord(
@@ -765,22 +443,13 @@ class TaskStore:
         requested_by_user_id: int,
         approval_kind: str = "codex_action",
     ) -> int:
-        connection = self.db.get_connection()
-        cursor = connection.execute(
-            """
-            INSERT INTO approvals (task_id, approval_kind, requested_action, requested_by_user_id, status)
-            VALUES (?, ?, ?, ?, 'pending')
-            """,
-            (task_id, approval_kind, requested_action, requested_by_user_id),
+        return self.approvals.create_approval_request(
+            task_id=task_id,
+            requested_action=requested_action,
+            requested_by_user_id=requested_by_user_id,
+            approval_kind=approval_kind,
+            event_type=audit_events.APPROVAL_REQUESTED,
         )
-        self._insert_task_event(
-            connection,
-            task_id,
-            audit_events.APPROVAL_REQUESTED,
-            requested_action[:250],
-        )
-        connection.commit()
-        return int(cursor.lastrowid)
 
     def resolve_approval(
         self,
@@ -790,16 +459,12 @@ class TaskStore:
         decided_by_user_id: int,
         decision_note: str | None,
     ) -> None:
-        connection = self.db.get_connection()
-        connection.execute(
-            """
-            UPDATE approvals
-            SET status = ?, decision_note = ?, decided_by_user_id = ?, decided_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (status, decision_note, decided_by_user_id, approval_id),
+        self.approvals.resolve_approval(
+            approval_id=approval_id,
+            status=status,
+            decided_by_user_id=decided_by_user_id,
+            decision_note=decision_note,
         )
-        connection.commit()
 
     def mark_task_waiting_approval(
         self,
@@ -820,25 +485,7 @@ class TaskStore:
         )
 
     def mark_task_resumed_after_approval(self, task_id: int) -> None:
-        connection = self.db.get_connection()
-        connection.execute(
-            """
-            UPDATE tasks
-            SET status = 'running',
-                requires_approval = 0,
-                pending_approval_action = NULL,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (task_id,),
-        )
-        self._insert_task_event(
-            connection,
-            task_id,
-            audit_events.TASK_APPROVAL_RESUMED,
-            "审批通过后继续执行",
-        )
-        connection.commit()
+        self.runtime.mark_task_resumed_after_approval(task_id)
 
     def reject_task(self, *, task_id: int, summary: str) -> None:
         self.finalize_task(
@@ -851,58 +498,23 @@ class TaskStore:
             pending_approval_action=None,
         )
 
+    # Project memory facade.
     def add_project_note(self, *, project_id: int, content: str, title: str | None = None) -> None:
-        connection = self.db.get_connection()
-        connection.execute(
-            """
-            INSERT INTO project_memory (project_id, memory_type, title, content, source, is_pinned)
-            VALUES (?, 'owner_note', ?, ?, 'telegram_note', 0)
-            """,
-            (project_id, title, content),
-        )
-        connection.commit()
+        self.project_state.add_project_note(project_id=project_id, content=content, title=title)
 
     def get_memory_snapshot(self, *, project_id: int, note_limit: int = 5, task_limit: int = 3) -> MemorySnapshot:
-        connection = self.db.get_connection()
-        note_rows = connection.execute(
-            """
-            SELECT content
-            FROM project_memory
-            WHERE project_id = ?
-              AND memory_type = 'owner_note'
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (project_id, note_limit),
-        ).fetchall()
-        task_rows = connection.execute(
-            """
-            SELECT latest_summary
-            FROM tasks
-            WHERE project_id = ?
-              AND latest_summary IS NOT NULL
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (project_id, task_limit),
-        ).fetchall()
-        summary_row = connection.execute(
-            """
-            SELECT content
-            FROM project_memory
-            WHERE project_id = ?
-              AND memory_type = 'summary'
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (project_id,),
-        ).fetchone()
+        payload = self.project_state.get_memory_snapshot_data(
+            project_id=project_id,
+            note_limit=note_limit,
+            task_limit=task_limit,
+        )
         return MemorySnapshot(
-            notes=[str(row["content"]) for row in note_rows],
-            recent_task_summaries=[str(row["latest_summary"]) for row in task_rows if row["latest_summary"]],
-            project_summary=str(summary_row["content"]) if summary_row else None,
+            notes=list(payload["notes"]),
+            recent_task_summaries=list(payload["recent_task_summaries"]),
+            project_summary=payload["project_summary"],
         )
 
+    # Schedule facade.
     def create_scheduled_task(
         self,
         *,
@@ -913,66 +525,20 @@ class TaskStore:
         request_text: str,
         minute_of_day: int,
     ) -> int:
-        connection = self.db.get_connection()
-        cursor = connection.execute(
-            """
-            INSERT INTO scheduled_tasks (
-                user_id, project_id, telegram_chat_id, command_type, request_text, minute_of_day, enabled
-            ) VALUES (?, ?, ?, ?, ?, ?, 1)
-            """,
-            (user_id, project_id, chat_id, command_type, request_text, minute_of_day),
+        return self.schedules.create_scheduled_task(
+            user_id=user_id,
+            project_id=project_id,
+            chat_id=chat_id,
+            command_type=command_type,
+            request_text=request_text,
+            minute_of_day=minute_of_day,
         )
-        connection.commit()
-        return int(cursor.lastrowid)
 
     def list_scheduled_tasks(self, project_id: int) -> list[ScheduledTaskRecord]:
-        rows = self.db.get_connection().execute(
-            """
-            SELECT
-                id,
-                user_id,
-                project_id,
-                telegram_chat_id,
-                command_type,
-                request_text,
-                minute_of_day,
-                enabled,
-                last_triggered_on,
-                last_task_id,
-                last_run_status,
-                last_run_summary
-            FROM scheduled_tasks
-            WHERE project_id = ?
-            ORDER BY minute_of_day ASC, id ASC
-            """,
-            (project_id,),
-        ).fetchall()
-        return [self._row_to_scheduled_task(row) for row in rows]
+        return self.schedules.list_scheduled_tasks(project_id)
 
     def get_scheduled_task(self, *, schedule_id: int, project_id: int) -> ScheduledTaskRecord | None:
-        row = self.db.get_connection().execute(
-            """
-            SELECT
-                id,
-                user_id,
-                project_id,
-                telegram_chat_id,
-                command_type,
-                request_text,
-                minute_of_day,
-                enabled,
-                last_triggered_on,
-                last_task_id,
-                last_run_status,
-                last_run_summary
-            FROM scheduled_tasks
-            WHERE id = ? AND project_id = ?
-            """,
-            (schedule_id, project_id),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_scheduled_task(row)
+        return self.schedules.get_scheduled_task(schedule_id=schedule_id, project_id=project_id)
 
     def set_scheduled_task_enabled(
         self,
@@ -981,30 +547,14 @@ class TaskStore:
         project_id: int,
         enabled: bool,
     ) -> bool:
-        connection = self.db.get_connection()
-        cursor = connection.execute(
-            """
-            UPDATE scheduled_tasks
-            SET enabled = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND project_id = ?
-            """,
-            (1 if enabled else 0, schedule_id, project_id),
+        return self.schedules.set_scheduled_task_enabled(
+            schedule_id=schedule_id,
+            project_id=project_id,
+            enabled=enabled,
         )
-        connection.commit()
-        return cursor.rowcount > 0
 
     def delete_scheduled_task(self, *, schedule_id: int, project_id: int) -> bool:
-        connection = self.db.get_connection()
-        cursor = connection.execute(
-            """
-            DELETE FROM scheduled_tasks
-            WHERE id = ? AND project_id = ?
-            """,
-            (schedule_id, project_id),
-        )
-        connection.commit()
-        return cursor.rowcount > 0
+        return self.schedules.delete_scheduled_task(schedule_id=schedule_id, project_id=project_id)
 
     def claim_due_scheduled_tasks(
         self,
@@ -1014,49 +564,12 @@ class TaskStore:
         include_missed_before: bool = False,
         limit: int = 10,
     ) -> list[ScheduledTaskRecord]:
-        connection = self.db.get_connection()
-        minute_operator = "<=" if include_missed_before else "="
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            rows = connection.execute(
-                f"""
-                SELECT
-                    id,
-                    user_id,
-                    project_id,
-                    telegram_chat_id,
-                    command_type,
-                    request_text,
-                    minute_of_day,
-                    enabled,
-                    last_triggered_on,
-                    last_task_id,
-                    last_run_status,
-                    last_run_summary
-                FROM scheduled_tasks
-                WHERE enabled = 1
-                  AND minute_of_day {minute_operator} ?
-                  AND (last_triggered_on IS NULL OR last_triggered_on < ?)
-                ORDER BY id ASC
-                LIMIT ?
-                """,
-                (minute_of_day, trigger_date, limit),
-            ).fetchall()
-            for row in rows:
-                connection.execute(
-                    """
-                    UPDATE scheduled_tasks
-                    SET last_triggered_on = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (trigger_date, int(row["id"])),
-                )
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        return [self._row_to_scheduled_task(row) for row in rows]
+        return self.schedules.claim_due_scheduled_tasks(
+            minute_of_day=minute_of_day,
+            trigger_date=trigger_date,
+            include_missed_before=include_missed_before,
+            limit=limit,
+        )
 
     def record_scheduled_task_run(
         self,
@@ -1066,20 +579,14 @@ class TaskStore:
         status: str,
         summary: str,
     ) -> None:
-        connection = self.db.get_connection()
-        connection.execute(
-            """
-            UPDATE scheduled_tasks
-            SET last_task_id = ?,
-                last_run_status = ?,
-                last_run_summary = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (task_id, status, summary[:500], schedule_id),
+        self.schedules.record_scheduled_task_run(
+            schedule_id=schedule_id,
+            task_id=task_id,
+            status=status,
+            summary=summary,
         )
-        connection.commit()
 
+    # Shared local helpers for facade composition.
     def _row_to_task(self, row: sqlite3.Row | None) -> TaskRecord | None:
         if row is None:
             return None
@@ -1090,22 +597,6 @@ class TaskStore:
             status=str(row["status"]),
             codex_session_id=str(row["codex_session_id"]) if row["codex_session_id"] else None,
             latest_summary=str(row["latest_summary"]) if row["latest_summary"] else None,
-        )
-
-    def _row_to_scheduled_task(self, row: sqlite3.Row) -> ScheduledTaskRecord:
-        return ScheduledTaskRecord(
-            id=int(row["id"]),
-            user_id=int(row["user_id"]),
-            project_id=int(row["project_id"]),
-            telegram_chat_id=str(row["telegram_chat_id"]),
-            command_type=str(row["command_type"]),
-            request_text=str(row["request_text"]),
-            minute_of_day=int(row["minute_of_day"]),
-            enabled=bool(int(row["enabled"])),
-            last_triggered_on=str(row["last_triggered_on"]) if row["last_triggered_on"] else None,
-            last_task_id=int(row["last_task_id"]) if row["last_task_id"] is not None else None,
-            last_run_status=str(row["last_run_status"]) if row["last_run_status"] else None,
-            last_run_summary=str(row["last_run_summary"]) if row["last_run_summary"] else None,
         )
 
     def _minute_to_hhmm(self, minute_of_day: int) -> str:
@@ -1136,85 +627,10 @@ class TaskStore:
         event_type: str,
         event_summary: str,
     ) -> None:
-        normalized_event_type = self._normalize_task_event_type(event_type)
-        normalized_summary = event_summary
-        if normalized_event_type != event_type:
-            normalized_summary = f"[invalid_event:{event_type}] {event_summary}"
-            logger.warning("Unknown task event type: %s", event_type)
-
-        connection.execute(
-            """
-            INSERT INTO task_events (task_id, event_type, event_summary)
-            VALUES (?, ?, ?)
-            """,
-            (task_id, normalized_event_type, normalized_summary[:250]),
-        )
+        self.runtime.insert_task_event(connection, task_id, event_type, event_summary)
 
     def _status_to_event_type(self, status: str) -> str:
-        mapping = {
-            "created": audit_events.TASK_CREATED,
-            "running": audit_events.TASK_STARTED,
-            "waiting_approval": audit_events.TASK_WAITING_APPROVAL,
-            "completed": audit_events.TASK_COMPLETED,
-            "failed": audit_events.TASK_FAILED,
-            "cancelled": audit_events.TASK_CANCELLED,
-            "rejected": audit_events.TASK_REJECTED,
-        }
-        return mapping.get(status, f"task.status.{status}")
+        return self.runtime._status_to_event_type(status)
 
     def _normalize_task_event_type(self, event_type: str) -> str:
-        if event_type in audit_events.TASK_EVENT_TYPES:
-            return event_type
-        if event_type.startswith("task.status."):
-            return event_type
-        return audit_events.TASK_UNKNOWN_EVENT
-
-    def _seed_project_memory(
-        self,
-        connection: sqlite3.Connection,
-        *,
-        project_id: int,
-        project: ProjectConfig,
-    ) -> None:
-        if project.memory_seed_summary:
-            existing = connection.execute(
-                """
-                SELECT 1
-                FROM project_memory
-                WHERE project_id = ?
-                  AND memory_type = 'summary'
-                  AND source = 'registry_seed'
-                LIMIT 1
-                """,
-                (project_id,),
-            ).fetchone()
-            if existing is None:
-                connection.execute(
-                    """
-                    INSERT INTO project_memory (project_id, memory_type, title, content, source, is_pinned)
-                    VALUES (?, 'summary', 'Project Summary', ?, 'registry_seed', 1)
-                    """,
-                    (project_id, project.memory_seed_summary),
-                )
-
-        for note in project.seed_notes or []:
-            duplicate = connection.execute(
-                """
-                SELECT 1
-                FROM project_memory
-                WHERE project_id = ?
-                  AND memory_type = 'owner_note'
-                  AND content = ?
-                  AND source = 'registry_note'
-                LIMIT 1
-                """,
-                (project_id, note),
-            ).fetchone()
-            if duplicate is None:
-                connection.execute(
-                    """
-                    INSERT INTO project_memory (project_id, memory_type, title, content, source, is_pinned)
-                    VALUES (?, 'owner_note', 'Registry Note', ?, 'registry_note', 0)
-                    """,
-                    (project_id, note),
-                )
+        return self.runtime._normalize_task_event_type(event_type)

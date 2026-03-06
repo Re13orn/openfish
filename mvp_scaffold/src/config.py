@@ -26,6 +26,7 @@ class AppConfig:
     sqlite_path: Path
     schema_path: Path
     migrations_dir: Path
+    process_lock_path: Path
     log_level: str
     codex_bin: str
     codex_json_output: bool
@@ -70,6 +71,9 @@ def load_config() -> AppConfig:
     if schedule_missed_run_policy not in {"skip", "catchup_once"}:
         schedule_missed_run_policy = "skip"
 
+    sqlite_path = Path(os.getenv("SQLITE_PATH", "./data/app.db"))
+    process_lock_path = Path(os.getenv("OPENFISH_LOCK_PATH", str(sqlite_path.parent / "openfish.lock")))
+
     return AppConfig(
         telegram_bot_token=os.environ["TELEGRAM_BOT_TOKEN"],
         allowed_telegram_user_ids=allowed_user_ids,
@@ -79,14 +83,15 @@ def load_config() -> AppConfig:
             if os.getenv("DEFAULT_PROJECT_ROOT", "").strip()
             else None
         ),
-        sqlite_path=Path(os.getenv("SQLITE_PATH", "./data/app.db")),
+        sqlite_path=sqlite_path,
         schema_path=Path(os.getenv("SCHEMA_PATH", str(repo_root / "schema.sql"))),
         migrations_dir=Path(os.getenv("MIGRATIONS_DIR", str(app_root / "migrations"))),
+        process_lock_path=process_lock_path,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         codex_bin=os.getenv("CODEX_BIN", "codex"),
         codex_json_output=_parse_bool(os.getenv("CODEX_JSON_OUTPUT"), default=True),
         codex_default_sandbox_mode=os.getenv("CODEX_DEFAULT_SANDBOX_MODE", "workspace-write"),
-        codex_default_approval_mode=os.getenv("CODEX_DEFAULT_APPROVAL_MODE", "on-request"),
+        codex_default_approval_mode=os.getenv("CODEX_DEFAULT_APPROVAL_MODE", "never"),
         codex_command_timeout_seconds=int(os.getenv("CODEX_COMMAND_TIMEOUT_SECONDS", "1800")),
         codex_home=Path(os.path.expanduser(os.getenv("CODEX_HOME", "~/.codex"))),
         enable_skill_install=_parse_bool(os.getenv("ENABLE_SKILL_INSTALL"), default=True),

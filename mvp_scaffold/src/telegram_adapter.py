@@ -14,6 +14,7 @@ from src.models import CommandContext, CommandResult
 from src.progress_reporter import ProgressReporter
 from src.redaction import redact_text
 from src.task_templates import BUILTIN_TEMPLATES
+from src.telegram_views import TelegramViewFactory
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,9 @@ class TelegramBotService:
         "project_root_show": "/project-root",
         "project_disable_current": "/project-disable",
         "project_archive_current": "/project-archive",
+        "ui_show": "/ui",
+        "ui_summary": "/ui summary",
+        "ui_verbose": "/ui verbose",
     }
 
     _WIZARD_TOKENS = {"project_add", "schedule_add", "run"}
@@ -95,6 +99,7 @@ class TelegramBotService:
         self.config = config
         self.router = router
         self.progress = ProgressReporter()
+        self.views = TelegramViewFactory()
         self._app: Application | None = None
         self._pending_command_by_chat: dict[str, str] = {}
 
@@ -415,9 +420,11 @@ class TelegramBotService:
                 return
             if data == "approval:approve":
                 await self._execute_command(query.message, base_ctx, "/approve")
+                await self._clear_inline_keyboard(query.message)
                 return
             if data == "approval:reject":
                 await self._execute_command(query.message, base_ctx, "/reject")
+                await self._clear_inline_keyboard(query.message)
                 return
             if data == "approval:status":
                 await self._execute_command(query.message, base_ctx, "/status")
@@ -454,6 +461,9 @@ class TelegramBotService:
             if data.startswith("prompt:"):
                 token = data.split(":", 1)[1]
                 await self._activate_prompt(query.message, base_ctx, token)
+                return
+            if data.startswith("wizard:"):
+                await self._handle_wizard_callback(query.message, base_ctx, data)
                 return
             if data.startswith("panel:"):
                 panel = data.split(":", 1)[1]
@@ -525,6 +535,14 @@ class TelegramBotService:
             reply_markup=self._main_menu_markup(),
         )
 
+    async def _clear_inline_keyboard(self, message) -> None:  # noqa: ANN001
+        if not hasattr(message, "edit_reply_markup"):
+            return
+        try:
+            await message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            logger.debug("Failed to clear inline keyboard.", exc_info=True)
+
     async def _execute_command(self, message, base_ctx: CommandContext, text: str) -> None:  # noqa: ANN001
         command = text.strip().split(" ", 1)[0].split("@", 1)[0]
         self._clear_input_modes(base_ctx.telegram_chat_id)
@@ -563,103 +581,37 @@ class TelegramBotService:
         for key in [active_key, *recent_keys, *keys]:
             if key and key not in ordered_keys and key in keys:
                 ordered_keys.append(key)
-        rows: list[list[InlineKeyboardButton]] = []
-        for key in ordered_keys[:10]:
-            label = f"当前: {key}" if key == active_key else f"切换: {key}"
-            rows.append([InlineKeyboardButton(text=label, callback_data=f"use:{key}")])
-        rows.extend(
-            [
-                [InlineKeyboardButton(text="查看项目列表", callback_data="cmd:projects")],
-                [
-                    InlineKeyboardButton(text="新增项目", callback_data="prompt:project_add"),
-                    InlineKeyboardButton(text="设置默认根目录", callback_data="prompt:project_root"),
-                ],
-                [
-                    InlineKeyboardButton(text="查看默认根目录", callback_data="cmd:project_root_show"),
-                    InlineKeyboardButton(text="手输切换", callback_data="prompt:use"),
-                ],
-                [
-                    InlineKeyboardButton(text="停用当前", callback_data="cmd:project_disable_current"),
-                    InlineKeyboardButton(text="归档当前", callback_data="cmd:project_archive_current"),
-                ],
-                [
-                    InlineKeyboardButton(text="停用指定", callback_data="prompt:project_disable"),
-                    InlineKeyboardButton(text="归档指定", callback_data="prompt:project_archive"),
-                ],
-                [InlineKeyboardButton(text="更多操作", callback_data="panel:more")],
-            ]
+        spec = self.views.projects_panel(
+            active_key=active_key,
+            recent_keys=recent_keys,
+            ordered_keys=ordered_keys,
         )
-        lines = ["项目操作："]
-        if active_key:
-            lines.append(f"当前项目: {active_key}")
-        if recent_keys:
-            lines.append("最近项目优先展示，可直接点选切换。")
         await self._safe_reply_text(
             message,
-            "\n".join(lines),
+            spec.text,
             context="sending projects panel",
-            reply_markup=InlineKeyboardMarkup(rows),
+            reply_markup=spec.reply_markup,
         )
 
     async def _send_schedule_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
         await self._execute_command(message, ctx, "/schedule-list")
 
     async def _send_approval_panel(self, message) -> None:  # noqa: ANN001
-        markup = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(text="批准", callback_data="approval:approve"),
-                    InlineKeyboardButton(text="拒绝", callback_data="approval:reject"),
-                ],
-                [
-                    InlineKeyboardButton(text="批准+备注", callback_data="prompt:approve"),
-                    InlineKeyboardButton(text="拒绝+原因", callback_data="prompt:reject"),
-                ],
-                [InlineKeyboardButton(text="查看状态", callback_data="approval:status")],
-            ]
-        )
+        spec = self.views.approval_panel()
         await self._safe_reply_text(
             message,
-            "审批操作：",
+            spec.text,
             context="sending approval panel",
-            reply_markup=markup,
+            reply_markup=spec.reply_markup,
         )
 
     async def _send_more_panel(self, message) -> None:  # noqa: ANN001
-        markup = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
-                    InlineKeyboardButton(text="项目记忆", callback_data="cmd:memory"),
-                ],
-                [
-                    InlineKeyboardButton(text="模板列表", callback_data="cmd:templates"),
-                    InlineKeyboardButton(text="执行模板", callback_data="prompt:run"),
-                ],
-                [
-                    InlineKeyboardButton(text="审批面板", callback_data="panel:approval"),
-                    InlineKeyboardButton(text="上传策略", callback_data="cmd:upload_policy"),
-                ],
-                [
-                    InlineKeyboardButton(text="Skills", callback_data="cmd:skills"),
-                    InlineKeyboardButton(text="安装 Skill", callback_data="prompt:skill_install"),
-                ],
-                [
-                    InlineKeyboardButton(text="MCP 列表", callback_data="cmd:mcp"),
-                    InlineKeyboardButton(text="MCP 详情", callback_data="prompt:mcp"),
-                ],
-                [
-                    InlineKeyboardButton(text="查看根目录", callback_data="cmd:project_root_show"),
-                    InlineKeyboardButton(text="设置根目录", callback_data="prompt:project_root"),
-                ],
-                [InlineKeyboardButton(text="清除输入引导", callback_data="prompt:clear")],
-            ]
-        )
+        spec = self.views.more_panel()
         await self._safe_reply_text(
             message,
-            "更多操作：",
+            spec.text,
             context="sending more panel",
-            reply_markup=markup,
+            reply_markup=spec.reply_markup,
         )
 
     def _display_upload_path(self, plan) -> str:  # noqa: ANN001
@@ -734,16 +686,7 @@ class TelegramBotService:
         return False
 
     def _main_menu_markup(self) -> ReplyKeyboardMarkup:
-        return ReplyKeyboardMarkup(
-            [
-                [self._MENU_PROJECTS, self._MENU_ASK, self._MENU_DO],
-                [self._MENU_STATUS, self._MENU_RESUME, self._MENU_DIFF],
-                [self._MENU_SCHEDULE, self._MENU_MORE, self._MENU_HELP],
-            ],
-            resize_keyboard=True,
-            one_time_keyboard=False,
-            selective=False,
-        )
+        return self.views.main_menu_markup()
 
     def _map_menu_to_command(self, text: str) -> str | None:
         mapping = {
@@ -768,6 +711,62 @@ class TelegramBotService:
         if not hasattr(self.router, "tasks"):
             return None
         return self.router.tasks.get_chat_wizard_state(chat_id=chat_id)
+
+    async def _handle_wizard_callback(
+        self,
+        message,
+        ctx: CommandContext,
+        data: str,
+    ) -> None:  # noqa: ANN001
+        state = self._get_wizard_state(ctx.telegram_chat_id)
+        if state is None:
+            await self._clear_inline_keyboard(message)
+            await self._safe_reply_text(
+                message,
+                "当前向导已结束，按钮可能已过期。请重新开始。",
+                context="sending missing wizard state",
+                reply_markup=self._main_menu_markup(),
+            )
+            return
+
+        if data == "wizard:cancel":
+            self.router.tasks.clear_chat_wizard_state(chat_id=ctx.telegram_chat_id)
+            await self._clear_inline_keyboard(message)
+            await self._safe_reply_text(
+                message,
+                "已取消当前向导。",
+                context="sending wizard cancel",
+                reply_markup=self._main_menu_markup(),
+            )
+            return
+        if data == "wizard:confirm":
+            await self._handle_wizard_input(message, ctx, state, "确认")
+            await self._clear_inline_keyboard(message)
+            return
+        if data == "wizard:default":
+            await self._handle_wizard_input(message, ctx, state, "默认")
+            await self._clear_inline_keyboard(message)
+            return
+        if data == "wizard:skip":
+            await self._handle_wizard_input(message, ctx, state, "跳过")
+            await self._clear_inline_keyboard(message)
+            return
+        if data.startswith("wizard:mode:"):
+            await self._handle_wizard_input(message, ctx, state, data.rsplit(":", 1)[1])
+            await self._clear_inline_keyboard(message)
+            return
+        if data.startswith("wizard:template:"):
+            await self._handle_wizard_input(message, ctx, state, data.split(":", 2)[2])
+            await self._clear_inline_keyboard(message)
+            return
+
+        await self._clear_inline_keyboard(message)
+        await self._safe_reply_text(
+            message,
+            "未识别的向导按钮，可能已过期。",
+            context="sending unknown wizard callback",
+            reply_markup=self._main_menu_markup(),
+        )
 
     async def _maybe_start_wizard_from_result(
         self,
@@ -811,14 +810,11 @@ class TelegramBotService:
             user_id=user.id,
             state=state,
         )
-        prompt = self._wizard_prompt(state)
-        if preface:
-            prompt = f"{preface}\n\n{prompt}"
-        await self._safe_reply_text(
+        await self._send_wizard_prompt(
             message,
-            prompt,
+            state,
+            preface=preface,
             context="sending wizard prompt",
-            reply_markup=self._main_menu_markup(),
         )
 
     def _wizard_prompt(self, state: dict) -> str:
@@ -905,6 +901,102 @@ class TelegramBotService:
             "回复“确认”执行，回复“取消”放弃。"
         )
 
+    def _wizard_markup(self, state: dict) -> InlineKeyboardMarkup:
+        kind = str(state.get("kind") or "")
+        step = str(state.get("step") or "")
+
+        if kind == "project_add":
+            if step == "path" and getattr(self.router.projects, "default_project_root", None) is not None:
+                return InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton(text="默认目录", callback_data="wizard:default"),
+                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
+                    ]]
+                )
+            if step == "name":
+                return InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton(text="跳过命名", callback_data="wizard:skip"),
+                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
+                    ]]
+                )
+            if step == "confirm":
+                return InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton(text="确认创建", callback_data="wizard:confirm"),
+                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
+                    ]]
+                )
+
+        if kind == "schedule_add":
+            if step == "mode":
+                return InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(text="ask", callback_data="wizard:mode:ask"),
+                            InlineKeyboardButton(text="do", callback_data="wizard:mode:do"),
+                        ],
+                        [InlineKeyboardButton(text="取消", callback_data="wizard:cancel")],
+                    ]
+                )
+            if step == "confirm":
+                return InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton(text="确认创建", callback_data="wizard:confirm"),
+                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
+                    ]]
+                )
+
+        if kind == "run":
+            if step == "template":
+                rows: list[list[InlineKeyboardButton]] = []
+                current_row: list[InlineKeyboardButton] = []
+                for key in sorted(BUILTIN_TEMPLATES.keys()):
+                    current_row.append(
+                        InlineKeyboardButton(text=key, callback_data=f"wizard:template:{key}")
+                    )
+                    if len(current_row) == 2:
+                        rows.append(current_row)
+                        current_row = []
+                if current_row:
+                    rows.append(current_row)
+                rows.append([InlineKeyboardButton(text="取消", callback_data="wizard:cancel")])
+                return InlineKeyboardMarkup(rows)
+            if step == "extra":
+                return InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton(text="跳过附加说明", callback_data="wizard:skip"),
+                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
+                    ]]
+                )
+            if step == "confirm":
+                return InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton(text="确认执行", callback_data="wizard:confirm"),
+                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
+                    ]]
+                )
+
+        return InlineKeyboardMarkup([[InlineKeyboardButton(text="取消", callback_data="wizard:cancel")]])
+
+    async def _send_wizard_prompt(
+        self,
+        message,
+        state: dict,
+        *,
+        preface: str | None = None,
+        context: str,
+    ) -> None:  # noqa: ANN001
+        prompt = self._wizard_prompt(state)
+        if preface:
+            prompt = f"{preface}\n\n{prompt}"
+        await self._safe_reply_text(
+            message,
+            prompt,
+            context=context,
+            reply_markup=self._wizard_markup(state),
+        )
+
     async def _handle_wizard_input(
         self,
         message,
@@ -930,21 +1022,19 @@ class TelegramBotService:
                 self.router.tasks.clear_chat_wizard_state(chat_id=ctx.telegram_chat_id)
                 await self._execute_command(message, ctx, command_text)
                 return True
-            await self._safe_reply_text(
+            await self._send_wizard_prompt(
                 message,
-                self._wizard_prompt(state),
+                state,
                 context="sending wizard confirm hint",
-                reply_markup=self._main_menu_markup(),
             )
             return True
 
         next_state = self._advance_wizard_state(state, text)
         if next_state is None:
-            await self._safe_reply_text(
+            await self._send_wizard_prompt(
                 message,
-                self._wizard_prompt(state),
+                state,
                 context="sending wizard retry prompt",
-                reply_markup=self._main_menu_markup(),
             )
             return True
 
@@ -954,11 +1044,10 @@ class TelegramBotService:
             user_id=user.id,
             state=next_state,
         )
-        await self._safe_reply_text(
+        await self._send_wizard_prompt(
             message,
-            self._wizard_prompt(next_state),
+            next_state,
             context="sending wizard next prompt",
-            reply_markup=self._main_menu_markup(),
         )
         return True
 
@@ -1045,30 +1134,7 @@ class TelegramBotService:
         return f"/run {data['template']}"
 
     def _project_shortcuts_markup(self, recent_projects: list[str] | None) -> InlineKeyboardMarkup | ReplyKeyboardMarkup:
-        keys = [key for key in (recent_projects or []) if key]
-        if not keys:
-            return InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton(text="项目面板", callback_data="panel:projects")],
-                    [InlineKeyboardButton(text="新增项目", callback_data="prompt:project_add")],
-                ]
-            )
-        rows: list[list[InlineKeyboardButton]] = []
-        current_row: list[InlineKeyboardButton] = []
-        for key in keys[:6]:
-            current_row.append(InlineKeyboardButton(text=key, callback_data=f"use:{key}"))
-            if len(current_row) == 2:
-                rows.append(current_row)
-                current_row = []
-        if current_row:
-            rows.append(current_row)
-        rows.append(
-            [
-                InlineKeyboardButton(text="项目面板", callback_data="panel:projects"),
-                InlineKeyboardButton(text="新增项目", callback_data="prompt:project_add"),
-            ]
-        )
-        return InlineKeyboardMarkup(rows)
+        return self.views.project_shortcuts_markup(recent_projects)
 
     def _reply_markup_for_result(
         self,
@@ -1079,58 +1145,9 @@ class TelegramBotService:
         if command == "/status":
             user = self.router.tasks.ensure_user(ctx)
             snapshot = self.router.tasks.get_status_snapshot(user.id, ctx.telegram_chat_id)
-            if snapshot.active_project_key is None:
-                recent_projects = (result.metadata or {}).get("recent_projects")
-                return self._project_shortcuts_markup(recent_projects)
-            if snapshot.pending_approval:
-                return InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(text="批准", callback_data="approval:approve"),
-                            InlineKeyboardButton(text="拒绝", callback_data="approval:reject"),
-                        ],
-                        [
-                            InlineKeyboardButton(text="看变更", callback_data="status:diff"),
-                            InlineKeyboardButton(text="定时", callback_data="status:schedule"),
-                        ],
-                        [
-                            InlineKeyboardButton(text="项目", callback_data="status:projects"),
-                            InlineKeyboardButton(text="更多", callback_data="status:more"),
-                        ],
-                    ]
-                )
-            if snapshot.most_recent_task_summary:
-                return InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(text="继续", callback_data="status:resume"),
-                            InlineKeyboardButton(text="看变更", callback_data="status:diff"),
-                        ],
-                        [
-                            InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
-                            InlineKeyboardButton(text="定时", callback_data="status:schedule"),
-                        ],
-                        [
-                            InlineKeyboardButton(text="项目", callback_data="status:projects"),
-                            InlineKeyboardButton(text="更多", callback_data="status:more"),
-                        ],
-                    ]
-                )
-            return InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(text="提问", callback_data="status:ask"),
-                        InlineKeyboardButton(text="执行", callback_data="status:do"),
-                    ],
-                    [
-                        InlineKeyboardButton(text="项目", callback_data="status:projects"),
-                        InlineKeyboardButton(text="定时", callback_data="status:schedule"),
-                    ],
-                    [
-                        InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
-                        InlineKeyboardButton(text="更多", callback_data="status:more"),
-                    ],
-                ]
+            return self.views.status_result_markup(
+                snapshot=snapshot,
+                recent_projects=(result.metadata or {}).get("recent_projects"),
             )
         if command == "/schedule-list":
             active_key = self.router.tasks.get_active_project_key(
@@ -1141,23 +1158,6 @@ class TelegramBotService:
                 return self._main_menu_markup()
             project_id = self.router.tasks.get_project_id(active_key)
             schedules = self.router.tasks.list_scheduled_tasks(project_id)
-            rows: list[list[InlineKeyboardButton]] = [
-                [InlineKeyboardButton(text="新增定时", callback_data="prompt:schedule_add")]
-            ]
-            for item in schedules[:8]:
-                rows.append(
-                    [
-                        InlineKeyboardButton(text=f"运行 #{item.id}", callback_data=f"schedule:run:{item.id}"),
-                        InlineKeyboardButton(
-                            text=("暂停" if item.enabled else "启用"),
-                            callback_data=f"schedule:{'pause' if item.enabled else 'enable'}:{item.id}",
-                        ),
-                        InlineKeyboardButton(text="删除", callback_data=f"schedule:del:{item.id}"),
-                    ]
-                )
-            rows.append([InlineKeyboardButton(text="刷新", callback_data="schedule:refresh")])
-            return InlineKeyboardMarkup(rows)
+            return self.views.schedule_list_markup(schedules)
         recent_projects = (result.metadata or {}).get("recent_projects")
-        if recent_projects:
-            return self._project_shortcuts_markup(recent_projects)
-        return self._main_menu_markup()
+        return self.views.default_result_markup(recent_projects)

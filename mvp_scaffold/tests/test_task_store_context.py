@@ -222,3 +222,100 @@ def test_chat_wizard_state_round_trip(tmp_path: Path) -> None:
 
     store.clear_chat_wizard_state(chat_id="chat-default")
     assert store.get_chat_wizard_state(chat_id="chat-default") is None
+
+
+def test_chat_ui_mode_round_trip(tmp_path: Path) -> None:
+    _, store = _setup_store(tmp_path)
+    user = store.ensure_user(
+        CommandContext(
+            telegram_user_id="123",
+            telegram_chat_id="chat-default",
+            telegram_message_id="1",
+            text="/ui summary",
+        )
+    )
+
+    store.set_chat_ui_mode(chat_id="chat-default", user_id=user.id, mode="summary")
+    assert store.get_chat_ui_mode(chat_id="chat-default") == "summary"
+
+    store.set_chat_ui_mode(chat_id="chat-default", user_id=user.id, mode="verbose")
+    assert store.get_chat_ui_mode(chat_id="chat-default") == "verbose"
+
+
+def test_recover_interrupted_tasks_marks_created_and_running_failed(tmp_path: Path) -> None:
+    db, store = _setup_store(tmp_path)
+    user = store.ensure_user(
+        CommandContext(
+            telegram_user_id="123",
+            telegram_chat_id="chat-default",
+            telegram_message_id="1",
+            text="/do something",
+        )
+    )
+    project_id = store.get_project_id("p1")
+
+    created_task_id = store.create_task(
+        user_id=user.id,
+        project_id=project_id,
+        chat_id="chat-default",
+        message_id="2",
+        command_type="do",
+        original_request="created task",
+    )
+    running_task_id = store.create_task(
+        user_id=user.id,
+        project_id=project_id,
+        chat_id="chat-default",
+        message_id="3",
+        command_type="do",
+        original_request="running task",
+    )
+    waiting_task_id = store.create_task(
+        user_id=user.id,
+        project_id=project_id,
+        chat_id="chat-default",
+        message_id="4",
+        command_type="do",
+        original_request="waiting task",
+    )
+
+    store.mark_task_running(running_task_id)
+    store.mark_task_waiting_approval(
+        task_id=waiting_task_id,
+        summary="等待审批",
+        pending_action="需要审批",
+        codex_session_id="sess-1",
+    )
+
+    recovered_task_ids = store.recover_interrupted_tasks()
+
+    assert recovered_task_ids == [created_task_id, running_task_id]
+
+    rows = db.get_connection().execute(
+        """
+        SELECT id, status, latest_summary, latest_error
+        FROM tasks
+        WHERE id IN (?, ?, ?)
+        ORDER BY id
+        """,
+        (created_task_id, running_task_id, waiting_task_id),
+    ).fetchall()
+    assert [row["status"] for row in rows] == ["failed", "failed", "waiting_approval"]
+    assert rows[0]["latest_summary"] == "任务已中断：OpenFish 服务重启或执行挂起，请使用 /retry 重试。"
+    assert rows[0]["latest_error"] == "Task interrupted before completion."
+
+    event_rows = db.get_connection().execute(
+        """
+        SELECT task_id, event_type
+        FROM task_events
+        WHERE task_id IN (?, ?)
+        ORDER BY id
+        """,
+        (created_task_id, running_task_id),
+    ).fetchall()
+    assert (created_task_id, "task.failed") in {
+        (int(row["task_id"]), str(row["event_type"])) for row in event_rows
+    }
+    assert (running_task_id, "task.failed") in {
+        (int(row["task_id"]), str(row["event_type"])) for row in event_rows
+    }

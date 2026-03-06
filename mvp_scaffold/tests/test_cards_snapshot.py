@@ -18,16 +18,16 @@ def test_status_card_snapshot() -> None:
         next_step="执行 /approve 继续",
     )
     assert format_status(snapshot) == (
-        "【状态】\n"
+        "【状态·待审批】\n"
         "项目: myapp\n"
         "路径: /tmp/myapp\n"
         "分支: main\n"
         "工作区: 干净\n"
         "会话: sess-1\n"
+        "审批: 待处理\n"
         "任务: 修复登录接口 500 并补充测试\n"
         "定时: #3 09:30\n"
         "最近失败: pytest tests/auth failed\n"
-        "审批: 待处理\n"
         "下一步: 执行 /approve 继续"
     )
 

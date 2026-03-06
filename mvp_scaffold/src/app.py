@@ -9,6 +9,7 @@ from src.codex_runner import CodexRunner
 from src.config import AppConfig, load_config
 from src.db import Database
 from src.project_registry import ProjectRegistry
+from src.process_lock import ProcessLock, acquire_process_lock
 from src.repo_inspector import RepoInspector
 from src.router import CommandRouter
 from src.scheduler import ScheduledTaskService
@@ -26,6 +27,7 @@ class Application:
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
+        self.process_lock: ProcessLock | None = None
         self.db = Database(config.sqlite_path, config.schema_path, config.migrations_dir)
         self.projects = ProjectRegistry(config.projects_config_path)
         self.tasks = TaskStore(self.db)
@@ -65,17 +67,29 @@ class Application:
 
     def run(self) -> None:
         self._configure_logging()
+        self.process_lock = acquire_process_lock(self.config.process_lock_path)
+        logger.info("Acquired process lock: %s", self.config.process_lock_path)
         self.projects.load()
         self._run_startup_health_checks()
         self.db.connect()
         self.db.initialize_schema()
         self.tasks.sync_projects_from_registry(self.projects)
+        recovered_task_ids = self.tasks.recover_interrupted_tasks()
+        if recovered_task_ids:
+            logger.warning(
+                "Recovered %d interrupted task(s) on startup: %s",
+                len(recovered_task_ids),
+                ", ".join(str(task_id) for task_id in recovered_task_ids),
+            )
         self.scheduler.start()
         try:
             self.bot.run_polling()
         finally:
             self.scheduler.stop()
             self.db.close_all()
+            if self.process_lock is not None:
+                self.process_lock.release()
+                self.process_lock = None
 
     def _configure_logging(self) -> None:
         logging.basicConfig(

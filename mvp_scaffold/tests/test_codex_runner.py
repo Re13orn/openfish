@@ -58,6 +58,21 @@ def test_fallback_removes_unsupported_approval_flag() -> None:
     assert result.command == runner.commands[1]
 
 
+def test_on_request_approval_mode_is_coerced_to_never_for_noninteractive_runs() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    result = runner.run(_project(), "hello")
+
+    assert result.ok is True
+    assert "--ask-for-approval" in runner.commands[0]
+    approval_flag_index = runner.commands[0].index("--ask-for-approval")
+    assert runner.commands[0][approval_flag_index + 1] == "never"
+
+
 def test_fallback_removes_json_then_approval_flag() -> None:
     runner = StubCodexRunner(
         responses=[

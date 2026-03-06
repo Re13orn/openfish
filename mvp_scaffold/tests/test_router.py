@@ -157,6 +157,7 @@ class TasksStub:
         self.user = UserRecord(id=1, telegram_user_id="123")
         self.active_project_key = "demo"
         self.recent_project_keys = ["demo"]
+        self.ui_mode = None
         self.project_id = 101
         self.next_task_id = 1
         self.pending: PendingApprovalRecord | None = None
@@ -207,6 +208,15 @@ class TasksStub:
     def list_recent_project_keys(self, *, user_id: int, limit: int = 6) -> list[str]:
         _ = user_id
         return self.recent_project_keys[:limit]
+
+    def get_chat_ui_mode(self, *, chat_id: str) -> str | None:
+        _ = chat_id
+        return self.ui_mode
+
+    def set_chat_ui_mode(self, *, chat_id: str, user_id: int, mode: str) -> None:
+        _ = chat_id
+        _ = user_id
+        self.ui_mode = mode
 
     def create_task(
         self,
@@ -681,6 +691,7 @@ def test_plain_text_without_active_project_returns_hint() -> None:
 
 def test_projects_command_prioritizes_current_and_recent() -> None:
     tasks = TasksStub()
+    tasks.ui_mode = "verbose"
     tasks.active_project_key = "demo"
     tasks.recent_project_keys = ["demo", "ops"]
     projects = ProjectsStub()
@@ -714,6 +725,63 @@ def test_projects_command_prioritizes_current_and_recent() -> None:
     assert "当前项目: demo" in result.reply_text
     assert "最近使用:" in result.reply_text
     assert "- ops" in result.reply_text
+
+
+def test_projects_command_uses_summary_ui_mode() -> None:
+    tasks = TasksStub()
+    tasks.ui_mode = "summary"
+    tasks.recent_project_keys = ["demo", "ops"]
+    projects = ProjectsStub()
+    projects.projects["ops"] = ProjectConfig(
+        key="ops",
+        name="Ops",
+        path=Path("/tmp"),
+        allowed_directories=[Path("/tmp")],
+    )
+    router = CommandRouter(
+        SimpleNamespace(
+            allowed_telegram_user_ids={"123"},
+            enable_document_upload=True,
+            max_upload_size_bytes=1024,
+            allowed_upload_extensions={"txt"},
+            upload_temp_dir_name=".tmp",
+            default_project_root=Path("/tmp/openfish_projects"),
+        ),
+        projects,
+        tasks,
+        AuditStub(),
+        CodexStub(_codex_result("unused", ok=True)),
+        RepoStub(),
+        ApprovalService(),
+        skills_service=SkillsStub(),
+        mcp_service=McpStub(),
+    )
+
+    result = router.handle(_ctx("/projects"))
+
+    assert "最近使用: ops" in result.reply_text
+    assert "其他项目:" not in result.reply_text
+
+
+def test_ui_command_sets_chat_mode() -> None:
+    tasks = TasksStub()
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/ui verbose"))
+
+    assert result.reply_text == "界面模式已切换为: verbose"
+    assert tasks.ui_mode == "verbose"
+
+
+def test_help_command_uses_current_ui_mode() -> None:
+    tasks = TasksStub()
+    tasks.ui_mode = "summary"
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/help"))
+
+    assert "更多命令可用 /help verbose 查看。" in result.reply_text
+    assert "/project-add <key> [abs_path] [name]" not in result.reply_text
 
 
 def test_start_and_upload_policy_commands() -> None:

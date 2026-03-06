@@ -24,6 +24,16 @@ def _card(title: str, lines: list[str]) -> str:
     return f"【{title}】\n" + "\n".join(lines)
 
 
+def _status_card_title(snapshot: StatusSnapshot) -> str:
+    if snapshot.active_project_key is None:
+        return "状态"
+    if snapshot.pending_approval:
+        return "状态·待审批"
+    if snapshot.most_recent_task_summary:
+        return "状态·进行中"
+    return "状态·空闲"
+
+
 def truncate_for_telegram(text: str, limit: int = 3500) -> str:
     """Keep Telegram responses under message limits."""
 
@@ -32,8 +42,23 @@ def truncate_for_telegram(text: str, limit: int = 3500) -> str:
     return text[: limit - 3] + "..."
 
 
-def format_help() -> str:
+def format_help(mode: str = "verbose") -> str:
     """Return a short list of supported commands."""
+
+    if mode == "summary":
+        return (
+            "常用命令：\n"
+            "/projects\n"
+            "/use <project>\n"
+            "/ask <question>\n"
+            "/do <task>\n"
+            "/status\n"
+            "/resume [task_id] [instruction]\n"
+            "/diff\n"
+            "/ui summary|verbose\n"
+            "\n"
+            "更多命令可用 /help verbose 查看。"
+        )
 
     return (
         "高频操作：\n"
@@ -71,6 +96,7 @@ def format_help() -> str:
         "/skills\n"
         "/skill-install <source>\n"
         "/mcp [name]\n"
+        "/ui [show|summary|verbose]\n"
         "/upload_policy\n"
         "/cancel\n"
         "\n"
@@ -95,16 +121,37 @@ def format_use_confirmation(
     )
 
 
-def format_status(snapshot: StatusSnapshot) -> str:
+def format_status(snapshot: StatusSnapshot, mode: str = "verbose") -> str:
     """Create the concise /status response."""
 
     if snapshot.active_project_key is None:
-        return (
-            "【状态】\n"
-            "当前项目: 未选择\n"
-            "任务: 暂无\n"
-            "下一步: 先切换项目，再直接提问或执行任务。"
+        return _card(
+            "状态·未选项目",
+            [
+                "当前项目: 未选择",
+                "任务: 暂无",
+                "下一步: 先切换项目，再直接提问或执行任务。",
+            ],
         )
+
+    title = _status_card_title(snapshot)
+    if mode == "summary":
+        lines = [
+            f"项目: {snapshot.active_project_key}",
+            f"审批: {'待处理' if snapshot.pending_approval else '无'}",
+        ]
+        if snapshot.most_recent_task_summary:
+            lines.insert(1, f"任务: {_clip(snapshot.most_recent_task_summary, 80)}")
+        else:
+            lines.insert(1, "任务: 空闲")
+        if snapshot.recent_failed_summary:
+            lines.append(f"最近失败: {_clip(snapshot.recent_failed_summary, 60)}")
+        if snapshot.next_schedule_id and snapshot.next_schedule_hhmm:
+            lines.append(f"定时: #{snapshot.next_schedule_id} {snapshot.next_schedule_hhmm}")
+        else:
+            lines.append("定时: 暂无")
+        lines.append(f"下一步: {_clip(snapshot.next_step, 60) if snapshot.next_step else '暂无'}")
+        return _card(title, lines)
 
     repo_state = "未知"
     if snapshot.repo_dirty is True:
@@ -112,29 +159,28 @@ def format_status(snapshot: StatusSnapshot) -> str:
     if snapshot.repo_dirty is False:
         repo_state = "干净"
 
-    return _card(
-        "状态",
-        [
-            f"项目: {snapshot.active_project_key}",
-            f"路径: {snapshot.project_path or '未知'}",
-            f"分支: {snapshot.current_branch or '未知'}",
-            f"工作区: {repo_state}",
-            f"会话: {snapshot.last_codex_session_id or '暂无'}",
-            f"任务: {_clip(snapshot.most_recent_task_summary, 120) if snapshot.most_recent_task_summary else '暂无'}",
-            (
-                f"定时: #{snapshot.next_schedule_id} {snapshot.next_schedule_hhmm}"
-                if snapshot.next_schedule_id and snapshot.next_schedule_hhmm
-                else "定时: 暂无"
-            ),
-            (
-                f"最近失败: {_clip(snapshot.recent_failed_summary, 100)}"
-                if snapshot.recent_failed_summary
-                else "最近失败: 暂无"
-            ),
-            f"审批: {'待处理' if snapshot.pending_approval else '无'}",
-            f"下一步: {_clip(snapshot.next_step, 100) if snapshot.next_step else '暂无'}",
-        ],
-    )
+    lines = [
+        f"项目: {snapshot.active_project_key}",
+        f"路径: {snapshot.project_path or '未知'}",
+        f"分支: {snapshot.current_branch or '未知'}",
+        f"工作区: {repo_state}",
+        f"会话: {snapshot.last_codex_session_id or '暂无'}",
+        f"审批: {'待处理' if snapshot.pending_approval else '无'}",
+    ]
+    if snapshot.most_recent_task_summary:
+        lines.append(f"任务: {_clip(snapshot.most_recent_task_summary, 120)}")
+    else:
+        lines.append("任务: 空闲")
+    if snapshot.next_schedule_id and snapshot.next_schedule_hhmm:
+        lines.append(f"定时: #{snapshot.next_schedule_id} {snapshot.next_schedule_hhmm}")
+    else:
+        lines.append("定时: 暂无")
+    if snapshot.recent_failed_summary:
+        lines.append(f"最近失败: {_clip(snapshot.recent_failed_summary, 100)}")
+    else:
+        lines.append("最近失败: 暂无")
+    lines.append(f"下一步: {_clip(snapshot.next_step, 100) if snapshot.next_step else '暂无'}")
+    return _card(title, lines)
 
 
 def format_do_result(
@@ -182,6 +228,7 @@ def format_projects(
     *,
     active_project_key: str | None = None,
     recent_project_keys: list[str] | None = None,
+    mode: str = "verbose",
 ) -> str:
     """Render concise /projects output."""
 
@@ -195,6 +242,14 @@ def format_projects(
     recent = [
         key for key in (recent_project_keys or []) if key in project_keys and key != active_project_key
     ]
+    if mode == "summary":
+        if recent:
+            lines.append("最近使用: " + ", ".join(recent[:4]))
+        others = [key for key in project_keys if key not in recent and key != active_project_key]
+        if others:
+            lines.append("可选项目: " + ", ".join(others[:6]))
+        return "\n".join(lines)
+
     if recent:
         lines.append("最近使用:")
         lines.extend(f"- {key}" for key in recent[:5])

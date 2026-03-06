@@ -186,6 +186,7 @@ PROJECTS_CONFIG_PATH=$projects_path
 DEFAULT_PROJECT_ROOT=$default_project_root
 SQLITE_PATH=$sqlite_path
 MIGRATIONS_DIR=$migrations_dir
+OPENFISH_LOCK_PATH=./mvp_scaffold/data/openfish.lock
 DATA_DIR=./mvp_scaffold/data
 LOG_DIR=./mvp_scaffold/data/logs
 ARTIFACTS_DIR=./mvp_scaffold/data/artifacts
@@ -291,7 +292,7 @@ configure_wizard() {
   local msg_len="${MAX_TELEGRAM_MESSAGE_LENGTH:-3500}"
   local timeout="${CODEX_COMMAND_TIMEOUT_SECONDS:-1800}"
   local sandbox_mode="${CODEX_DEFAULT_SANDBOX_MODE:-workspace-write}"
-  local approval_mode="${CODEX_DEFAULT_APPROVAL_MODE:-on-request}"
+  local approval_mode="${CODEX_DEFAULT_APPROVAL_MODE:-never}"
   local json_output="${CODEX_JSON_OUTPUT:-true}"
   local enable_upload="${ENABLE_DOCUMENT_UPLOAD:-true}"
   local max_upload_size="${MAX_UPLOAD_SIZE_BYTES:-209715200}"
@@ -577,6 +578,7 @@ validate_runtime_config() {
   export PROJECTS_CONFIG_PATH="$(normalize_runtime_path "${PROJECTS_CONFIG_PATH:-./projects.yaml}")"
   export SQLITE_PATH="$(normalize_runtime_path "${SQLITE_PATH:-./data/app.db}")"
   export MIGRATIONS_DIR="$(normalize_runtime_path "${MIGRATIONS_DIR:-./migrations}")"
+  export OPENFISH_LOCK_PATH="$(normalize_runtime_path "${OPENFISH_LOCK_PATH:-./data/openfish.lock}")"
   export CODEX_BIN="${CODEX_BIN:-codex}"
 
   if is_placeholder_token; then
@@ -759,6 +761,31 @@ is_running() {
   _is_expected_service_process "$pid"
 }
 
+lock_file_path() {
+  load_env
+  normalize_runtime_path "${OPENFISH_LOCK_PATH:-./data/openfish.lock}"
+}
+
+read_lock_pid() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+  grep -Eo '"pid"[[:space:]]*:[[:space:]]*[0-9]+' "$file" | head -n 1 | grep -Eo '[0-9]+' || true
+}
+
+cleanup_stale_lock_file() {
+  local lock_file="$1"
+  local lock_pid=""
+
+  [[ -f "$lock_file" ]] || return 0
+  lock_pid="$(read_lock_pid "$lock_file")"
+  if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "[start] removing stale lock file: $lock_file"
+  rm -f "$lock_file"
+}
+
 _is_expected_service_process() {
   local pid="$1"
   local cmdline=""
@@ -784,10 +811,20 @@ _wait_process_exit() {
 start_bg() {
   validate_runtime_config
   prepare_dirs
+  local lock_file
+  local lock_pid=""
+  lock_file="$(lock_file_path)"
 
   if is_running; then
     echo "[start] already running (pid=$(cat "$PID_FILE"))"
     return
+  fi
+  cleanup_stale_lock_file "$lock_file"
+  lock_pid="$(read_lock_pid "$lock_file")"
+  if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" >/dev/null 2>&1; then
+    echo "[start] OpenFish lock already held (pid=$lock_pid)"
+    echo "[start] lock file: $lock_file"
+    return 1
   fi
   if [[ -f "$PID_FILE" ]]; then
     echo "[start] removing stale pid file: $PID_FILE"
@@ -867,9 +904,17 @@ stop_bg() {
 }
 
 status_bg() {
+  local lock_file
+  local lock_pid=""
+  lock_file="$(lock_file_path)"
   if is_running; then
     echo "running (pid=$(cat "$PID_FILE"))"
     echo "log: $LOG_FILE"
+    echo "lock: $lock_file"
+  elif [[ -f "$lock_file" ]] && lock_pid="$(read_lock_pid "$lock_file")" && [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" >/dev/null 2>&1; then
+    echo "running (lock pid=$lock_pid, pid file missing)"
+    echo "log: $LOG_FILE"
+    echo "lock: $lock_file"
   else
     echo "stopped"
   fi
