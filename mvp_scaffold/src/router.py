@@ -110,7 +110,7 @@ class CommandRouter:
         if command == "/help":
             return CommandResult(format_help())
         if command == "/projects":
-            return CommandResult(format_projects(self.projects.list_keys()))
+            return self._handle_projects(ctx)
         if command == "/project-root":
             return self._handle_project_root(ctx, argument)
         if command == "/project-add":
@@ -222,12 +222,29 @@ class CommandRouter:
     def _handle_start(self, ctx: CommandContext) -> CommandResult:
         user = self.tasks.ensure_user(ctx)
         active_project = self.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+        recent_projects = self.tasks.list_recent_project_keys(user_id=user.id)
         self.audit.log(
             action=audit_events.START_VIEWED,
             message="用户查看启动引导",
             user_id=user.id,
         )
-        return CommandResult(format_start(active_project))
+        return CommandResult(
+            format_start(active_project, recent_projects),
+            metadata={"recent_projects": recent_projects},
+        )
+
+    def _handle_projects(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        active_project = self.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+        recent_projects = self.tasks.list_recent_project_keys(user_id=user.id)
+        return CommandResult(
+            format_projects(
+                self.projects.list_keys(),
+                active_project_key=active_project,
+                recent_project_keys=recent_projects,
+            ),
+            metadata={"recent_projects": recent_projects},
+        )
 
     def _handle_upload_policy(self, ctx: CommandContext) -> CommandResult:
         user = self.tasks.ensure_user(ctx)
@@ -248,7 +265,10 @@ class CommandRouter:
         user = self.tasks.ensure_user(ctx)
         parsed = self._parse_project_add_argument(argument)
         if parsed is None:
-            return CommandResult("用法: /project-add <key> [abs_path] [name]")
+            return CommandResult(
+                "用法: /project-add <key> [abs_path] [name]\n也可以直接按引导逐步填写。",
+                metadata={"wizard": "project_add"},
+            )
         key, path, name = parsed
 
         if not PROJECT_ADD_KEY_PATTERN.match(key):
@@ -427,7 +447,8 @@ class CommandRouter:
         active = self._resolve_active_project(ctx)
         if isinstance(active, CommandResult):
             return CommandResult(
-                "未识别为命令。请先 /use <project> 选择项目后直接提问，或使用 /help 查看命令。"
+                "未识别为命令。请先切换项目，然后直接发问题或任务。",
+                metadata=active.metadata,
             )
         return self._run_codex_task(
             ctx=ctx,
@@ -596,7 +617,10 @@ class CommandRouter:
 
     def _handle_run_template(self, ctx: CommandContext, argument: str) -> CommandResult:
         if not argument:
-            return CommandResult("用法: /run <template> [附加说明]\n可用 /templates 查看模板。")
+            return CommandResult(
+                "用法: /run <template> [附加说明]\n可用 /templates 查看模板，或直接按引导选择模板。",
+                metadata={"wizard": "run"},
+            )
         template_key, _, extra = argument.partition(" ")
         template = BUILTIN_TEMPLATES.get(template_key.strip())
         if template is None:
@@ -746,7 +770,10 @@ class CommandRouter:
     def _handle_schedule_add(self, ctx: CommandContext, argument: str) -> CommandResult:
         parsed = self._parse_schedule_add_argument(argument)
         if parsed is None:
-            return CommandResult("用法: /schedule-add <HH:MM> <ask|do> <text>")
+            return CommandResult(
+                "用法: /schedule-add <HH:MM> <ask|do> <text>\n也可以直接按引导逐步填写。",
+                metadata={"wizard": "schedule_add"},
+            )
 
         hhmm, minute_of_day, command_type, request_text = parsed
         active = self._resolve_active_project(ctx)
@@ -899,7 +926,11 @@ class CommandRouter:
 
     def _handle_use(self, ctx: CommandContext, project_key: str) -> CommandResult:
         if not project_key:
-            return CommandResult("用法: /use <project>")
+            user = self.tasks.ensure_user(ctx)
+            return CommandResult(
+                "用法: /use <project>\n可直接点“项目”选择最近项目。",
+                metadata={"recent_projects": self.tasks.list_recent_project_keys(user_id=user.id)},
+            )
 
         project = self.projects.get(project_key)
         if project is None:
@@ -936,7 +967,10 @@ class CommandRouter:
                 self._refresh_repo_state(project_id=project_id, project=project)
 
         snapshot = self.tasks.get_status_snapshot(user.id, ctx.telegram_chat_id)
-        return CommandResult(redact_text(format_status(snapshot)))
+        return CommandResult(
+            redact_text(format_status(snapshot)),
+            metadata={"recent_projects": self.tasks.list_recent_project_keys(user_id=user.id)},
+        )
 
     def _handle_last(self, ctx: CommandContext) -> CommandResult:
         active = self._resolve_active_project(ctx)
@@ -1424,11 +1458,19 @@ class CommandRouter:
         user = self.tasks.ensure_user(ctx)
         project_key = self.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
         if not project_key:
-            return CommandResult("未选择活跃项目，请先使用 /use <project>。")
+            recent_projects = self.tasks.list_recent_project_keys(user_id=user.id)
+            return CommandResult(
+                "未选择活跃项目。\n请先点“项目”切换，或使用 /projects 查看项目列表。",
+                metadata={"recent_projects": recent_projects},
+            )
 
         project = self.projects.get(project_key)
         if project is None:
-            return CommandResult(f"当前项目 {project_key} 不在注册表中，请重新执行 /use <project>。")
+            recent_projects = self.tasks.list_recent_project_keys(user_id=user.id)
+            return CommandResult(
+                f"当前项目 {project_key} 不在注册表中，请重新选择项目。",
+                metadata={"recent_projects": recent_projects},
+            )
         if not self.projects.is_path_allowed(project, project.path):
             return CommandResult(f"项目路径超出允许范围: {project.path}")
         if not project.path.exists():

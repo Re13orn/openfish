@@ -57,11 +57,17 @@ OpenFish is not:
 ## Quick Start
 
 ```bash
-cd mvp_scaffold
-bash scripts/install_start.sh
+bash mvp_scaffold/scripts/install_start.sh install
+bash mvp_scaffold/scripts/install_start.sh configure
+bash mvp_scaffold/scripts/install_start.sh check
+bash mvp_scaffold/scripts/install_start.sh start
 ```
 
-Use `configure` in the installer to generate `.env` and `projects.yaml`, then start the service.
+If you do not know your Telegram user ID yet, send `/start` to the bot first, then run:
+
+```bash
+bash mvp_scaffold/scripts/install_start.sh tg-user-id
+```
 
 ## Command Overview
 
@@ -83,7 +89,7 @@ Extended commands:
 Telegram quick buttons cover all command capabilities:
 
 - no-arg commands execute directly
-- arg-required commands enter guided input mode and apply prefix to the next message
+- high-friction commands enter persisted step-by-step wizards
 
 ## Documentation
 

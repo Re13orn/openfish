@@ -14,6 +14,59 @@ class RouterStub:
     pass
 
 
+class WizardTasksStub:
+    def __init__(self) -> None:
+        self.state = None
+        self.user = SimpleNamespace(id=1)
+        self.active_project_key = "demo"
+        self.recent_projects = ["demo", "ops"]
+
+    def ensure_user(self, ctx):  # noqa: ANN001
+        _ = ctx
+        return self.user
+
+    def clear_chat_wizard_state(self, *, chat_id: str) -> None:
+        _ = chat_id
+        self.state = None
+
+    def get_chat_wizard_state(self, *, chat_id: str):  # noqa: ANN201
+        _ = chat_id
+        return self.state
+
+    def set_chat_wizard_state(self, *, chat_id: str, user_id: int, state: dict) -> None:
+        _ = chat_id
+        _ = user_id
+        self.state = state
+
+    def get_active_project_key(self, user_id: int, chat_id: str | None = None) -> str | None:
+        _ = user_id
+        _ = chat_id
+        return self.active_project_key
+
+    def list_recent_project_keys(self, *, user_id: int, limit: int = 6) -> list[str]:
+        _ = user_id
+        return self.recent_projects[:limit]
+
+    def get_status_snapshot(self, user_id: int, chat_id: str | None = None):  # noqa: ANN201
+        _ = user_id
+        _ = chat_id
+        return SimpleNamespace(
+            active_project_key=None,
+            pending_approval=False,
+            most_recent_task_summary=None,
+        )
+
+
+class WizardRouterStub:
+    def __init__(self) -> None:
+        self.tasks = WizardTasksStub()
+        self.projects = SimpleNamespace(default_project_root=Path("/tmp/projects"))
+
+    def handle(self, ctx):  # noqa: ANN001, ANN201
+        _ = ctx
+        return SimpleNamespace(reply_text="ok", metadata=None)
+
+
 class UploadRouterStub:
     def __init__(self) -> None:
         self.handle_called = False
@@ -137,7 +190,8 @@ def test_menu_text_maps_to_status_command() -> None:
     service = _service()
     assert service._map_menu_to_command("状态") == "/status"
     assert service._map_menu_to_command("帮助") == "/help"
-    assert service._map_menu_to_command("工具") == "__tools__"
+    assert service._map_menu_to_command("提问") == "__ask__"
+    assert service._map_menu_to_command("更多") == "__more__"
     assert service._map_menu_to_command("unknown") is None
 
 
@@ -181,3 +235,35 @@ def test_document_upload_handles_telegram_file_too_big(monkeypatch) -> None:
 
     assert any("文件过大" in text for text in sent_texts)
     assert router.handle_called is False
+
+
+def test_activate_project_add_wizard_persists_state(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    sent_texts: list[str] = []
+
+    async def fake_safe_reply_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+        _ = message
+        _ = context
+        _ = reply_markup
+        sent_texts.append(text)
+        return True
+
+    monkeypatch.setattr(service, "_safe_reply_text", fake_safe_reply_text)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="chat-1",
+        telegram_message_id="1",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._activate_prompt(object(), ctx, "project_add"))
+
+    assert router.tasks.state == {"kind": "project_add", "step": "key", "data": {}}
+    assert any("项目新增向导 1/4" in text for text in sent_texts)

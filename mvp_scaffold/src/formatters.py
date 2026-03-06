@@ -36,41 +36,45 @@ def format_help() -> str:
     """Return a short list of supported commands."""
 
     return (
-        "可用命令：\n"
-        "/start\n"
+        "高频操作：\n"
         "/projects\n"
+        "/use <project>\n"
+        "/ask <question>\n"
+        "/do <task>\n"
+        "/status\n"
+        "/resume [task_id] [instruction]\n"
+        "/diff\n"
+        "\n"
+        "项目与模板：\n"
         "/project-root [abs_path]\n"
         "/project-add <key> [abs_path] [name]\n"
         "/project-disable <key>\n"
         "/project-archive <key>\n"
-        "/use <project>\n"
-        "/ask <question>\n"
-        "/do <task>\n"
         "/templates\n"
         "/run <template> [附加说明]\n"
-        "/skills\n"
-        "/skill-install <source>\n"
-        "/mcp [name]\n"
+        "\n"
+        "定时与审批：\n"
         "/schedule-add <HH:MM> <ask|do> <text>\n"
         "/schedule-list\n"
         "/schedule-run <id>\n"
         "/schedule-pause <id>\n"
         "/schedule-enable <id>\n"
         "/schedule-del <id>\n"
-        "/last\n"
-        "/retry [附加说明]\n"
-        "/resume\n"
         "/approve [note]\n"
         "/reject [reason]\n"
+        "\n"
+        "其他：\n"
+        "/last\n"
+        "/retry [附加说明]\n"
         "/memory\n"
         "/note <text>\n"
-        "/cancel\n"
-        "/diff\n"
+        "/skills\n"
+        "/skill-install <source>\n"
+        "/mcp [name]\n"
         "/upload_policy\n"
-        "/status\n"
-        "/help\n"
-        "发送文档文件（受大小与后缀限制）可自动分析\n"
-        "直接发送普通文本会按 /ask 处理（需先 /use 选项目）"
+        "/cancel\n"
+        "\n"
+        "直接发送普通文本会按 /ask 处理。未选项目时，可先点“项目”或使用 /projects。"
     )
 
 
@@ -95,7 +99,12 @@ def format_status(snapshot: StatusSnapshot) -> str:
     """Create the concise /status response."""
 
     if snapshot.active_project_key is None:
-        return "未选择活跃项目。\n请先使用 /use <project>。"
+        return (
+            "【状态】\n"
+            "当前项目: 未选择\n"
+            "任务: 暂无\n"
+            "下一步: 先切换项目，再直接提问或执行任务。"
+        )
 
     repo_state = "未知"
     if snapshot.repo_dirty is True:
@@ -168,12 +177,33 @@ def format_last_task(*, project_key: str, task: TaskRecord | None) -> str:
     )
 
 
-def format_projects(project_keys: list[str]) -> str:
+def format_projects(
+    project_keys: list[str],
+    *,
+    active_project_key: str | None = None,
+    recent_project_keys: list[str] | None = None,
+) -> str:
     """Render concise /projects output."""
 
     if not project_keys:
         return "没有可用项目。"
-    return "已注册项目:\n" + "\n".join(f"- {key}" for key in project_keys)
+
+    lines = ["项目列表："]
+    if active_project_key:
+        lines.append(f"当前项目: {active_project_key}")
+
+    recent = [
+        key for key in (recent_project_keys or []) if key in project_keys and key != active_project_key
+    ]
+    if recent:
+        lines.append("最近使用:")
+        lines.extend(f"- {key}" for key in recent[:5])
+
+    others = [key for key in project_keys if key not in recent and key != active_project_key]
+    if others:
+        lines.append("其他项目:")
+        lines.extend(f"- {key}" for key in others)
+    return "\n".join(lines)
 
 
 def format_approval_required(*, task_id: int, reason: str) -> str:
@@ -244,19 +274,23 @@ def format_upload_rejected(reason: str) -> str:
     return f"文件上传已拒绝：{reason}"
 
 
-def format_start(active_project_key: str | None) -> str:
+def format_start(active_project_key: str | None, recent_project_keys: list[str] | None = None) -> str:
     """Render a quick onboarding message for /start."""
 
     project_line = f"当前项目: {active_project_key}" if active_project_key else "当前项目: 未选择"
-    return (
+    text = (
         "欢迎使用 OpenFish（小鱼）\n"
         f"{project_line}\n"
         "快速开始：\n"
-        "1) /projects 查看项目\n"
-        "2) /use <project> 选择项目\n"
-        "3) 直接发一句话（自动按 /ask）或用 /do 执行任务\n"
-        "4) /status 查看状态"
+        "1) 点“项目”查看或切换项目\n"
+        "2) 点“提问”或直接发送一句话\n"
+        "3) 点“执行”安排改动任务\n"
+        "4) 点“状态”查看下一步"
     )
+    recent = [key for key in (recent_project_keys or []) if key != active_project_key]
+    if recent:
+        text += "\n最近项目: " + ", ".join(recent[:4])
+    return text
 
 
 def format_upload_policy(*, enabled: bool, max_size_bytes: int, allowed_extensions: list[str]) -> str:

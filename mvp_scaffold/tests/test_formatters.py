@@ -1,4 +1,12 @@
-from src.formatters import format_do_result, format_help, format_last_task, format_memory, format_status, truncate_for_telegram
+from src.formatters import (
+    format_do_result,
+    format_help,
+    format_last_task,
+    format_memory,
+    format_projects,
+    format_status,
+    truncate_for_telegram,
+)
 from src.task_store import MemorySnapshot, StatusSnapshot, TaskRecord
 
 
@@ -25,7 +33,9 @@ def test_format_status_without_active_project() -> None:
         next_schedule_hhmm=None,
         next_step=None,
     )
-    assert "未选择活跃项目" in format_status(snapshot)
+    text = format_status(snapshot)
+    assert "当前项目: 未选择" in text
+    assert "下一步" in text
 
 
 def test_format_memory_snapshot() -> None:
@@ -76,3 +86,15 @@ def test_help_contains_last_and_retry() -> None:
     assert "/project-add <key> [abs_path] [name]" in text
     assert "/schedule-add <HH:MM> <ask|do> <text>" in text
     assert "/schedule-run <id>" in text
+
+
+def test_format_projects_with_recent_section() -> None:
+    text = format_projects(
+        ["demo", "ops", "lab"],
+        active_project_key="demo",
+        recent_project_keys=["ops", "demo"],
+    )
+    assert "当前项目: demo" in text
+    assert "最近使用:" in text
+    assert "- ops" in text
+    assert "其他项目:" in text

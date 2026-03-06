@@ -156,6 +156,7 @@ class TasksStub:
     def __init__(self) -> None:
         self.user = UserRecord(id=1, telegram_user_id="123")
         self.active_project_key = "demo"
+        self.recent_project_keys = ["demo"]
         self.project_id = 101
         self.next_task_id = 1
         self.pending: PendingApprovalRecord | None = None
@@ -185,6 +186,9 @@ class TasksStub:
         _ = user_id
         _ = chat_id
         self.active_project_key = project_key
+        if project_key in self.recent_project_keys:
+            self.recent_project_keys.remove(project_key)
+        self.recent_project_keys.insert(0, project_key)
 
     def get_project_id(self, project_key: str) -> int:
         _ = project_key
@@ -199,6 +203,10 @@ class TasksStub:
         _ = user_id
         _ = chat_id
         self.active_project_key = None
+
+    def list_recent_project_keys(self, *, user_id: int, limit: int = 6) -> list[str]:
+        _ = user_id
+        return self.recent_project_keys[:limit]
 
     def create_task(
         self,
@@ -667,7 +675,45 @@ def test_plain_text_without_active_project_returns_hint() -> None:
 
     result = router.handle(_ctx("你好"))
 
-    assert "请先 /use <project>" in result.reply_text
+    assert "请先切换项目" in result.reply_text
+    assert result.metadata == {"recent_projects": ["demo"]}
+
+
+def test_projects_command_prioritizes_current_and_recent() -> None:
+    tasks = TasksStub()
+    tasks.active_project_key = "demo"
+    tasks.recent_project_keys = ["demo", "ops"]
+    projects = ProjectsStub()
+    projects.projects["ops"] = ProjectConfig(
+        key="ops",
+        name="Ops",
+        path=Path("/tmp"),
+        allowed_directories=[Path("/tmp")],
+    )
+    router = CommandRouter(
+        SimpleNamespace(
+            allowed_telegram_user_ids={"123"},
+            enable_document_upload=True,
+            max_upload_size_bytes=1024,
+            allowed_upload_extensions={"txt"},
+            upload_temp_dir_name=".tmp",
+            default_project_root=Path("/tmp/openfish_projects"),
+        ),
+        projects,
+        tasks,
+        AuditStub(),
+        CodexStub(_codex_result("unused", ok=True)),
+        RepoStub(),
+        ApprovalService(),
+        skills_service=SkillsStub(),
+        mcp_service=McpStub(),
+    )
+
+    result = router.handle(_ctx("/projects"))
+
+    assert "当前项目: demo" in result.reply_text
+    assert "最近使用:" in result.reply_text
+    assert "- ops" in result.reply_text
 
 
 def test_start_and_upload_policy_commands() -> None:

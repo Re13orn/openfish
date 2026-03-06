@@ -167,3 +167,58 @@ def test_clear_project_session_state_resets_runtime_fields(tmp_path: Path) -> No
     assert row["last_test_summary"] is None
     assert row["pending_approval_task_id"] is None
     assert row["next_step"] is None
+
+
+def test_recent_projects_follow_latest_use_order(tmp_path: Path) -> None:
+    db, store = _setup_store(tmp_path)
+    user = store.ensure_user(
+        CommandContext(
+            telegram_user_id="123",
+            telegram_chat_id="chat-default",
+            telegram_message_id="1",
+            text="/use p1",
+        )
+    )
+
+    store.set_active_project(user.id, "p1", "chat-default")
+    store.set_active_project(user.id, "p2", "chat-default")
+    db.get_connection().execute(
+        """
+        UPDATE user_project_activity
+        SET last_used_at = CASE project_key
+            WHEN 'p2' THEN '2026-03-06 10:00:00'
+            WHEN 'p1' THEN '2026-03-06 09:00:00'
+        END
+        WHERE user_id = ?
+        """,
+        (user.id,),
+    )
+    db.get_connection().commit()
+
+    assert store.list_recent_project_keys(user_id=user.id) == ["p2", "p1"]
+
+
+def test_chat_wizard_state_round_trip(tmp_path: Path) -> None:
+    _, store = _setup_store(tmp_path)
+    user = store.ensure_user(
+        CommandContext(
+            telegram_user_id="123",
+            telegram_chat_id="chat-default",
+            telegram_message_id="1",
+            text="/project-add",
+        )
+    )
+
+    store.set_chat_wizard_state(
+        chat_id="chat-default",
+        user_id=user.id,
+        state={"kind": "project_add", "step": "name", "data": {"key": "demo"}},
+    )
+    assert store.get_chat_wizard_state(chat_id="chat-default") == {
+        "kind": "project_add",
+        "step": "name",
+        "data": {"key": "demo"},
+    }
+
+    store.clear_chat_wizard_state(chat_id="chat-default")
+    assert store.get_chat_wizard_state(chat_id="chat-default") is None

@@ -23,6 +23,7 @@ usage() {
 Usage:
   bash mvp_scaffold/scripts/install_start.sh install
   bash mvp_scaffold/scripts/install_start.sh configure
+  bash mvp_scaffold/scripts/install_start.sh check
   bash mvp_scaffold/scripts/install_start.sh tg-user-id [username]
   bash mvp_scaffold/scripts/install_start.sh start
   bash mvp_scaffold/scripts/install_start.sh run
@@ -34,7 +35,8 @@ Usage:
 
 Commands:
   install       Create venv, install dependencies, and initialize local files.
-  configure     Interactive wizard for .env and projects.yaml.
+  configure     Minimal interactive wizard for .env and the first project.
+  check         Validate first-run prerequisites and Telegram connectivity.
   tg-user-id    Read Telegram getUpdates and print numeric user IDs.
   start         Start service in background (nohup) and write PID file.
   run           Run service in foreground (blocking).
@@ -157,20 +159,21 @@ write_env_file() {
   local token="$1"
   local allowed_ids="$2"
   local projects_path="$3"
-  local sqlite_path="$4"
-  local migrations_dir="$5"
-  local codex_bin="$6"
-  local log_level="$7"
-  local poll_interval="$8"
-  local msg_len="$9"
-  local timeout="${10}"
-  local sandbox_mode="${11}"
-  local approval_mode="${12}"
-  local json_output="${13}"
-  local enable_upload="${14}"
-  local max_upload_size="${15}"
-  local upload_temp_dir="${16}"
-  local upload_extensions="${17}"
+  local default_project_root="$4"
+  local sqlite_path="$5"
+  local migrations_dir="$6"
+  local codex_bin="$7"
+  local log_level="$8"
+  local poll_interval="$9"
+  local msg_len="${10}"
+  local timeout="${11}"
+  local sandbox_mode="${12}"
+  local approval_mode="${13}"
+  local json_output="${14}"
+  local enable_upload="${15}"
+  local max_upload_size="${16}"
+  local upload_temp_dir="${17}"
+  local upload_extensions="${18}"
 
   cat > "$ENV_FILE" <<EOF
 # Telegram
@@ -180,6 +183,7 @@ TELEGRAM_POLL_INTERVAL_SECONDS=$poll_interval
 
 # App paths
 PROJECTS_CONFIG_PATH=$projects_path
+DEFAULT_PROJECT_ROOT=$default_project_root
 SQLITE_PATH=$sqlite_path
 MIGRATIONS_DIR=$migrations_dir
 DATA_DIR=./mvp_scaffold/data
@@ -214,6 +218,49 @@ DEFAULT_PROJECT=
 EOF
 }
 
+derive_project_key() {
+  local raw="$1"
+  raw="$(basename "$raw")"
+  raw="${raw,,}"
+  raw="${raw// /-}"
+  raw="$(printf '%s' "$raw" | tr -cd 'a-z0-9._-')"
+  raw="${raw#[-._]}"
+  raw="${raw%[-._]}"
+  if [[ -z "$raw" ]]; then
+    raw="demo"
+  fi
+  printf '%s' "$raw"
+}
+
+write_projects_file() {
+  local default_project_root="$1"
+  local project_key="$2"
+  local project_name="$3"
+  local project_path="$4"
+
+  cat > "$PROJECTS_FILE" <<EOF
+version: 1
+default_project_root: $(yaml_quote "$default_project_root")
+
+projects:
+  $project_key:
+    name: $(yaml_quote "$project_name")
+    path: $(yaml_quote "$project_path")
+    allowed_directories:
+      - $(yaml_quote "$project_path")
+EOF
+}
+
+print_check_result() {
+  local status="$1"
+  local message="$2"
+  if [[ "$status" == "ok" ]]; then
+    echo "[check] ok    $message"
+  else
+    echo "[check] fail  $message"
+  fi
+}
+
 configure_wizard() {
   if [[ ! -t 0 ]]; then
     echo "[warn] configure 需要交互终端，当前为非交互环境。"
@@ -221,7 +268,9 @@ configure_wizard() {
   fi
 
   load_env
-  echo "[configure] 开始交互式配置向导"
+  echo "[configure] 开始最小化配置向导"
+  echo "[configure] 仅需要 4 个关键项：Bot Token、Telegram 用户 ID、默认项目根目录、第一个项目目录。"
+  echo "[configure] 如果你不知道用户 ID，先给 bot 发 /start，然后执行：bash mvp_scaffold/scripts/install_start.sh tg-user-id"
 
   local token_default="${TELEGRAM_BOT_TOKEN:-}"
   if [[ "$token_default" == "your_telegram_bot_token_here" ]]; then
@@ -231,68 +280,80 @@ configure_wizard() {
   if ! is_valid_user_ids "$ids_default"; then
     ids_default=""
   fi
-  local projects_default="${PROJECTS_CONFIG_PATH:-./mvp_scaffold/projects.yaml}"
-  local sqlite_default="${SQLITE_PATH:-./mvp_scaffold/data/app.db}"
-  local migrations_default="${MIGRATIONS_DIR:-./mvp_scaffold/migrations}"
-  if [[ "$projects_default" == "./projects.yaml" ]]; then
-    projects_default="./mvp_scaffold/projects.yaml"
-  fi
-  if [[ "$sqlite_default" == "./data/app.db" ]]; then
-    sqlite_default="./mvp_scaffold/data/app.db"
-  fi
-  if [[ "$migrations_default" == "./migrations" ]]; then
-    migrations_default="./mvp_scaffold/migrations"
-  fi
-  local codex_default="${CODEX_BIN:-codex}"
-  local log_default="${LOG_LEVEL:-INFO}"
-  local poll_default="${TELEGRAM_POLL_INTERVAL_SECONDS:-2}"
-  local msg_len_default="${MAX_TELEGRAM_MESSAGE_LENGTH:-3500}"
-  local timeout_default="${CODEX_COMMAND_TIMEOUT_SECONDS:-1800}"
-  local sandbox_default="${CODEX_DEFAULT_SANDBOX_MODE:-workspace-write}"
-  local approval_default="${CODEX_DEFAULT_APPROVAL_MODE:-on-request}"
-  local json_default="${CODEX_JSON_OUTPUT:-true}"
-  local upload_enable_default="${ENABLE_DOCUMENT_UPLOAD:-true}"
-  local upload_size_default="${MAX_UPLOAD_SIZE_BYTES:-209715200}"
-  local upload_temp_dir_default="${UPLOAD_TEMP_DIR_NAME:-.codex_telegram_uploads}"
-  local upload_ext_default="${ALLOWED_UPLOAD_EXTENSIONS:-txt,md,markdown,json,yaml,yml,xml,csv,log,ini,toml,py,js,ts,tsx,jsx,go,rs,java,kt,swift,sql,html,css,apk}"
+  local default_root_default="${DEFAULT_PROJECT_ROOT:-$HOME/workspace/projects}"
+  local first_project_default="$default_root_default/demo"
+  local projects_path="./mvp_scaffold/projects.yaml"
+  local sqlite_path="./mvp_scaffold/data/app.db"
+  local migrations_dir="./mvp_scaffold/migrations"
+  local codex_bin="${CODEX_BIN:-codex}"
+  local log_level="${LOG_LEVEL:-INFO}"
+  local poll_interval="${TELEGRAM_POLL_INTERVAL_SECONDS:-2}"
+  local msg_len="${MAX_TELEGRAM_MESSAGE_LENGTH:-3500}"
+  local timeout="${CODEX_COMMAND_TIMEOUT_SECONDS:-1800}"
+  local sandbox_mode="${CODEX_DEFAULT_SANDBOX_MODE:-workspace-write}"
+  local approval_mode="${CODEX_DEFAULT_APPROVAL_MODE:-on-request}"
+  local json_output="${CODEX_JSON_OUTPUT:-true}"
+  local enable_upload="${ENABLE_DOCUMENT_UPLOAD:-true}"
+  local max_upload_size="${MAX_UPLOAD_SIZE_BYTES:-209715200}"
+  local upload_temp_dir="${UPLOAD_TEMP_DIR_NAME:-.codex_telegram_uploads}"
+  local upload_extensions="${ALLOWED_UPLOAD_EXTENSIONS:-txt,md,markdown,json,yaml,yml,xml,csv,log,ini,toml,py,js,ts,tsx,jsx,go,rs,java,kt,swift,sql,html,css,apk,zip}"
 
-  local token ids projects_path sqlite_path migrations_dir codex_bin
-  local log_level poll_interval msg_len timeout sandbox_mode approval_mode json_output
-  local enable_upload max_upload_size upload_temp_dir upload_extensions
-  prompt_secret token "请输入 TELEGRAM_BOT_TOKEN" "$token_default" 1
+  local token ids default_project_root first_project_path first_project_key first_project_name derived_key
+  prompt_secret token "1/4 请输入 TELEGRAM_BOT_TOKEN" "$token_default" 1
   while true; do
-    prompt_value ids "请输入 ALLOWED_TELEGRAM_USER_IDS（逗号分隔）" "$ids_default" 1
+    prompt_value ids "2/4 请输入 Telegram 用户 ID（多个逗号分隔）" "$ids_default" 1
     if is_valid_user_ids "$ids"; then
       break
     fi
-    echo "[warn] 必须是纯数字 Telegram 用户 ID，多个请用逗号分隔。"
+    echo "[warn] 必须是纯数字 Telegram 用户 ID。若不知道，可先运行 tg-user-id。"
     ids_default=""
   done
-  prompt_value projects_path "PROJECTS_CONFIG_PATH" "$projects_default" 1
-  prompt_value sqlite_path "SQLITE_PATH" "$sqlite_default" 1
-  prompt_value migrations_dir "MIGRATIONS_DIR" "$migrations_default" 1
-  prompt_value codex_bin "CODEX_BIN" "$codex_default" 1
-  prompt_value log_level "LOG_LEVEL" "$log_default" 1
-  prompt_value poll_interval "TELEGRAM_POLL_INTERVAL_SECONDS" "$poll_default" 1
-  prompt_value msg_len "MAX_TELEGRAM_MESSAGE_LENGTH" "$msg_len_default" 1
-  prompt_value timeout "CODEX_COMMAND_TIMEOUT_SECONDS" "$timeout_default" 1
-  prompt_value sandbox_mode "CODEX_DEFAULT_SANDBOX_MODE" "$sandbox_default" 1
-  prompt_value approval_mode "CODEX_DEFAULT_APPROVAL_MODE" "$approval_default" 1
-  prompt_value json_output "CODEX_JSON_OUTPUT(true/false)" "$json_default" 1
-  prompt_value enable_upload "ENABLE_DOCUMENT_UPLOAD(true/false)" "$upload_enable_default" 1
-  prompt_value max_upload_size "MAX_UPLOAD_SIZE_BYTES" "$upload_size_default" 1
-  prompt_value upload_temp_dir "UPLOAD_TEMP_DIR_NAME" "$upload_temp_dir_default" 1
-  prompt_value upload_extensions "ALLOWED_UPLOAD_EXTENSIONS(逗号分隔)" "$upload_ext_default" 1
+
+  while true; do
+    prompt_value default_project_root "3/4 默认项目根目录（后续 /project-add 默认建在这里）" "$default_root_default" 1
+    if [[ "$default_project_root" != /* ]]; then
+      echo "[warn] 默认项目根目录必须是绝对路径。"
+      continue
+    fi
+    mkdir -p "$default_project_root"
+    break
+  done
+
+  while true; do
+    prompt_value first_project_path "4/4 第一个项目目录（绝对路径）" "$first_project_default" 1
+    if [[ "$first_project_path" != /* ]]; then
+      echo "[warn] 项目目录必须是绝对路径。"
+      continue
+    fi
+    if [[ ! -d "$first_project_path" ]]; then
+      if prompt_yes_no "目录不存在，是否现在创建？" "y"; then
+        mkdir -p "$first_project_path"
+      else
+        continue
+      fi
+    fi
+    break
+  done
+
+  derived_key="$(derive_project_key "$first_project_path")"
+  while true; do
+    prompt_value first_project_key "项目 key（用于 /use）" "$derived_key" 1
+    if [[ "$first_project_key" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
+      break
+    fi
+    echo "[warn] 项目 key 只允许字母数字/._-，长度 1-64。"
+  done
+  prompt_value first_project_name "项目显示名称" "$first_project_key" 1
 
   write_env_file \
-    "$token" "$ids" "$projects_path" "$sqlite_path" "$migrations_dir" "$codex_bin" \
+    "$token" "$ids" "$projects_path" "$default_project_root" "$sqlite_path" "$migrations_dir" "$codex_bin" \
     "$log_level" "$poll_interval" "$msg_len" "$timeout" "$sandbox_mode" "$approval_mode" "$json_output" \
     "$enable_upload" "$max_upload_size" "$upload_temp_dir" "$upload_extensions"
   echo "[configure] 已写入 ${ENV_FILE}"
 
   local should_write_project="y"
   if [[ -f "$PROJECTS_FILE" ]]; then
-    if prompt_yes_no "检测到 ${PROJECTS_FILE}，是否覆盖为向导生成内容？" "n"; then
+    if prompt_yes_no "检测到 ${PROJECTS_FILE}，是否覆盖为最小化单项目配置？" "n"; then
       should_write_project="y"
     else
       should_write_project="n"
@@ -300,43 +361,21 @@ configure_wizard() {
   fi
 
   if [[ "$should_write_project" == "y" ]]; then
-    local project_key project_name project_path default_branch test_command allowed_dirs
-    prompt_value project_key "项目 key（用于 /use）" "demo" 1
-    prompt_value project_name "项目显示名" "$project_key" 1
-    prompt_value project_path "项目本地路径（建议绝对路径）" "$HOME/work/$project_key" 1
-    prompt_value default_branch "默认分支" "main" 1
-    prompt_value test_command "测试命令" "pytest -q" 1
-    prompt_value allowed_dirs "allowed_directories（逗号分隔）" "$project_path" 1
-
-    local allowed_yaml=""
-    local item=""
-    local old_ifs="$IFS"
-    IFS=','
-    for item in $allowed_dirs; do
-      item="${item#"${item%%[![:space:]]*}"}"
-      item="${item%"${item##*[![:space:]]}"}"
-      [[ -z "$item" ]] && continue
-      allowed_yaml="${allowed_yaml}"$'\n'"      - $(yaml_quote "$item")"
-    done
-    IFS="$old_ifs"
-    if [[ -z "$allowed_yaml" ]]; then
-      allowed_yaml=$'\n'"      - $(yaml_quote "$project_path")"
-    fi
-
-    cat > "$PROJECTS_FILE" <<EOF
-projects:
-  $project_key:
-    name: $(yaml_quote "$project_name")
-    path: $(yaml_quote "$project_path")
-    default_branch: $(yaml_quote "$default_branch")
-    test_command: $(yaml_quote "$test_command")
-    allowed_directories:${allowed_yaml}
-EOF
+    write_projects_file "$default_project_root" "$first_project_key" "$first_project_name" "$first_project_path"
     echo "[configure] 已写入 ${PROJECTS_FILE}"
+  else
+    echo "[configure] 保留现有 ${PROJECTS_FILE}"
   fi
 
-  echo "[configure] 配置完成。你可以执行："
+  echo "[configure] 配置完成。建议按顺序执行："
+  echo "  bash mvp_scaffold/scripts/install_start.sh check"
   echo "  bash mvp_scaffold/scripts/install_start.sh start"
+  echo "  bash mvp_scaffold/scripts/install_start.sh logs"
+  echo "[configure] 然后在 Telegram 私聊 bot，发送 /start"
+
+  if prompt_yes_no "是否立即执行首次自检？" "y"; then
+    check_runtime || true
+  fi
 }
 
 install_deps() {
@@ -368,12 +407,9 @@ install_deps() {
       echo "[install] creating $ENV_FILE from env.example"
       cp "$ENV_EXAMPLE" "$ENV_FILE"
       cat <<EOF
-[next] Please edit $ENV_FILE before start:
-  - TELEGRAM_BOT_TOKEN
-  - ALLOWED_TELEGRAM_USER_IDS
-  - PROJECTS_CONFIG_PATH=./mvp_scaffold/projects.yaml
-  - SQLITE_PATH=./mvp_scaffold/data/app.db
-  - MIGRATIONS_DIR=./mvp_scaffold/migrations
+[next] 已生成 $ENV_FILE 样例。
+[next] 推荐继续执行：
+  bash mvp_scaffold/scripts/install_start.sh configure
 EOF
     else
       echo "[warn] env.example not found, please create $ENV_FILE manually"
@@ -381,7 +417,7 @@ EOF
   fi
 
   if [[ "${SKIP_CONFIG_WIZARD:-0}" != "1" && -t 0 ]]; then
-    if prompt_yes_no "是否立即运行配置向导（推荐）？" "y"; then
+    if prompt_yes_no "是否立即运行最小化配置向导（推荐）？" "y"; then
       configure_wizard
     fi
   fi
@@ -565,6 +601,149 @@ validate_runtime_config() {
   fi
 }
 
+check_runtime() {
+  load_env
+
+  local failures=0
+  local projects_path
+  local sqlite_path
+  local migrations_dir
+  local codex_bin
+  local pybin=""
+  local check_tmp=""
+
+  projects_path="$(normalize_runtime_path "${PROJECTS_CONFIG_PATH:-./mvp_scaffold/projects.yaml}")"
+  sqlite_path="$(normalize_runtime_path "${SQLITE_PATH:-./mvp_scaffold/data/app.db}")"
+  migrations_dir="$(normalize_runtime_path "${MIGRATIONS_DIR:-./mvp_scaffold/migrations}")"
+  codex_bin="${CODEX_BIN:-codex}"
+
+  echo "[check] 开始首次运行自检"
+
+  if [[ -x "$VENV_DIR/bin/python" ]]; then
+    print_check_result ok "Python 虚拟环境可用: $VENV_DIR"
+    pybin="$VENV_DIR/bin/python"
+  else
+    print_check_result fail "Python 虚拟环境不存在，请先执行 install"
+    failures=$((failures + 1))
+  fi
+
+  if [[ -f "$ENV_FILE" ]]; then
+    print_check_result ok ".env 存在: $ENV_FILE"
+  else
+    print_check_result fail ".env 不存在，请先执行 configure"
+    failures=$((failures + 1))
+  fi
+
+  if is_placeholder_token; then
+    print_check_result fail "TELEGRAM_BOT_TOKEN 未配置"
+    failures=$((failures + 1))
+  else
+    print_check_result ok "TELEGRAM_BOT_TOKEN 已配置"
+  fi
+
+  if is_valid_user_ids "${ALLOWED_TELEGRAM_USER_IDS:-}"; then
+    print_check_result ok "ALLOWED_TELEGRAM_USER_IDS 已配置"
+  else
+    print_check_result fail "ALLOWED_TELEGRAM_USER_IDS 无效"
+    failures=$((failures + 1))
+  fi
+
+  if [[ -f "$projects_path" ]]; then
+    print_check_result ok "projects.yaml 存在: $projects_path"
+  else
+    print_check_result fail "projects.yaml 不存在: $projects_path"
+    failures=$((failures + 1))
+  fi
+
+  if [[ -d "$migrations_dir" ]]; then
+    print_check_result ok "migrations 目录存在: $migrations_dir"
+  else
+    print_check_result fail "migrations 目录不存在: $migrations_dir"
+    failures=$((failures + 1))
+  fi
+
+  mkdir -p "$(dirname "$sqlite_path")"
+  if check_tmp="$(mktemp "${sqlite_path}.check.XXXXXX" 2>/dev/null)"; then
+    rm -f "$check_tmp"
+    print_check_result ok "SQLite 目录可写: $(dirname "$sqlite_path")"
+  else
+    print_check_result fail "SQLite 目录不可写: $(dirname "$sqlite_path")"
+    failures=$((failures + 1))
+  fi
+
+  if command -v "$codex_bin" >/dev/null 2>&1; then
+    print_check_result ok "Codex CLI 可用: $codex_bin"
+  else
+    print_check_result fail "Codex CLI 不可用: $codex_bin"
+    failures=$((failures + 1))
+  fi
+
+  if [[ -n "$pybin" ]]; then
+    if "$pybin" - <<'PY' >/dev/null 2>&1
+import importlib
+mods = ["telegram", "yaml", "httpx"]
+for mod in mods:
+    importlib.import_module(mod)
+PY
+    then
+      print_check_result ok "运行依赖可导入"
+    else
+      print_check_result fail "运行依赖缺失，请重新执行 install"
+      failures=$((failures + 1))
+    fi
+
+    if [[ -f "$projects_path" ]]; then
+      if PROJECTS_PATH="$projects_path" "$pybin" - <<'PY' >/dev/null 2>&1
+from pathlib import Path
+import os
+import sys
+import yaml
+
+path = Path(os.environ["PROJECTS_PATH"])
+data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+projects = data.get("projects") or {}
+if not isinstance(projects, dict) or not projects:
+    raise SystemExit(1)
+for item in projects.values():
+    if not isinstance(item, dict):
+        raise SystemExit(1)
+    project_path = item.get("path")
+    if not project_path or not Path(project_path).expanduser().exists():
+        raise SystemExit(1)
+PY
+      then
+        print_check_result ok "至少存在 1 个可用项目，且路径存在"
+      else
+        print_check_result fail "项目配置为空或项目路径不存在"
+        failures=$((failures + 1))
+      fi
+    fi
+  fi
+
+  if ! is_placeholder_token && command -v curl >/dev/null 2>&1; then
+    if curl -fsS --connect-timeout 8 --max-time 20 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" >/dev/null 2>&1; then
+      print_check_result ok "Telegram API 连通，Bot Token 可用"
+    else
+      print_check_result fail "Telegram API 不可达或 Bot Token 无效"
+      failures=$((failures + 1))
+    fi
+  else
+    print_check_result fail "curl 不可用，无法验证 Telegram API"
+    failures=$((failures + 1))
+  fi
+
+  if (( failures > 0 )); then
+    echo "[check] 失败项: $failures"
+    echo "[check] 先修复以上问题，再执行 start。"
+    return 1
+  fi
+
+  echo "[check] 通过。建议下一步："
+  echo "  bash mvp_scaffold/scripts/install_start.sh start"
+  echo "  然后在 Telegram 私聊 bot，发送 /start"
+  return 0
+}
+
 is_running() {
   if [[ ! -f "$PID_FILE" ]]; then
     return 1
@@ -707,6 +886,7 @@ main() {
   case "$cmd" in
     install) install_deps ;;
     configure) configure_wizard ;;
+    check) check_runtime ;;
     tg-user-id) get_telegram_user_id "${2:-}" ;;
     start) start_bg ;;
     run) run_fg ;;

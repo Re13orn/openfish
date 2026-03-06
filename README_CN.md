@@ -57,11 +57,17 @@ OpenFish 不做：
 ## 快速开始
 
 ```bash
-cd mvp_scaffold
-bash scripts/install_start.sh
+bash mvp_scaffold/scripts/install_start.sh install
+bash mvp_scaffold/scripts/install_start.sh configure
+bash mvp_scaffold/scripts/install_start.sh check
+bash mvp_scaffold/scripts/install_start.sh start
 ```
 
-在安装脚本中执行 `configure`，生成 `.env` 与 `projects.yaml` 后启动服务。
+如果你还不知道自己的 Telegram 用户 ID，先给 bot 发 `/start`，再执行：
+
+```bash
+bash mvp_scaffold/scripts/install_start.sh tg-user-id
+```
 
 ## 命令总览
 
@@ -83,7 +89,7 @@ bash scripts/install_start.sh
 快捷按钮覆盖全部命令能力：
 
 - 无参数命令可直接点击执行
-- 需要参数的命令会进入输入引导模式，并对下一条消息自动补全命令前缀
+- 高频有参操作会进入可恢复的分步向导
 
 ## 文档导航
 

@@ -179,6 +179,7 @@ class TaskStore:
                 )
             except sqlite3.OperationalError:
                 logger.debug("chat_context table not available; fallback to user_preferences only.")
+        self._record_project_use(connection, user_id=user_id, project_key=project_key)
         connection.commit()
 
     def get_active_project_key(self, user_id: int, chat_id: str | None = None) -> str | None:
@@ -232,6 +233,84 @@ class TaskStore:
             except sqlite3.OperationalError:
                 logger.debug("chat_context table not available when clearing active project.")
         connection.commit()
+
+    def get_chat_wizard_state(self, *, chat_id: str) -> dict[str, Any] | None:
+        connection = self.db.get_connection()
+        try:
+            row = connection.execute(
+                """
+                SELECT pending_flow_json
+                FROM chat_context
+                WHERE telegram_chat_id = ?
+                """,
+                (chat_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            logger.debug("pending_flow_json column not available when loading chat wizard state.")
+            return None
+        if row is None or not row["pending_flow_json"]:
+            return None
+        try:
+            payload = json.loads(str(row["pending_flow_json"]))
+        except json.JSONDecodeError:
+            logger.warning("Invalid pending_flow_json for chat_id=%s", chat_id)
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def set_chat_wizard_state(self, *, chat_id: str, user_id: int, state: dict[str, Any]) -> None:
+        connection = self.db.get_connection()
+        try:
+            connection.execute(
+                """
+                INSERT INTO chat_context (telegram_chat_id, user_id, pending_flow_json)
+                VALUES (?, ?, ?)
+                ON CONFLICT(telegram_chat_id) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    pending_flow_json = excluded.pending_flow_json,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (chat_id, user_id, json.dumps(state, ensure_ascii=True)),
+            )
+            connection.commit()
+        except sqlite3.OperationalError:
+            logger.debug("pending_flow_json column not available when storing chat wizard state.")
+
+    def clear_chat_wizard_state(self, *, chat_id: str) -> None:
+        connection = self.db.get_connection()
+        try:
+            connection.execute(
+                """
+                UPDATE chat_context
+                SET pending_flow_json = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_chat_id = ?
+                """,
+                (chat_id,),
+            )
+            connection.commit()
+        except sqlite3.OperationalError:
+            logger.debug("pending_flow_json column not available when clearing chat wizard state.")
+
+    def list_recent_project_keys(self, *, user_id: int, limit: int = 6) -> list[str]:
+        connection = self.db.get_connection()
+        try:
+            rows = connection.execute(
+                """
+                SELECT upa.project_key
+                FROM user_project_activity upa
+                JOIN projects p
+                  ON p.project_key = upa.project_key
+                WHERE upa.user_id = ?
+                  AND p.is_active = 1
+                ORDER BY upa.is_pinned DESC, upa.last_used_at DESC, upa.updated_at DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            logger.debug("user_project_activity table not available when listing recent projects.")
+            return []
+        return [str(row["project_key"]) for row in rows if row["project_key"]]
 
     def get_project_id(self, project_key: str) -> int:
         row = self.db.get_connection().execute(
@@ -1033,6 +1112,22 @@ class TaskStore:
         hour = minute_of_day // 60
         minute = minute_of_day % 60
         return f"{hour:02d}:{minute:02d}"
+
+    def _record_project_use(self, connection: sqlite3.Connection, *, user_id: int, project_key: str) -> None:
+        try:
+            connection.execute(
+                """
+                INSERT INTO user_project_activity (user_id, project_key, use_count, last_used_at)
+                VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id, project_key) DO UPDATE SET
+                    use_count = user_project_activity.use_count + 1,
+                    last_used_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, project_key),
+            )
+        except sqlite3.OperationalError:
+            logger.debug("user_project_activity table not available when recording project use.")
 
     def _insert_task_event(
         self,

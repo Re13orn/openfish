@@ -13,6 +13,7 @@ from src.formatters import format_upload_received, truncate_for_telegram
 from src.models import CommandContext, CommandResult
 from src.progress_reporter import ProgressReporter
 from src.redaction import redact_text
+from src.task_templates import BUILTIN_TEMPLATES
 
 
 logger = logging.getLogger(__name__)
@@ -22,13 +23,14 @@ class TelegramBotService:
     """Runs Telegram long polling and forwards text messages to the router."""
 
     _MENU_PROJECTS = "项目"
-    _MENU_TASKS = "任务"
+    _MENU_ASK = "提问"
+    _MENU_DO = "执行"
     _MENU_STATUS = "状态"
+    _MENU_RESUME = "继续"
+    _MENU_DIFF = "变更"
     _MENU_SCHEDULE = "定时"
-    _MENU_APPROVAL = "审批"
-    _MENU_TOOLS = "工具"
+    _MENU_MORE = "更多"
     _MENU_HELP = "帮助"
-    _MENU_CANCEL = "取消"
 
     _CALLBACK_COMMANDS = {
         "start": "/start",
@@ -52,16 +54,18 @@ class TelegramBotService:
         "project_archive_current": "/project-archive",
     }
 
+    _WIZARD_TOKENS = {"project_add", "schedule_add", "run"}
+    _WIZARD_CANCEL_TOKENS = {"取消", "cancel", "/cancel", "退出", "exit"}
+    _WIZARD_SKIP_TOKENS = {"跳过", "skip", "-", "无"}
+    _WIZARD_CONFIRM_TOKENS = {"确认", "确认执行", "confirm", "ok", "yes"}
+
     _PROMPT_COMMANDS = {
         "ask": "/ask",
         "do": "/do",
         "note": "/note",
         "retry": "/retry",
         "resume": "/resume",
-        "run": "/run",
         "skill_install": "/skill-install",
-        "schedule_add": "/schedule-add",
-        "project_add": "/project-add",
         "project_root": "/project-root",
         "use": "/use",
         "project_disable": "/project-disable",
@@ -77,10 +81,7 @@ class TelegramBotService:
         "note": "请输入笔记内容。下一条消息将按 /note 保存。",
         "retry": "请输入补充说明。下一条消息将按 /retry 执行（可留空直接用 /retry）。",
         "resume": "请输入恢复指令（示例: 12 继续修复测试）。下一条消息将按 /resume 执行。",
-        "run": "请输入模板 key 与可选说明（示例: review_repo 重点看 CI）。下一条消息将按 /run 执行。",
         "skill_install": "请输入 skill 来源。下一条消息将按 /skill-install 执行。",
-        "schedule_add": "请输入计划（示例: 09:30 ask 检查项目状态）。下一条消息将按 /schedule-add 执行。",
-        "project_add": "请输入新增项目参数（示例: demo 项目名，或 demo /abs/path 项目名）。下一条消息将按 /project-add 执行。",
         "project_root": "请输入默认项目根目录（示例: /Users/you/workspace/projects）。下一条消息将按 /project-root 执行。",
         "use": "请输入项目 key。下一条消息将按 /use 执行。",
         "project_disable": "请输入要停用的项目 key。下一条消息将按 /project-disable 执行。",
@@ -184,30 +185,48 @@ class TelegramBotService:
         try:
             mapped = self._map_menu_to_command(message.text.strip())
             if mapped == "__projects__":
-                self._pending_command_by_chat.pop(command_context.telegram_chat_id, None)
+                self._clear_input_modes(command_context.telegram_chat_id)
                 await self._send_projects_panel(message, command_context)
                 return
-            if mapped == "__tasks__":
-                self._pending_command_by_chat.pop(command_context.telegram_chat_id, None)
-                await self._send_task_panel(message)
+            if mapped == "__ask__":
+                self._clear_input_modes(command_context.telegram_chat_id)
+                await self._activate_prompt(message, command_context, "ask")
+                return
+            if mapped == "__do__":
+                self._clear_input_modes(command_context.telegram_chat_id)
+                await self._activate_prompt(message, command_context, "do")
+                return
+            if mapped == "__resume__":
+                self._clear_input_modes(command_context.telegram_chat_id)
+                await self._execute_command(message, command_context, "/resume")
+                return
+            if mapped == "__diff__":
+                self._clear_input_modes(command_context.telegram_chat_id)
+                await self._execute_command(message, command_context, "/diff")
                 return
             if mapped == "__schedule__":
-                self._pending_command_by_chat.pop(command_context.telegram_chat_id, None)
+                self._clear_input_modes(command_context.telegram_chat_id)
                 await self._send_schedule_panel(message, command_context)
                 return
-            if mapped == "__approval__":
-                self._pending_command_by_chat.pop(command_context.telegram_chat_id, None)
-                await self._send_approval_panel(message)
-                return
-            if mapped == "__tools__":
-                self._pending_command_by_chat.pop(command_context.telegram_chat_id, None)
-                await self._send_tools_panel(message)
+            if mapped == "__more__":
+                self._clear_input_modes(command_context.telegram_chat_id)
+                await self._send_more_panel(message)
                 return
 
             raw_text = mapped or message.text.strip()
             if raw_text.startswith("/"):
-                self._pending_command_by_chat.pop(command_context.telegram_chat_id, None)
+                self._clear_input_modes(command_context.telegram_chat_id)
             else:
+                wizard_state = self._get_wizard_state(command_context.telegram_chat_id)
+                if wizard_state is not None:
+                    handled = await self._handle_wizard_input(
+                        message,
+                        command_context,
+                        wizard_state,
+                        raw_text,
+                    )
+                    if handled:
+                        return
                 pending_command = self._pending_command_by_chat.pop(command_context.telegram_chat_id, None)
                 if pending_command:
                     raw_text = f"{pending_command} {raw_text}"
@@ -231,11 +250,13 @@ class TelegramBotService:
                 telegram_display_name=command_context.telegram_display_name,
             )
             result = self.router.handle(command_context)
+            if await self._maybe_start_wizard_from_result(message, command_context, result):
+                return
             await self._safe_reply_text(
                 message,
                 result.reply_text,
                 context="sending command result",
-                reply_markup=self._reply_markup_for_command(command, command_context),
+                reply_markup=self._reply_markup_for_result(command, command_context, result),
             )
         except Exception:  # pragma: no cover - defensive logging around external API callbacks
             logger.exception("Unhandled exception while processing Telegram message.")
@@ -373,11 +394,23 @@ class TelegramBotService:
             if data == "status:diff":
                 await self._execute_command(query.message, base_ctx, "/diff")
                 return
+            if data == "status:ask":
+                await self._activate_prompt(query.message, base_ctx, "ask")
+                return
+            if data == "status:do":
+                await self._activate_prompt(query.message, base_ctx, "do")
+                return
+            if data == "status:projects":
+                await self._send_projects_panel(query.message, base_ctx)
+                return
             if data == "status:approval":
                 await self._send_approval_panel(query.message)
                 return
             if data == "status:schedule":
                 await self._send_schedule_panel(query.message, base_ctx)
+                return
+            if data == "status:more":
+                await self._send_more_panel(query.message)
                 return
             if data == "approval:approve":
                 await self._execute_command(query.message, base_ctx, "/approve")
@@ -409,7 +442,7 @@ class TelegramBotService:
                 return
             if data in {"taskmode:ask", "taskmode:do"}:
                 token = "ask" if data.endswith(":ask") else "do"
-                await self._activate_prompt(query.message, base_ctx.telegram_chat_id, token)
+                await self._activate_prompt(query.message, base_ctx, token)
                 return
             if data.startswith("cmd:"):
                 token = data.split(":", 1)[1]
@@ -419,15 +452,12 @@ class TelegramBotService:
                     return
             if data.startswith("prompt:"):
                 token = data.split(":", 1)[1]
-                await self._activate_prompt(query.message, base_ctx.telegram_chat_id, token)
+                await self._activate_prompt(query.message, base_ctx, token)
                 return
             if data.startswith("panel:"):
                 panel = data.split(":", 1)[1]
                 if panel == "projects":
                     await self._send_projects_panel(query.message, base_ctx)
-                    return
-                if panel == "tasks":
-                    await self._send_task_panel(query.message)
                     return
                 if panel == "schedule":
                     await self._send_schedule_panel(query.message, base_ctx)
@@ -435,8 +465,8 @@ class TelegramBotService:
                 if panel == "approval":
                     await self._send_approval_panel(query.message)
                     return
-                if panel == "tools":
-                    await self._send_tools_panel(query.message)
+                if panel == "more":
+                    await self._send_more_panel(query.message)
                     return
         except Exception:  # pragma: no cover - defensive logging
             logger.exception("Unhandled callback query error: %s", data)
@@ -458,15 +488,20 @@ class TelegramBotService:
     def _resolve_callback_command(self, token: str) -> str | None:
         return self._CALLBACK_COMMANDS.get(token)
 
-    async def _activate_prompt(self, message, chat_id: str, token: str) -> None:  # noqa: ANN001
+    async def _activate_prompt(self, message, ctx: CommandContext, token: str) -> None:  # noqa: ANN001
+        chat_id = ctx.telegram_chat_id
         if token == "clear":
-            self._pending_command_by_chat.pop(chat_id, None)
+            self._clear_input_modes(chat_id)
             await self._safe_reply_text(
                 message,
                 "已清除输入引导。",
                 context="clearing prompt mode",
                 reply_markup=self._main_menu_markup(),
             )
+            return
+
+        if token in self._WIZARD_TOKENS:
+            await self._start_wizard(message, ctx=ctx, token=token)
             return
 
         command = self._PROMPT_COMMANDS.get(token)
@@ -479,6 +514,7 @@ class TelegramBotService:
             )
             return
 
+        self.router.tasks.clear_chat_wizard_state(chat_id=chat_id)
         self._pending_command_by_chat[chat_id] = command
         hint = self._PROMPT_HINTS.get(token, f"请输入参数。下一条消息将按 {command} 执行。")
         await self._safe_reply_text(
@@ -490,7 +526,7 @@ class TelegramBotService:
 
     async def _execute_command(self, message, base_ctx: CommandContext, text: str) -> None:  # noqa: ANN001
         command = text.strip().split(" ", 1)[0].split("@", 1)[0]
-        self._pending_command_by_chat.pop(base_ctx.telegram_chat_id, None)
+        self._clear_input_modes(base_ctx.telegram_chat_id)
         ack_text = self.progress.ack_text(command)
         if ack_text:
             await self._safe_reply_text(
@@ -508,18 +544,28 @@ class TelegramBotService:
             telegram_display_name=base_ctx.telegram_display_name,
         )
         result = self.router.handle(command_context)
+        if await self._maybe_start_wizard_from_result(message, command_context, result):
+            return
         await self._safe_reply_text(
             message,
             result.reply_text,
             context="sending command result",
-            reply_markup=self._reply_markup_for_command(command, command_context),
+            reply_markup=self._reply_markup_for_result(command, command_context, result),
         )
 
     async def _send_projects_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
+        user = self.router.tasks.ensure_user(ctx)
+        active_key = self.router.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+        recent_keys = self.router.tasks.list_recent_project_keys(user_id=user.id)
         keys = self.router.projects.list_keys()
+        ordered_keys: list[str] = []
+        for key in [active_key, *recent_keys, *keys]:
+            if key and key not in ordered_keys and key in keys:
+                ordered_keys.append(key)
         rows: list[list[InlineKeyboardButton]] = []
-        for key in keys[:20]:
-            rows.append([InlineKeyboardButton(text=f"切换: {key}", callback_data=f"use:{key}")])
+        for key in ordered_keys[:10]:
+            label = f"当前: {key}" if key == active_key else f"切换: {key}"
+            rows.append([InlineKeyboardButton(text=label, callback_data=f"use:{key}")])
         rows.extend(
             [
                 [InlineKeyboardButton(text="查看项目列表", callback_data="cmd:projects")],
@@ -539,50 +585,19 @@ class TelegramBotService:
                     InlineKeyboardButton(text="停用指定", callback_data="prompt:project_disable"),
                     InlineKeyboardButton(text="归档指定", callback_data="prompt:project_archive"),
                 ],
+                [InlineKeyboardButton(text="更多操作", callback_data="panel:more")],
             ]
         )
+        lines = ["项目操作："]
+        if active_key:
+            lines.append(f"当前项目: {active_key}")
+        if recent_keys:
+            lines.append("最近项目优先展示，可直接点选切换。")
         await self._safe_reply_text(
             message,
-            "项目操作：",
+            "\n".join(lines),
             context="sending projects panel",
             reply_markup=InlineKeyboardMarkup(rows),
-        )
-
-    async def _send_task_panel(self, message) -> None:  # noqa: ANN001
-        markup = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(text="只读分析", callback_data="prompt:ask"),
-                    InlineKeyboardButton(text="执行修改", callback_data="prompt:do"),
-                ],
-                [
-                    InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
-                    InlineKeyboardButton(text="查看Diff", callback_data="cmd:diff"),
-                ],
-                [
-                    InlineKeyboardButton(text="重试任务", callback_data="prompt:retry"),
-                    InlineKeyboardButton(text="继续任务", callback_data="prompt:resume"),
-                ],
-                [
-                    InlineKeyboardButton(text="项目记忆", callback_data="cmd:memory"),
-                    InlineKeyboardButton(text="记录笔记", callback_data="prompt:note"),
-                ],
-                [
-                    InlineKeyboardButton(text="模板列表", callback_data="cmd:templates"),
-                    InlineKeyboardButton(text="执行模板", callback_data="prompt:run"),
-                ],
-                [
-                    InlineKeyboardButton(text="技能列表", callback_data="cmd:skills"),
-                    InlineKeyboardButton(text="安装技能", callback_data="prompt:skill_install"),
-                ],
-                [InlineKeyboardButton(text="清除输入引导", callback_data="prompt:clear")],
-            ]
-        )
-        await self._safe_reply_text(
-            message,
-            "任务操作：",
-            context="sending task panel",
-            reply_markup=markup,
         )
 
     async def _send_schedule_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
@@ -609,31 +624,40 @@ class TelegramBotService:
             reply_markup=markup,
         )
 
-    async def _send_tools_panel(self, message) -> None:  # noqa: ANN001
+    async def _send_more_panel(self, message) -> None:  # noqa: ANN001
         markup = InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton(text="开始", callback_data="cmd:start"),
-                    InlineKeyboardButton(text="帮助", callback_data="cmd:help"),
+                    InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
+                    InlineKeyboardButton(text="项目记忆", callback_data="cmd:memory"),
                 ],
                 [
+                    InlineKeyboardButton(text="模板列表", callback_data="cmd:templates"),
+                    InlineKeyboardButton(text="执行模板", callback_data="prompt:run"),
+                ],
+                [
+                    InlineKeyboardButton(text="审批面板", callback_data="panel:approval"),
                     InlineKeyboardButton(text="上传策略", callback_data="cmd:upload_policy"),
-                    InlineKeyboardButton(text="取消任务", callback_data="cmd:cancel"),
                 ],
                 [
-                    InlineKeyboardButton(text="状态", callback_data="cmd:status"),
-                    InlineKeyboardButton(text="定时列表", callback_data="cmd:schedule_list"),
+                    InlineKeyboardButton(text="Skills", callback_data="cmd:skills"),
+                    InlineKeyboardButton(text="安装 Skill", callback_data="prompt:skill_install"),
                 ],
                 [
                     InlineKeyboardButton(text="MCP 列表", callback_data="cmd:mcp"),
                     InlineKeyboardButton(text="MCP 详情", callback_data="prompt:mcp"),
                 ],
+                [
+                    InlineKeyboardButton(text="查看根目录", callback_data="cmd:project_root_show"),
+                    InlineKeyboardButton(text="设置根目录", callback_data="prompt:project_root"),
+                ],
+                [InlineKeyboardButton(text="清除输入引导", callback_data="prompt:clear")],
             ]
         )
         await self._safe_reply_text(
             message,
-            "工具操作：",
-            context="sending tools panel",
+            "更多操作：",
+            context="sending more panel",
             reply_markup=markup,
         )
 
@@ -711,9 +735,9 @@ class TelegramBotService:
     def _main_menu_markup(self) -> ReplyKeyboardMarkup:
         return ReplyKeyboardMarkup(
             [
-                [self._MENU_PROJECTS, self._MENU_TASKS, self._MENU_STATUS],
-                [self._MENU_SCHEDULE, self._MENU_APPROVAL, self._MENU_TOOLS],
-                [self._MENU_HELP, self._MENU_CANCEL],
+                [self._MENU_PROJECTS, self._MENU_ASK, self._MENU_DO],
+                [self._MENU_STATUS, self._MENU_RESUME, self._MENU_DIFF],
+                [self._MENU_SCHEDULE, self._MENU_MORE, self._MENU_HELP],
             ],
             resize_keyboard=True,
             one_time_keyboard=False,
@@ -723,35 +747,387 @@ class TelegramBotService:
     def _map_menu_to_command(self, text: str) -> str | None:
         mapping = {
             self._MENU_STATUS: "/status",
-            self._MENU_CANCEL: "/cancel",
             self._MENU_HELP: "/help",
             self._MENU_PROJECTS: "__projects__",
-            self._MENU_TASKS: "__tasks__",
+            self._MENU_ASK: "__ask__",
+            self._MENU_DO: "__do__",
+            self._MENU_RESUME: "__resume__",
+            self._MENU_DIFF: "__diff__",
             self._MENU_SCHEDULE: "__schedule__",
-            self._MENU_APPROVAL: "__approval__",
-            self._MENU_TOOLS: "__tools__",
+            self._MENU_MORE: "__more__",
         }
         return mapping.get(text)
 
-    def _reply_markup_for_command(
+    def _clear_input_modes(self, chat_id: str) -> None:
+        self._pending_command_by_chat.pop(chat_id, None)
+        if hasattr(self.router, "tasks"):
+            self.router.tasks.clear_chat_wizard_state(chat_id=chat_id)
+
+    def _get_wizard_state(self, chat_id: str) -> dict | None:
+        if not hasattr(self.router, "tasks"):
+            return None
+        return self.router.tasks.get_chat_wizard_state(chat_id=chat_id)
+
+    async def _maybe_start_wizard_from_result(
+        self,
+        message,
+        ctx: CommandContext,
+        result: CommandResult,
+    ) -> bool:  # noqa: ANN001
+        metadata = result.metadata or {}
+        token = metadata.get("wizard")
+        if token not in self._WIZARD_TOKENS:
+            return False
+        await self._start_wizard(message, ctx=ctx, token=str(token), preface=result.reply_text)
+        return True
+
+    async def _start_wizard(
+        self,
+        message,
+        *,
+        ctx: CommandContext,
+        token: str,
+        preface: str | None = None,
+    ) -> None:  # noqa: ANN001
+        user = self.router.tasks.ensure_user(ctx)
+        if token in {"run", "schedule_add"}:
+            active_key = self.router.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+            if not active_key:
+                await self._safe_reply_text(
+                    message,
+                    "请先选择项目，再使用这个向导。",
+                    context="sending wizard project requirement",
+                    reply_markup=self._project_shortcuts_markup(
+                        self.router.tasks.list_recent_project_keys(user_id=user.id)
+                    ),
+                )
+                return
+
+        self._pending_command_by_chat.pop(ctx.telegram_chat_id, None)
+        state = {"kind": token, "step": "key" if token == "project_add" else "time" if token == "schedule_add" else "template", "data": {}}
+        self.router.tasks.set_chat_wizard_state(
+            chat_id=ctx.telegram_chat_id,
+            user_id=user.id,
+            state=state,
+        )
+        prompt = self._wizard_prompt(state)
+        if preface:
+            prompt = f"{preface}\n\n{prompt}"
+        await self._safe_reply_text(
+            message,
+            prompt,
+            context="sending wizard prompt",
+            reply_markup=self._main_menu_markup(),
+        )
+
+    def _wizard_prompt(self, state: dict) -> str:
+        kind = str(state.get("kind") or "")
+        step = str(state.get("step") or "")
+        data = state.get("data") or {}
+
+        if kind == "project_add":
+            default_root = getattr(self.router.projects, "default_project_root", None)
+            if step == "key":
+                root_hint = f"\n默认根目录: {default_root}" if default_root else "\n当前未设置默认根目录。"
+                return (
+                    "项目新增向导 1/4\n"
+                    "请输入项目 key。\n"
+                    "要求: 仅字母数字/._-，长度 1-64。"
+                    f"{root_hint}\n"
+                    "发送“取消”可退出。"
+                )
+            if step == "path":
+                return (
+                    "项目新增向导 2/4\n"
+                    "请输入项目绝对路径。\n"
+                    "如果要使用默认根目录，请回复“默认”。"
+                )
+            if step == "name":
+                return (
+                    "项目新增向导 3/4\n"
+                    "请输入项目显示名称。\n"
+                    "如果要直接使用 key，请回复“跳过”。"
+                )
+            path_text = data.get("path") or "默认根目录"
+            name_text = data.get("name") or data.get("key") or "未设置"
+            return (
+                "项目新增向导 4/4\n"
+                f"key: {data.get('key')}\n"
+                f"路径: {path_text}\n"
+                f"名称: {name_text}\n"
+                "回复“确认”执行，回复“取消”放弃。"
+            )
+
+        if kind == "schedule_add":
+            if step == "time":
+                return (
+                    "定时任务向导 1/4\n"
+                    "请输入执行时间，格式 HH:MM。\n"
+                    "例如: 09:30"
+                )
+            if step == "mode":
+                return (
+                    "定时任务向导 2/4\n"
+                    "请输入任务类型：ask 或 do。"
+                )
+            if step == "text":
+                return (
+                    "定时任务向导 3/4\n"
+                    "请输入定时任务内容。"
+                )
+            return (
+                "定时任务向导 4/4\n"
+                f"时间: {data.get('hhmm')}\n"
+                f"类型: {data.get('mode')}\n"
+                f"内容: {data.get('text')}\n"
+                "回复“确认”执行，回复“取消”放弃。"
+            )
+
+        template_keys = ", ".join(sorted(BUILTIN_TEMPLATES.keys()))
+        if step == "template":
+            return (
+                "模板执行向导 1/3\n"
+                "请输入模板 key。\n"
+                f"可用模板: {template_keys}"
+            )
+        if step == "extra":
+            return (
+                "模板执行向导 2/3\n"
+                "请输入附加说明。\n"
+                "如果不需要，请回复“跳过”。"
+            )
+        extra_text = data.get("extra") or "无"
+        return (
+            "模板执行向导 3/3\n"
+            f"模板: {data.get('template')}\n"
+            f"附加说明: {extra_text}\n"
+            "回复“确认”执行，回复“取消”放弃。"
+        )
+
+    async def _handle_wizard_input(
+        self,
+        message,
+        ctx: CommandContext,
+        state: dict,
+        raw_text: str,
+    ) -> bool:  # noqa: ANN001
+        text = raw_text.strip()
+        lowered = text.lower()
+        if lowered in {item.lower() for item in self._WIZARD_CANCEL_TOKENS}:
+            self.router.tasks.clear_chat_wizard_state(chat_id=ctx.telegram_chat_id)
+            await self._safe_reply_text(
+                message,
+                "已取消当前向导。",
+                context="sending wizard cancel",
+                reply_markup=self._main_menu_markup(),
+            )
+            return True
+
+        if str(state.get("step")) == "confirm":
+            if lowered in {item.lower() for item in self._WIZARD_CONFIRM_TOKENS}:
+                command_text = self._wizard_command(state)
+                self.router.tasks.clear_chat_wizard_state(chat_id=ctx.telegram_chat_id)
+                await self._execute_command(message, ctx, command_text)
+                return True
+            await self._safe_reply_text(
+                message,
+                self._wizard_prompt(state),
+                context="sending wizard confirm hint",
+                reply_markup=self._main_menu_markup(),
+            )
+            return True
+
+        next_state = self._advance_wizard_state(state, text)
+        if next_state is None:
+            await self._safe_reply_text(
+                message,
+                self._wizard_prompt(state),
+                context="sending wizard retry prompt",
+                reply_markup=self._main_menu_markup(),
+            )
+            return True
+
+        user = self.router.tasks.ensure_user(ctx)
+        self.router.tasks.set_chat_wizard_state(
+            chat_id=ctx.telegram_chat_id,
+            user_id=user.id,
+            state=next_state,
+        )
+        await self._safe_reply_text(
+            message,
+            self._wizard_prompt(next_state),
+            context="sending wizard next prompt",
+            reply_markup=self._main_menu_markup(),
+        )
+        return True
+
+    def _advance_wizard_state(self, state: dict, text: str) -> dict | None:
+        kind = str(state.get("kind") or "")
+        step = str(state.get("step") or "")
+        data = dict(state.get("data") or {})
+        lowered = text.lower()
+
+        if kind == "project_add":
+            if step == "key":
+                key = text.strip()
+                if not key or " " in key:
+                    return None
+                data["key"] = key
+                return {"kind": kind, "step": "path", "data": data}
+            if step == "path":
+                if lowered in {"默认", "default"}:
+                    if getattr(self.router.projects, "default_project_root", None) is None:
+                        return None
+                    data["path"] = ""
+                    return {"kind": kind, "step": "name", "data": data}
+                if text.startswith("/") or text.startswith("~"):
+                    data["path"] = text
+                    return {"kind": kind, "step": "name", "data": data}
+                return None
+            if step == "name":
+                data["name"] = "" if lowered in {item.lower() for item in self._WIZARD_SKIP_TOKENS} else text
+                return {"kind": kind, "step": "confirm", "data": data}
+            return None
+
+        if kind == "schedule_add":
+            if step == "time":
+                hour_text, sep, minute_text = text.partition(":")
+                if sep != ":":
+                    return None
+                try:
+                    hour = int(hour_text)
+                    minute = int(minute_text)
+                except ValueError:
+                    return None
+                if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                    return None
+                data["hhmm"] = f"{hour:02d}:{minute:02d}"
+                return {"kind": kind, "step": "mode", "data": data}
+            if step == "mode":
+                if lowered not in {"ask", "do", "/ask", "/do"}:
+                    return None
+                data["mode"] = lowered.lstrip("/")
+                return {"kind": kind, "step": "text", "data": data}
+            if step == "text":
+                if not text:
+                    return None
+                data["text"] = text
+                return {"kind": kind, "step": "confirm", "data": data}
+            return None
+
+        if step == "template":
+            template_key = text.strip()
+            if template_key not in BUILTIN_TEMPLATES:
+                return None
+            data["template"] = template_key
+            return {"kind": kind, "step": "extra", "data": data}
+        if step == "extra":
+            data["extra"] = "" if lowered in {item.lower() for item in self._WIZARD_SKIP_TOKENS} else text
+            return {"kind": kind, "step": "confirm", "data": data}
+        return None
+
+    def _wizard_command(self, state: dict) -> str:
+        kind = str(state.get("kind") or "")
+        data = state.get("data") or {}
+        if kind == "project_add":
+            parts = ["/project-add", str(data["key"])]
+            if data.get("path"):
+                parts.append(str(data["path"]))
+            if data.get("name"):
+                parts.append(str(data["name"]))
+            return " ".join(parts)
+        if kind == "schedule_add":
+            return f"/schedule-add {data['hhmm']} {data['mode']} {data['text']}"
+        extra = str(data.get("extra") or "").strip()
+        if extra:
+            return f"/run {data['template']} {extra}"
+        return f"/run {data['template']}"
+
+    def _project_shortcuts_markup(self, recent_projects: list[str] | None) -> InlineKeyboardMarkup | ReplyKeyboardMarkup:
+        keys = [key for key in (recent_projects or []) if key]
+        if not keys:
+            return InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(text="项目面板", callback_data="panel:projects")],
+                    [InlineKeyboardButton(text="新增项目", callback_data="prompt:project_add")],
+                ]
+            )
+        rows: list[list[InlineKeyboardButton]] = []
+        current_row: list[InlineKeyboardButton] = []
+        for key in keys[:6]:
+            current_row.append(InlineKeyboardButton(text=key, callback_data=f"use:{key}"))
+            if len(current_row) == 2:
+                rows.append(current_row)
+                current_row = []
+        if current_row:
+            rows.append(current_row)
+        rows.append(
+            [
+                InlineKeyboardButton(text="项目面板", callback_data="panel:projects"),
+                InlineKeyboardButton(text="新增项目", callback_data="prompt:project_add"),
+            ]
+        )
+        return InlineKeyboardMarkup(rows)
+
+    def _reply_markup_for_result(
         self,
         command: str,
         ctx: CommandContext,
+        result: CommandResult,
     ):
         if command == "/status":
+            user = self.router.tasks.ensure_user(ctx)
+            snapshot = self.router.tasks.get_status_snapshot(user.id, ctx.telegram_chat_id)
+            if snapshot.active_project_key is None:
+                recent_projects = (result.metadata or {}).get("recent_projects")
+                return self._project_shortcuts_markup(recent_projects)
+            if snapshot.pending_approval:
+                return InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(text="批准", callback_data="approval:approve"),
+                            InlineKeyboardButton(text="拒绝", callback_data="approval:reject"),
+                        ],
+                        [
+                            InlineKeyboardButton(text="看变更", callback_data="status:diff"),
+                            InlineKeyboardButton(text="定时", callback_data="status:schedule"),
+                        ],
+                        [
+                            InlineKeyboardButton(text="项目", callback_data="status:projects"),
+                            InlineKeyboardButton(text="更多", callback_data="status:more"),
+                        ],
+                    ]
+                )
+            if snapshot.most_recent_task_summary:
+                return InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(text="继续", callback_data="status:resume"),
+                            InlineKeyboardButton(text="看变更", callback_data="status:diff"),
+                        ],
+                        [
+                            InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
+                            InlineKeyboardButton(text="定时", callback_data="status:schedule"),
+                        ],
+                        [
+                            InlineKeyboardButton(text="项目", callback_data="status:projects"),
+                            InlineKeyboardButton(text="更多", callback_data="status:more"),
+                        ],
+                    ]
+                )
             return InlineKeyboardMarkup(
                 [
                     [
-                        InlineKeyboardButton(text="继续", callback_data="status:resume"),
-                        InlineKeyboardButton(text="看Diff", callback_data="status:diff"),
+                        InlineKeyboardButton(text="提问", callback_data="status:ask"),
+                        InlineKeyboardButton(text="执行", callback_data="status:do"),
                     ],
                     [
-                        InlineKeyboardButton(text="审批", callback_data="status:approval"),
+                        InlineKeyboardButton(text="项目", callback_data="status:projects"),
                         InlineKeyboardButton(text="定时", callback_data="status:schedule"),
                     ],
                     [
                         InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
-                        InlineKeyboardButton(text="任务面板", callback_data="panel:tasks"),
+                        InlineKeyboardButton(text="更多", callback_data="status:more"),
                     ],
                 ]
             )
@@ -780,4 +1156,7 @@ class TelegramBotService:
                 )
             rows.append([InlineKeyboardButton(text="刷新", callback_data="schedule:refresh")])
             return InlineKeyboardMarkup(rows)
+        recent_projects = (result.metadata or {}).get("recent_projects")
+        if recent_projects:
+            return self._project_shortcuts_markup(recent_projects)
         return self._main_menu_markup()
