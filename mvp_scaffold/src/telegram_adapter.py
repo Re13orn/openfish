@@ -6,15 +6,16 @@ import random
 import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
-from telegram.error import BadRequest, NetworkError, RetryAfter, TelegramError, TimedOut
+from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
-from src.formatters import format_upload_received, truncate_for_telegram
+from src import telegram_messages
+from src.formatters import format_upload_received
 from src.models import CommandContext, CommandResult
 from src.progress_reporter import ProgressReporter
-from src.redaction import redact_text
+from src.telegram_sink import TelegramMessageSink, TelegramSendSpec
 from src.task_templates import BUILTIN_TEMPLATES
-from src.telegram_views import TelegramViewFactory
+from src.telegram_views import TelegramReplySpec, TelegramViewFactory
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ class TelegramBotService:
         self.router = router
         self.progress = ProgressReporter()
         self.views = TelegramViewFactory()
+        self.sink = TelegramMessageSink(config, default_reply_markup_factory=self._main_menu_markup)
         self._app: Application | None = None
         self._pending_command_by_chat: dict[str, str] = {}
 
@@ -240,7 +242,7 @@ class TelegramBotService:
             command = raw_text.split(" ", 1)[0].split("@", 1)[0]
             ack_text = self.progress.ack_text(command)
             if ack_text:
-                await self._safe_reply_text(
+                await self._send_text(
                     message,
                     ack_text,
                     context="sending ack",
@@ -258,17 +260,12 @@ class TelegramBotService:
             result = self.router.handle(command_context)
             if await self._maybe_start_wizard_from_result(message, command_context, result):
                 return
-            await self._safe_reply_text(
-                message,
-                result.reply_text,
-                context="sending command result",
-                reply_markup=self._reply_markup_for_result(command, command_context, result),
-            )
+            await self._send_command_result(message, command, command_context, result)
         except Exception:  # pragma: no cover - defensive logging around external API callbacks
             logger.exception("Unhandled exception while processing Telegram message.")
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
-                "Internal error while handling request.",
+                telegram_messages.internal_request_error(),
                 context="sending error",
                 reply_markup=self._main_menu_markup(),
             )
@@ -290,9 +287,9 @@ class TelegramBotService:
             telegram_display_name=user.full_name,
         )
         try:
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
-                "已收到文件，处理中：\n- 校验项目\n- 校验文件\n- 下载并分析",
+                telegram_messages.upload_processing_ack(),
                 context="sending upload ack",
                 reply_markup=self._main_menu_markup(),
             )
@@ -303,7 +300,7 @@ class TelegramBotService:
                 size_bytes=int(document.file_size or 0),
             )
             if isinstance(plan_or_error, CommandResult):
-                await self._safe_reply_text(
+                await self._send_text(
                     message,
                     plan_or_error.reply_text,
                     context="sending upload rejection",
@@ -313,7 +310,7 @@ class TelegramBotService:
 
             telegram_file = await document.get_file()
             await telegram_file.download_to_drive(custom_path=str(plan_or_error.local_path))
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
                 format_upload_received(
                     file_name=plan_or_error.original_name,
@@ -329,11 +326,10 @@ class TelegramBotService:
                 plan=plan_or_error,
                 caption=message.caption,
             )
-            await self._safe_reply_text(
+            await self._send_view_spec(
                 message,
-                result.reply_text,
+                TelegramReplySpec(text=result.reply_text, reply_markup=self._main_menu_markup()),
                 context="sending upload result",
-                reply_markup=self._main_menu_markup(),
             )
         except BadRequest as exc:
             error_text = str(exc).strip() or "BadRequest"
@@ -343,25 +339,25 @@ class TelegramBotService:
                     document.file_name,
                     document.file_size,
                 )
-                await self._safe_reply_text(
+                await self._send_text(
                     message,
-                    "文件过大，Telegram 无法下载该文件。请压缩后重试，或拆分后再上传。\n可用 /upload_policy 查看本地上传限制。",
+                    telegram_messages.upload_oversized_hint(),
                     context="sending oversized upload hint",
                     reply_markup=self._main_menu_markup(),
                 )
                 return
             logger.warning("Telegram bad request while processing document: %s", error_text)
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
-                f"上传失败：{error_text}",
+                telegram_messages.upload_bad_request(error_text),
                 context="sending upload bad request",
                 reply_markup=self._main_menu_markup(),
             )
         except Exception:  # pragma: no cover - defensive logging around external API callbacks
             logger.exception("Unhandled exception while processing Telegram document.")
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
-                "Internal error while handling uploaded file.",
+                telegram_messages.upload_internal_error(),
                 context="sending upload error",
                 reply_markup=self._main_menu_markup(),
             )
@@ -481,17 +477,17 @@ class TelegramBotService:
                     return
         except Exception:  # pragma: no cover - defensive logging
             logger.exception("Unhandled callback query error: %s", data)
-            await self._safe_reply_text(
+            await self._send_text(
                 query.message,
-                "处理按钮操作时发生错误。",
+                telegram_messages.callback_error(),
                 context="sending callback error",
                 reply_markup=self._main_menu_markup(),
             )
             return
 
-        await self._safe_reply_text(
+        await self._send_text(
             query.message,
-            "未识别的按钮操作，请重试。",
+            telegram_messages.unknown_callback(),
             context="sending unknown callback",
             reply_markup=self._main_menu_markup(),
         )
@@ -503,9 +499,9 @@ class TelegramBotService:
         chat_id = ctx.telegram_chat_id
         if token == "clear":
             self._clear_input_modes(chat_id)
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
-                "已清除输入引导。",
+                telegram_messages.prompt_mode_cleared(),
                 context="clearing prompt mode",
                 reply_markup=self._main_menu_markup(),
             )
@@ -517,9 +513,9 @@ class TelegramBotService:
 
         command = self._PROMPT_COMMANDS.get(token)
         if command is None:
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
-                "未识别的输入模式。",
+                telegram_messages.unknown_prompt_mode(),
                 context="sending prompt mode error",
                 reply_markup=self._main_menu_markup(),
             )
@@ -528,9 +524,9 @@ class TelegramBotService:
         self.router.tasks.clear_chat_wizard_state(chat_id=chat_id)
         self._pending_command_by_chat[chat_id] = command
         hint = self._PROMPT_HINTS.get(token, f"请输入参数。下一条消息将按 {command} 执行。")
-        await self._safe_reply_text(
+        await self._send_text(
             message,
-            f"{hint}\n可发送 /help 查看命令。",
+            telegram_messages.prompt_mode_hint(hint),
             context="sending prompt mode hint",
             reply_markup=self._main_menu_markup(),
         )
@@ -548,7 +544,7 @@ class TelegramBotService:
         self._clear_input_modes(base_ctx.telegram_chat_id)
         ack_text = self.progress.ack_text(command)
         if ack_text:
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
                 ack_text,
                 context="sending ack",
@@ -565,12 +561,7 @@ class TelegramBotService:
         result = self.router.handle(command_context)
         if await self._maybe_start_wizard_from_result(message, command_context, result):
             return
-        await self._safe_reply_text(
-            message,
-            result.reply_text,
-            context="sending command result",
-            reply_markup=self._reply_markup_for_result(command, command_context, result),
-        )
+        await self._send_command_result(message, command, command_context, result)
 
     async def _send_projects_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
         user = self.router.tasks.ensure_user(ctx)
@@ -586,33 +577,18 @@ class TelegramBotService:
             recent_keys=recent_keys,
             ordered_keys=ordered_keys,
         )
-        await self._safe_reply_text(
-            message,
-            spec.text,
-            context="sending projects panel",
-            reply_markup=spec.reply_markup,
-        )
+        await self._send_view_spec(message, spec, context="sending projects panel")
 
     async def _send_schedule_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
         await self._execute_command(message, ctx, "/schedule-list")
 
     async def _send_approval_panel(self, message) -> None:  # noqa: ANN001
         spec = self.views.approval_panel()
-        await self._safe_reply_text(
-            message,
-            spec.text,
-            context="sending approval panel",
-            reply_markup=spec.reply_markup,
-        )
+        await self._send_view_spec(message, spec, context="sending approval panel")
 
     async def _send_more_panel(self, message) -> None:  # noqa: ANN001
         spec = self.views.more_panel()
-        await self._safe_reply_text(
-            message,
-            spec.text,
-            context="sending more panel",
-            reply_markup=spec.reply_markup,
-        )
+        await self._send_view_spec(message, spec, context="sending more panel")
 
     def _display_upload_path(self, plan) -> str:  # noqa: ANN001
         try:
@@ -639,51 +615,60 @@ class TelegramBotService:
         context: str,
         reply_markup=None,  # noqa: ANN001
     ) -> bool:
-        """Send Telegram reply with conservative retries for transient network failures."""
+        """Compatibility wrapper retained for tests and existing call sites."""
 
-        payload = truncate_for_telegram(
-            redact_text(text),
-            limit=self.config.max_telegram_message_length,
+        return await self.sink.send(
+            message,
+            TelegramSendSpec(text=text, context=context, reply_markup=reply_markup),
         )
-        max_attempts = 3
-        final_reply_markup = reply_markup or self._main_menu_markup()
-        for attempt in range(1, max_attempts + 1):
-            try:
-                await message.reply_text(payload, reply_markup=final_reply_markup)
-                return True
-            except RetryAfter as exc:
-                retry_after = exc.retry_after.total_seconds() if hasattr(exc.retry_after, "total_seconds") else float(exc.retry_after)
-                wait_seconds = max(1.0, min(retry_after, 10.0))
-                logger.warning(
-                    "Telegram rate limit while %s, retry in %.1fs (attempt %s/%s).",
-                    context,
-                    wait_seconds,
-                    attempt,
-                    max_attempts,
-                )
-                if attempt >= max_attempts:
-                    return False
-                await asyncio.sleep(wait_seconds)
-            except (TimedOut, NetworkError) as exc:
-                if attempt >= max_attempts:
-                    logger.warning("Telegram network error while %s: %s", context, exc)
-                    return False
-                wait_seconds = float(attempt)
-                logger.warning(
-                    "Telegram transient error while %s (attempt %s/%s): %s",
-                    context,
-                    attempt,
-                    max_attempts,
-                    exc,
-                )
-                await asyncio.sleep(wait_seconds)
-            except TelegramError as exc:
-                logger.warning("Telegram API error while %s: %s", context, exc)
-                return False
-            except Exception:  # pragma: no cover - defensive guard around external API callbacks
-                logger.exception("Unexpected error while %s.", context)
-                return False
-        return False
+
+    async def _send_text(
+        self,
+        message,
+        text: str,
+        *,
+        context: str,
+        reply_markup=None,  # noqa: ANN001
+    ) -> bool:
+        return await self._send_view_spec(
+            message,
+            TelegramReplySpec(text=text, reply_markup=reply_markup),
+            context=context,
+        )
+
+    async def _send_view_spec(
+        self,
+        message,
+        spec: TelegramReplySpec,
+        *,
+        context: str,
+    ) -> bool:  # noqa: ANN001
+        return await self.sink.send(
+            message,
+            TelegramSendSpec(
+                text=spec.text,
+                context=context,
+                reply_markup=spec.reply_markup,
+            ),
+        )
+
+    async def _send_command_result(
+        self,
+        message,
+        command: str,
+        ctx: CommandContext,
+        result: CommandResult,
+        *,
+        context: str = "sending command result",
+    ) -> bool:  # noqa: ANN001
+        return await self._send_view_spec(
+            message,
+            TelegramReplySpec(
+                text=result.reply_text,
+                reply_markup=self._reply_markup_for_result(command, ctx, result),
+            ),
+            context=context,
+        )
 
     def _main_menu_markup(self) -> ReplyKeyboardMarkup:
         return self.views.main_menu_markup()
@@ -721,9 +706,9 @@ class TelegramBotService:
         state = self._get_wizard_state(ctx.telegram_chat_id)
         if state is None:
             await self._clear_inline_keyboard(message)
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
-                "当前向导已结束，按钮可能已过期。请重新开始。",
+                telegram_messages.wizard_missing_state(),
                 context="sending missing wizard state",
                 reply_markup=self._main_menu_markup(),
             )
@@ -732,9 +717,9 @@ class TelegramBotService:
         if data == "wizard:cancel":
             self.router.tasks.clear_chat_wizard_state(chat_id=ctx.telegram_chat_id)
             await self._clear_inline_keyboard(message)
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
-                "已取消当前向导。",
+                telegram_messages.wizard_cancelled(),
                 context="sending wizard cancel",
                 reply_markup=self._main_menu_markup(),
             )
@@ -761,9 +746,9 @@ class TelegramBotService:
             return
 
         await self._clear_inline_keyboard(message)
-        await self._safe_reply_text(
+        await self._send_text(
             message,
-            "未识别的向导按钮，可能已过期。",
+            telegram_messages.wizard_unknown_button(),
             context="sending unknown wizard callback",
             reply_markup=self._main_menu_markup(),
         )
@@ -793,9 +778,9 @@ class TelegramBotService:
         if token in {"run", "schedule_add"}:
             active_key = self.router.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
             if not active_key:
-                await self._safe_reply_text(
+                await self._send_text(
                     message,
-                    "请先选择项目，再使用这个向导。",
+                    telegram_messages.wizard_project_requirement(),
                     context="sending wizard project requirement",
                     reply_markup=self._project_shortcuts_markup(
                         self.router.tasks.list_recent_project_keys(user_id=user.id)
@@ -823,83 +808,17 @@ class TelegramBotService:
         data = state.get("data") or {}
 
         if kind == "project_add":
-            default_root = getattr(self.router.projects, "default_project_root", None)
-            if step == "key":
-                root_hint = f"\n默认根目录: {default_root}" if default_root else "\n当前未设置默认根目录。"
-                return (
-                    "项目新增向导 1/4\n"
-                    "请输入项目 key。\n"
-                    "要求: 仅字母数字/._-，长度 1-64。"
-                    f"{root_hint}\n"
-                    "发送“取消”可退出。"
-                )
-            if step == "path":
-                return (
-                    "项目新增向导 2/4\n"
-                    "请输入项目绝对路径。\n"
-                    "如果要使用默认根目录，请回复“默认”。"
-                )
-            if step == "name":
-                return (
-                    "项目新增向导 3/4\n"
-                    "请输入项目显示名称。\n"
-                    "如果要直接使用 key，请回复“跳过”。"
-                )
-            path_text = data.get("path") or "默认根目录"
-            name_text = data.get("name") or data.get("key") or "未设置"
-            return (
-                "项目新增向导 4/4\n"
-                f"key: {data.get('key')}\n"
-                f"路径: {path_text}\n"
-                f"名称: {name_text}\n"
-                "回复“确认”执行，回复“取消”放弃。"
+            return telegram_messages.project_add_prompt(
+                step=step,
+                data=data,
+                default_root=getattr(self.router.projects, "default_project_root", None),
             )
 
         if kind == "schedule_add":
-            if step == "time":
-                return (
-                    "定时任务向导 1/4\n"
-                    "请输入执行时间，格式 HH:MM。\n"
-                    "例如: 09:30"
-                )
-            if step == "mode":
-                return (
-                    "定时任务向导 2/4\n"
-                    "请输入任务类型：ask 或 do。"
-                )
-            if step == "text":
-                return (
-                    "定时任务向导 3/4\n"
-                    "请输入定时任务内容。"
-                )
-            return (
-                "定时任务向导 4/4\n"
-                f"时间: {data.get('hhmm')}\n"
-                f"类型: {data.get('mode')}\n"
-                f"内容: {data.get('text')}\n"
-                "回复“确认”执行，回复“取消”放弃。"
-            )
+            return telegram_messages.schedule_add_prompt(step=step, data=data)
 
         template_keys = ", ".join(sorted(BUILTIN_TEMPLATES.keys()))
-        if step == "template":
-            return (
-                "模板执行向导 1/3\n"
-                "请输入模板 key。\n"
-                f"可用模板: {template_keys}"
-            )
-        if step == "extra":
-            return (
-                "模板执行向导 2/3\n"
-                "请输入附加说明。\n"
-                "如果不需要，请回复“跳过”。"
-            )
-        extra_text = data.get("extra") or "无"
-        return (
-            "模板执行向导 3/3\n"
-            f"模板: {data.get('template')}\n"
-            f"附加说明: {extra_text}\n"
-            "回复“确认”执行，回复“取消”放弃。"
-        )
+        return telegram_messages.run_template_prompt(step=step, data=data, template_keys=template_keys)
 
     def _wizard_markup(self, state: dict) -> InlineKeyboardMarkup:
         kind = str(state.get("kind") or "")
@@ -990,11 +909,10 @@ class TelegramBotService:
         prompt = self._wizard_prompt(state)
         if preface:
             prompt = f"{preface}\n\n{prompt}"
-        await self._safe_reply_text(
+        await self._send_view_spec(
             message,
-            prompt,
+            TelegramReplySpec(text=prompt, reply_markup=self._wizard_markup(state)),
             context=context,
-            reply_markup=self._wizard_markup(state),
         )
 
     async def _handle_wizard_input(
@@ -1008,9 +926,9 @@ class TelegramBotService:
         lowered = text.lower()
         if lowered in {item.lower() for item in self._WIZARD_CANCEL_TOKENS}:
             self.router.tasks.clear_chat_wizard_state(chat_id=ctx.telegram_chat_id)
-            await self._safe_reply_text(
+            await self._send_text(
                 message,
-                "已取消当前向导。",
+                telegram_messages.wizard_cancelled(),
                 context="sending wizard cancel",
                 reply_markup=self._main_menu_markup(),
             )

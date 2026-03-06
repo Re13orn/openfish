@@ -233,14 +233,14 @@ def test_document_upload_handles_telegram_file_too_big(monkeypatch) -> None:
     service = TelegramBotService(config=config, router=router)
     sent_texts: list[str] = []
 
-    async def fake_safe_reply_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+    async def fake_send_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
         _ = message
         _ = context
         _ = reply_markup
         sent_texts.append(text)
         return True
 
-    monkeypatch.setattr(service, "_safe_reply_text", fake_safe_reply_text)
+    monkeypatch.setattr(service, "_send_text", fake_send_text)
     update = SimpleNamespace(
         effective_message=SimpleNamespace(
             document=DocumentTooBigStub(),
@@ -267,14 +267,13 @@ def test_activate_project_add_wizard_persists_state(monkeypatch) -> None:
     service = TelegramBotService(config=config, router=router)
     sent_texts: list[str] = []
 
-    async def fake_safe_reply_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+    async def fake_send_view_spec(message, spec, *, context: str) -> bool:  # noqa: ANN001, ANN202
         _ = message
         _ = context
-        _ = reply_markup
-        sent_texts.append(text)
+        sent_texts.append(spec.text)
         return True
 
-    monkeypatch.setattr(service, "_safe_reply_text", fake_safe_reply_text)
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
     ctx = SimpleNamespace(
         telegram_user_id="123",
         telegram_chat_id="chat-1",
@@ -317,14 +316,13 @@ def test_wizard_default_callback_advances_project_add(monkeypatch) -> None:
     service = TelegramBotService(config=config, router=router)
     sent_texts: list[str] = []
 
-    async def fake_safe_reply_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+    async def fake_send_view_spec(message, spec, *, context: str) -> bool:  # noqa: ANN001, ANN202
         _ = message
         _ = context
-        _ = reply_markup
-        sent_texts.append(text)
+        sent_texts.append(spec.text)
         return True
 
-    monkeypatch.setattr(service, "_safe_reply_text", fake_safe_reply_text)
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
     ctx = SimpleNamespace(
         telegram_user_id="123",
         telegram_chat_id="chat-1",
@@ -355,14 +353,14 @@ def test_wizard_callback_with_missing_state_reports_expired(monkeypatch) -> None
     service = TelegramBotService(config=config, router=router)
     sent_texts: list[str] = []
 
-    async def fake_safe_reply_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+    async def fake_send_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
         _ = message
         _ = context
         _ = reply_markup
         sent_texts.append(text)
         return True
 
-    monkeypatch.setattr(service, "_safe_reply_text", fake_safe_reply_text)
+    monkeypatch.setattr(service, "_send_text", fake_send_text)
     ctx = SimpleNamespace(
         telegram_user_id="123",
         telegram_chat_id="chat-1",
@@ -388,14 +386,13 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
     service = TelegramBotService(config=config, router=router)
     captured = {}
 
-    async def fake_safe_reply_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+    async def fake_send_view_spec(message, spec, *, context: str) -> bool:  # noqa: ANN001, ANN202
         _ = message
-        _ = text
         _ = context
-        captured["markup"] = reply_markup
+        captured["markup"] = spec.reply_markup
         return True
 
-    monkeypatch.setattr(service, "_safe_reply_text", fake_safe_reply_text)
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
 
     asyncio.run(service._send_more_panel(object()))
 
