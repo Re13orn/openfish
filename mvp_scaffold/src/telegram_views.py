@@ -111,18 +111,27 @@ class TelegramViewFactory:
             reply_markup=InlineKeyboardMarkup(rows),
         )
 
-    def approval_panel(self) -> TelegramReplySpec:
+    def approval_panel(self, *, approval_id: int | None = None) -> TelegramReplySpec:
+        approve_callback = "approval:approve"
+        reject_callback = "approval:reject"
+        approve_prompt_callback = "prompt:approve"
+        reject_prompt_callback = "prompt:reject"
+        if approval_id is not None:
+            approve_callback = f"approval:approve:{approval_id}"
+            reject_callback = f"approval:reject:{approval_id}"
+            approve_prompt_callback = f"prompt:approve:{approval_id}"
+            reject_prompt_callback = f"prompt:reject:{approval_id}"
         return TelegramReplySpec(
             text="审批操作：",
             reply_markup=InlineKeyboardMarkup(
                 [
                     [
-                        InlineKeyboardButton(text="批准", callback_data="approval:approve"),
-                        InlineKeyboardButton(text="拒绝", callback_data="approval:reject"),
+                        InlineKeyboardButton(text="批准", callback_data=approve_callback),
+                        InlineKeyboardButton(text="拒绝", callback_data=reject_callback),
                     ],
                     [
-                        InlineKeyboardButton(text="批准+备注", callback_data="prompt:approve"),
-                        InlineKeyboardButton(text="拒绝+原因", callback_data="prompt:reject"),
+                        InlineKeyboardButton(text="批准+备注", callback_data=approve_prompt_callback),
+                        InlineKeyboardButton(text="拒绝+原因", callback_data=reject_prompt_callback),
                     ],
                     [InlineKeyboardButton(text="查看状态", callback_data="approval:status")],
                 ]
@@ -176,11 +185,17 @@ class TelegramViewFactory:
         if snapshot.active_project_key is None:
             return self.project_shortcuts_markup(recent_projects)
         if snapshot.pending_approval:
+            if snapshot.pending_approval_id is not None:
+                approve_callback = f"approval:approve:{snapshot.pending_approval_id}"
+                reject_callback = f"approval:reject:{snapshot.pending_approval_id}"
+            else:
+                approve_callback = "panel:approval"
+                reject_callback = "panel:approval"
             return InlineKeyboardMarkup(
                 [
                     [
-                        InlineKeyboardButton(text="批准", callback_data="approval:approve"),
-                        InlineKeyboardButton(text="拒绝", callback_data="approval:reject"),
+                        InlineKeyboardButton(text="批准", callback_data=approve_callback),
+                        InlineKeyboardButton(text="拒绝", callback_data=reject_callback),
                     ],
                     [
                         InlineKeyboardButton(text="看变更", callback_data="status:diff"),

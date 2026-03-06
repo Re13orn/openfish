@@ -54,6 +54,15 @@ OpenFish is not:
 - Project memory: notes, recent summaries, status snapshots
 - Safe file analysis: upload with extension/size/path checks
 
+## Telegram UX
+
+- High-frequency home keyboard for `Projects`, `Ask`, `Do`, `Status`, `Resume`, `Diff`, `Schedule`, `More`, `Help`
+- Button-first approval flow, including note/reason wizards tied to explicit `approval_id`
+- Persisted step-by-step wizards for project add, schedule add, template run, and approval note/reason
+- Chat-scoped UI mode with concise mobile summaries
+- Status/projects/schedule/approval/more panels now prefer updating the latest card instead of spamming new messages
+- Short-window outbound dedup plus recent message reference tracking for stable Telegram rendering
+
 ## Quick Start
 
 ```bash
@@ -97,6 +106,7 @@ User-facing docs:
 
 - Chinese homepage: [README_CN.md](README_CN.md)
 - Architecture details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Persistence details: [docs/PERSISTENCE_ARCHITECTURE.md](docs/PERSISTENCE_ARCHITECTURE.md)
 - Install/Deploy/Usage manual (Chinese): [docs/安装部署和使用手册.md](docs/安装部署和使用手册.md)
 
 Internal docs:

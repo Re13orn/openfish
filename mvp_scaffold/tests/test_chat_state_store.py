@@ -1,5 +1,4 @@
 from pathlib import Path
-
 from src.chat_state_store import ChatStateStore
 from src.db import Database
 
@@ -58,3 +57,66 @@ def test_invalid_ui_mode_raises_value_error(tmp_path: Path) -> None:
         assert "Unsupported ui mode" in str(exc)
     else:
         raise AssertionError("expected ValueError for unsupported ui mode")
+
+
+def test_outbound_message_delivery_round_trip(tmp_path: Path) -> None:
+    _, store = _setup_store(tmp_path)
+    store.set_chat_wizard_state(chat_id="chat-1", user_id=1, state={"kind": "noop"})
+
+    store.remember_outbound_message(
+        chat_id="chat-1",
+        dedup_key="abc123",
+        context="sending status",
+        message_id="888",
+    )
+
+    recent = store.get_recent_outbound_message_id(
+        chat_id="chat-1",
+        dedup_key="abc123",
+        max_age_seconds=5,
+    )
+    assert recent == "888"
+
+
+def test_outbound_message_delivery_expires_by_age(tmp_path: Path) -> None:
+    db, store = _setup_store(tmp_path)
+    store.set_chat_wizard_state(chat_id="chat-1", user_id=1, state={"kind": "noop"})
+    store.remember_outbound_message(
+        chat_id="chat-1",
+        dedup_key="abc123",
+        context="sending status",
+        message_id="888",
+    )
+    db.get_connection().execute(
+        """
+        UPDATE chat_context
+        SET last_outbound_sent_at = '2000-01-01 00:00:00'
+        WHERE telegram_chat_id = 'chat-1'
+        """
+    )
+    db.get_connection().commit()
+
+    recent = store.get_recent_outbound_message_id(
+        chat_id="chat-1",
+        dedup_key="abc123",
+        max_age_seconds=0.2,
+    )
+    assert recent is None
+
+
+def test_outbound_message_delivery_can_be_loaded_by_context(tmp_path: Path) -> None:
+    _, store = _setup_store(tmp_path)
+    store.set_chat_wizard_state(chat_id="chat-1", user_id=1, state={"kind": "noop"})
+    store.remember_outbound_message(
+        chat_id="chat-1",
+        dedup_key="abc123",
+        context="sending status result",
+        message_id="999",
+    )
+
+    recent = store.get_recent_outbound_message_id_by_context(
+        chat_id="chat-1",
+        context="sending status result",
+        max_age_seconds=5,
+    )
+    assert recent == "999"

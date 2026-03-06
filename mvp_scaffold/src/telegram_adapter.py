@@ -59,7 +59,7 @@ class TelegramBotService:
         "ui_verbose": "/ui verbose",
     }
 
-    _WIZARD_TOKENS = {"project_add", "schedule_add", "run"}
+    _WIZARD_TOKENS = {"project_add", "schedule_add", "run", "approve_note", "reject_note"}
     _WIZARD_CANCEL_TOKENS = {"取消", "cancel", "/cancel", "退出", "exit"}
     _WIZARD_SKIP_TOKENS = {"跳过", "skip", "-", "无"}
     _WIZARD_CONFIRM_TOKENS = {"确认", "确认执行", "confirm", "ok", "yes"}
@@ -95,13 +95,30 @@ class TelegramBotService:
         "reject": "请输入拒绝原因。下一条消息将按 /reject 执行。",
         "mcp": "请输入 MCP 名称（留空则查看列表）。下一条消息将按 /mcp 执行。",
     }
+    _TYPING_COMMANDS = {
+        "/ask",
+        "/approve",
+        "/do",
+        "/mcp",
+        "/reject",
+        "/resume",
+        "/retry",
+        "/run",
+        "/schedule-run",
+        "/skill-install",
+    }
 
     def __init__(self, config, router) -> None:
         self.config = config
         self.router = router
         self.progress = ProgressReporter()
         self.views = TelegramViewFactory()
-        self.sink = TelegramMessageSink(config, default_reply_markup_factory=self._main_menu_markup)
+        delivery_tracker = getattr(getattr(router, "tasks", None), "chat_state", None)
+        self.sink = TelegramMessageSink(
+            config,
+            default_reply_markup_factory=self._main_menu_markup,
+            delivery_tracker=delivery_tracker,
+        )
         self._app: Application | None = None
         self._pending_command_by_chat: dict[str, str] = {}
 
@@ -293,6 +310,7 @@ class TelegramBotService:
                 context="sending upload ack",
                 reply_markup=self._main_menu_markup(),
             )
+            await self.sink.send_typing(message, context="processing upload")
 
             plan_or_error = self.router.prepare_document_upload(
                 command_context,
@@ -406,7 +424,7 @@ class TelegramBotService:
                 await self._send_projects_panel(query.message, base_ctx)
                 return
             if data == "status:approval":
-                await self._send_approval_panel(query.message)
+                await self._send_approval_panel(query.message, base_ctx)
                 return
             if data == "status:schedule":
                 await self._send_schedule_panel(query.message, base_ctx)
@@ -420,6 +438,34 @@ class TelegramBotService:
                 return
             if data == "approval:reject":
                 await self._execute_command(query.message, base_ctx, "/reject")
+                await self._clear_inline_keyboard(query.message)
+                return
+            if data.startswith("approval:approve:"):
+                approval_id = data.rsplit(":", 1)[1]
+                if not self._is_active_approval_callback(base_ctx, query.message, approval_id):
+                    await self._clear_inline_keyboard(query.message)
+                    await self._send_text(
+                        query.message,
+                        "这个审批按钮已过期，请重新打开当前审批卡片。",
+                        context="sending expired approval callback",
+                        reply_markup=self._main_menu_markup(),
+                    )
+                    return
+                await self._execute_command(query.message, base_ctx, f"/approve {approval_id}")
+                await self._clear_inline_keyboard(query.message)
+                return
+            if data.startswith("approval:reject:"):
+                approval_id = data.rsplit(":", 1)[1]
+                if not self._is_active_approval_callback(base_ctx, query.message, approval_id):
+                    await self._clear_inline_keyboard(query.message)
+                    await self._send_text(
+                        query.message,
+                        "这个审批按钮已过期，请重新打开当前审批卡片。",
+                        context="sending expired approval callback",
+                        reply_markup=self._main_menu_markup(),
+                    )
+                    return
+                await self._execute_command(query.message, base_ctx, f"/reject {approval_id}")
                 await self._clear_inline_keyboard(query.message)
                 return
             if data == "approval:status":
@@ -470,7 +516,7 @@ class TelegramBotService:
                     await self._send_schedule_panel(query.message, base_ctx)
                     return
                 if panel == "approval":
-                    await self._send_approval_panel(query.message)
+                    await self._send_approval_panel(query.message, base_ctx)
                     return
                 if panel == "more":
                     await self._send_more_panel(query.message)
@@ -507,6 +553,21 @@ class TelegramBotService:
             )
             return
 
+        if token == "approve":
+            await self._start_wizard(message, ctx=ctx, token="approve_note")
+            return
+        if token == "reject":
+            await self._start_wizard(message, ctx=ctx, token="reject_note")
+            return
+        if token.startswith("approve:"):
+            approval_id = token.split(":", 1)[1]
+            await self._start_approval_note_wizard(message, ctx=ctx, action="approve", approval_id_text=approval_id)
+            return
+        if token.startswith("reject:"):
+            approval_id = token.split(":", 1)[1]
+            await self._start_approval_note_wizard(message, ctx=ctx, action="reject", approval_id_text=approval_id)
+            return
+
         if token in self._WIZARD_TOKENS:
             await self._start_wizard(message, ctx=ctx, token=token)
             return
@@ -531,6 +592,52 @@ class TelegramBotService:
             reply_markup=self._main_menu_markup(),
         )
 
+    async def _start_approval_note_wizard(
+        self,
+        message,
+        *,
+        ctx: CommandContext,
+        action: str,
+        approval_id_text: str,
+    ) -> None:  # noqa: ANN001
+        if not approval_id_text.isdigit():
+            await self._send_text(
+                message,
+                "审批参数无效，请重新打开审批卡片。",
+                context="sending invalid approval wizard request",
+                reply_markup=self._main_menu_markup(),
+            )
+            return
+        pending = self._get_pending_approval(ctx)
+        if pending is None or int(pending.approval_id) != int(approval_id_text):
+            await self._send_text(
+                message,
+                f"审批 #{approval_id_text} 不存在、已处理或不属于当前项目。",
+                context="sending missing approval wizard request",
+                reply_markup=self._main_menu_markup(),
+            )
+            return
+        user = self.router.tasks.ensure_user(ctx)
+        self._pending_command_by_chat.pop(ctx.telegram_chat_id, None)
+        state = {
+            "kind": "approve_note" if action == "approve" else "reject_note",
+            "step": "note",
+            "data": {
+                "approval_id": pending.approval_id,
+                "task_summary": pending.task_summary or "待审批任务",
+            },
+        }
+        self.router.tasks.set_chat_wizard_state(
+            chat_id=ctx.telegram_chat_id,
+            user_id=user.id,
+            state=state,
+        )
+        await self._send_wizard_prompt(
+            message,
+            state,
+            context="sending wizard prompt",
+        )
+
     async def _clear_inline_keyboard(self, message) -> None:  # noqa: ANN001
         if not hasattr(message, "edit_reply_markup"):
             return
@@ -550,6 +657,8 @@ class TelegramBotService:
                 context="sending ack",
                 reply_markup=self._main_menu_markup(),
             )
+        if self._should_send_typing(command):
+            await self.sink.send_typing(message, context=f"executing {command}")
         command_context = CommandContext(
             telegram_user_id=base_ctx.telegram_user_id,
             telegram_chat_id=base_ctx.telegram_chat_id,
@@ -577,18 +686,76 @@ class TelegramBotService:
             recent_keys=recent_keys,
             ordered_keys=ordered_keys,
         )
-        await self._send_view_spec(message, spec, context="sending projects panel")
+        await self._send_view_spec(
+            message,
+            spec,
+            context="sending projects panel",
+            edit_context="sending projects panel",
+            edit_window_seconds=float(getattr(self.config, "telegram_projects_edit_window_seconds", 300.0)),
+        )
 
     async def _send_schedule_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
         await self._execute_command(message, ctx, "/schedule-list")
 
-    async def _send_approval_panel(self, message) -> None:  # noqa: ANN001
-        spec = self.views.approval_panel()
-        await self._send_view_spec(message, spec, context="sending approval panel")
+    async def _send_approval_panel(self, message, ctx: CommandContext | None = None) -> None:  # noqa: ANN001
+        approval_id = self._get_pending_approval_id(ctx) if ctx is not None else None
+        spec = self.views.approval_panel(approval_id=approval_id)
+        await self._send_view_spec(
+            message,
+            spec,
+            context="sending approval panel",
+            edit_context="sending approval panel",
+            edit_window_seconds=float(getattr(self.config, "telegram_approval_edit_window_seconds", 300.0)),
+        )
 
     async def _send_more_panel(self, message) -> None:  # noqa: ANN001
         spec = self.views.more_panel()
-        await self._send_view_spec(message, spec, context="sending more panel")
+        await self._send_view_spec(
+            message,
+            spec,
+            context="sending more panel",
+            edit_context="sending more panel",
+            edit_window_seconds=float(getattr(self.config, "telegram_more_edit_window_seconds", 300.0)),
+        )
+
+    def _should_send_typing(self, command: str) -> bool:
+        return command in self._TYPING_COMMANDS
+
+    def _get_pending_approval_id(self, ctx: CommandContext) -> int | None:
+        pending = self._get_pending_approval(ctx)
+        return pending.approval_id if pending is not None else None
+
+    def _get_pending_approval(self, ctx: CommandContext):
+        user = self.router.tasks.ensure_user(ctx)
+        active_key = self.router.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+        if not active_key:
+            return None
+        try:
+            project_id = self.router.tasks.get_project_id(active_key)
+        except KeyError:
+            return None
+        return self.router.tasks.get_pending_approval(project_id)
+
+    def _is_active_approval_callback(self, ctx: CommandContext, message, approval_id_text: str) -> bool:  # noqa: ANN001
+        if not approval_id_text.isdigit():
+            return False
+        pending = self._get_pending_approval(ctx)
+        if pending is None or int(pending.approval_id) != int(approval_id_text):
+            return False
+        message_id = getattr(message, "message_id", None)
+        if message_id is None or not hasattr(self.router.tasks, "get_recent_outbound_message_id_by_context"):
+            return True
+        recent_status = self.router.tasks.get_recent_outbound_message_id_by_context(
+            chat_id=ctx.telegram_chat_id,
+            context="sending status result",
+            max_age_seconds=float(getattr(self.config, "telegram_status_edit_window_seconds", 300.0)),
+        )
+        recent_approval = self.router.tasks.get_recent_outbound_message_id_by_context(
+            chat_id=ctx.telegram_chat_id,
+            context="sending approval panel",
+            max_age_seconds=3600.0,
+        )
+        return str(message_id) in {value for value in {recent_status, recent_approval} if value}
 
     def _display_upload_path(self, plan) -> str:  # noqa: ANN001
         try:
@@ -642,14 +809,39 @@ class TelegramBotService:
         spec: TelegramReplySpec,
         *,
         context: str,
+        command: str | None = None,
+        edit_context: str | None = None,
+        edit_window_seconds: float | None = None,
     ) -> bool:  # noqa: ANN001
+        send_spec = TelegramSendSpec(
+            text=spec.text,
+            context=context,
+            reply_markup=spec.reply_markup,
+        )
+        if command == "/status":
+            send_spec.context = "sending status result"
+            send_spec.edit_context = "sending status result"
+            send_spec.edit_window_seconds = float(
+                getattr(self.config, "telegram_status_edit_window_seconds", 300.0)
+            )
+        elif command == "/projects":
+            send_spec.context = "sending projects panel"
+            send_spec.edit_context = "sending projects panel"
+            send_spec.edit_window_seconds = float(
+                getattr(self.config, "telegram_projects_edit_window_seconds", 300.0)
+            )
+        elif command == "/schedule-list":
+            send_spec.context = "sending schedule panel"
+            send_spec.edit_context = "sending schedule panel"
+            send_spec.edit_window_seconds = float(
+                getattr(self.config, "telegram_schedule_edit_window_seconds", 300.0)
+            )
+        elif edit_context is not None:
+            send_spec.edit_context = edit_context
+            send_spec.edit_window_seconds = edit_window_seconds
         return await self.sink.send(
             message,
-            TelegramSendSpec(
-                text=spec.text,
-                context=context,
-                reply_markup=spec.reply_markup,
-            ),
+            send_spec,
         )
 
     async def _send_command_result(
@@ -668,6 +860,7 @@ class TelegramBotService:
                 reply_markup=self._reply_markup_for_result(command, ctx, result),
             ),
             context=context,
+            command=command,
         )
 
     def _main_menu_markup(self) -> ReplyKeyboardMarkup:
@@ -744,6 +937,10 @@ class TelegramBotService:
             await self._handle_wizard_input(message, ctx, state, data.split(":", 2)[2])
             await self._clear_inline_keyboard(message)
             return
+        if data.startswith("wizard:preset:"):
+            await self._handle_wizard_input(message, ctx, state, data.split(":", 2)[2])
+            await self._clear_inline_keyboard(message)
+            return
 
         await self._clear_inline_keyboard(message)
         await self._send_text(
@@ -787,9 +984,34 @@ class TelegramBotService:
                     ),
                 )
                 return
+        pending = None
+        if token in {"approve_note", "reject_note"}:
+            pending = self._get_pending_approval(ctx)
+            if pending is None:
+                await self._send_text(
+                    message,
+                    "当前没有待审批任务。",
+                    context="sending approval wizard requirement",
+                    reply_markup=self._main_menu_markup(),
+                )
+                return
 
         self._pending_command_by_chat.pop(ctx.telegram_chat_id, None)
-        state = {"kind": token, "step": "key" if token == "project_add" else "time" if token == "schedule_add" else "template", "data": {}}
+        if token == "project_add":
+            state = {"kind": token, "step": "key", "data": {}}
+        elif token == "schedule_add":
+            state = {"kind": token, "step": "time", "data": {}}
+        elif token in {"approve_note", "reject_note"} and pending is not None:
+            state = {
+                "kind": token,
+                "step": "note",
+                "data": {
+                    "approval_id": pending.approval_id,
+                    "task_summary": pending.task_summary or "待审批任务",
+                },
+            }
+        else:
+            state = {"kind": token, "step": "template", "data": {}}
         self.router.tasks.set_chat_wizard_state(
             chat_id=ctx.telegram_chat_id,
             user_id=user.id,
@@ -816,6 +1038,10 @@ class TelegramBotService:
 
         if kind == "schedule_add":
             return telegram_messages.schedule_add_prompt(step=step, data=data)
+        if kind == "approve_note":
+            return telegram_messages.approval_note_prompt(step=step, data=data, action="approve")
+        if kind == "reject_note":
+            return telegram_messages.approval_note_prompt(step=step, data=data, action="reject")
 
         template_keys = ", ".join(sorted(BUILTIN_TEMPLATES.keys()))
         return telegram_messages.run_template_prompt(step=step, data=data, template_keys=template_keys)
@@ -892,6 +1118,47 @@ class TelegramBotService:
                 return InlineKeyboardMarkup(
                     [[
                         InlineKeyboardButton(text="确认执行", callback_data="wizard:confirm"),
+                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
+                    ]]
+                )
+
+        if kind == "approve_note":
+            if step == "note":
+                return InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(text="无备注", callback_data="wizard:skip"),
+                            InlineKeyboardButton(text="继续执行", callback_data="wizard:preset:继续执行"),
+                        ],
+                        [InlineKeyboardButton(text="取消", callback_data="wizard:cancel")],
+                    ]
+                )
+            if step == "confirm":
+                return InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton(text="确认批准", callback_data="wizard:confirm"),
+                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
+                    ]]
+                )
+
+        if kind == "reject_note":
+            if step == "note":
+                return InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(text="默认原因", callback_data="wizard:default"),
+                            InlineKeyboardButton(text="风险太高", callback_data="wizard:preset:风险太高"),
+                        ],
+                        [
+                            InlineKeyboardButton(text="暂不执行", callback_data="wizard:preset:暂不执行"),
+                            InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
+                        ],
+                    ]
+                )
+            if step == "confirm":
+                return InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton(text="确认拒绝", callback_data="wizard:confirm"),
                         InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
                     ]]
                 )
@@ -1023,6 +1290,18 @@ class TelegramBotService:
                 return {"kind": kind, "step": "confirm", "data": data}
             return None
 
+        if kind == "approve_note":
+            if step == "note":
+                data["note"] = "" if lowered in {item.lower() for item in self._WIZARD_SKIP_TOKENS} else text
+                return {"kind": kind, "step": "confirm", "data": data}
+            return None
+
+        if kind == "reject_note":
+            if step == "note":
+                data["note"] = "用户拒绝" if lowered in {"默认", "default"} else (text or "用户拒绝")
+                return {"kind": kind, "step": "confirm", "data": data}
+            return None
+
         if step == "template":
             template_key = text.strip()
             if template_key not in BUILTIN_TEMPLATES:
@@ -1046,6 +1325,14 @@ class TelegramBotService:
             return " ".join(parts)
         if kind == "schedule_add":
             return f"/schedule-add {data['hhmm']} {data['mode']} {data['text']}"
+        if kind == "approve_note":
+            note = str(data.get("note") or "").strip()
+            if note:
+                return f"/approve {data['approval_id']} {note}"
+            return f"/approve {data['approval_id']}"
+        if kind == "reject_note":
+            note = str(data.get("note") or "用户拒绝").strip() or "用户拒绝"
+            return f"/reject {data['approval_id']} {note}"
         extra = str(data.get("extra") or "").strip()
         if extra:
             return f"/run {data['template']} {extra}"

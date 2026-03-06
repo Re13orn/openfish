@@ -8,6 +8,7 @@ OpenFish is a single-process, local-first assistant:
 - The service runs on the owner's machine.
 - Task/project/audit state is stored in local SQLite.
 - Codex CLI executes inside the selected project directory.
+- Telegram interaction is split into message builders, view builders, delivery sink, and adapter flow control.
 
 ## Architecture Diagram
 
@@ -41,6 +42,21 @@ flowchart LR
     SCH --> R
 ```
 
+## Telegram Interaction Layer
+
+OpenFish now treats Telegram as a small UI system, not just a command transport.
+
+- `telegram_messages.py`: reusable prompt/error/hint text
+- `telegram_views.py`: keyboards, panels, and result markups
+- `telegram_sink.py`: outbound delivery, retry policy, typing indicator, dedup, recent message references, message editing
+- `telegram_adapter.py`: update handling, callback routing, wizard flow, and command execution orchestration
+
+This keeps three concerns separate:
+
+- what to say
+- what buttons to show
+- how to deliver or update the Telegram message
+
 ## Runtime Flow
 
 ```mermaid
@@ -60,6 +76,13 @@ sequenceDiagram
     Router-->>Adapter: CommandResult
     Adapter-->>User: concise mobile reply
 ```
+
+## Telegram Rendering Model
+
+- High-frequency actions use the main keyboard.
+- High-friction actions use persisted step-by-step wizards.
+- `/status`, `/projects`, `/schedule-list`, approval panel, and more panel prefer updating the latest card instead of sending a fresh message every time.
+- Approval actions are bound to explicit `approval_id` values, and callback handling validates both current pending state and recent card context before acting.
 
 ## Persistence Boundary
 

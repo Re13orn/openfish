@@ -175,6 +175,8 @@ class TasksStub:
         self.scheduled_tasks: list[ScheduledTaskRecord] = []
         self.next_schedule_id = 1
         self.cleared_project_session_ids: list[int] = []
+        self.resolved_approvals: list[tuple[int, str, str | None]] = []
+        self.fail_resolve_for: set[int] = set()
 
     def ensure_user(self, ctx: CommandContext) -> UserRecord:
         _ = ctx
@@ -287,8 +289,10 @@ class TasksStub:
         _ = project_id
         return self.latest_task
 
-    def get_pending_approval(self, project_id: int) -> PendingApprovalRecord | None:
+    def get_pending_approval(self, project_id: int, approval_id: int | None = None) -> PendingApprovalRecord | None:
         _ = project_id
+        if approval_id is not None and self.pending is not None and self.pending.approval_id != approval_id:
+            return None
         return self.pending
 
     def resolve_approval(
@@ -298,11 +302,12 @@ class TasksStub:
         status: str,
         decided_by_user_id: int,
         decision_note: str | None,
-    ) -> None:
-        _ = approval_id
-        _ = status
+    ) -> bool:
         _ = decided_by_user_id
-        _ = decision_note
+        if approval_id in self.fail_resolve_for:
+            return False
+        self.resolved_approvals.append((approval_id, status, decision_note))
+        return True
 
     def mark_task_resumed_after_approval(self, task_id: int) -> None:
         _ = task_id
@@ -615,12 +620,68 @@ def test_approve_resumes_pending_task() -> None:
     )
     router = _build_router(tasks, audit, codex)
 
-    result = router.handle(_ctx("/approve 继续"))
+    result = router.handle(_ctx("/approve 99 继续"))
 
     assert "任务 #7: 已完成" in result.reply_text
+    assert tasks.resolved_approvals == [(99, "approved", "继续")]
     codes = [event[0] for event in audit.events]
     assert audit_events.APPROVAL_GRANTED in codes
     assert audit_events.TASK_COMPLETED in codes
+
+
+def test_approve_rejects_unknown_explicit_approval_id() -> None:
+    tasks = TasksStub()
+    tasks.pending = PendingApprovalRecord(
+        task_id=7,
+        approval_id=99,
+        requested_action="修改关键文件，需要审批",
+        task_summary="等待审批",
+        codex_session_id="sess-2",
+    )
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/approve 12 继续"))
+
+    assert result.reply_text == "审批 #12 不存在、已处理或不属于当前项目。"
+
+
+def test_reject_with_explicit_approval_id_marks_task_rejected() -> None:
+    tasks = TasksStub()
+    tasks.pending = PendingApprovalRecord(
+        task_id=8,
+        approval_id=101,
+        requested_action="删除危险文件，需要审批",
+        task_summary="等待审批",
+        codex_session_id="sess-3",
+    )
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/reject 101 风险太高"))
+
+    assert result.reply_text == "已拒绝任务 #8。原因: 风险太高"
+    assert tasks.resolved_approvals == [(101, "rejected", "风险太高")]
+
+
+def test_approve_returns_expired_when_atomic_resolution_fails() -> None:
+    tasks = TasksStub()
+    tasks.pending = PendingApprovalRecord(
+        task_id=7,
+        approval_id=99,
+        requested_action="修改关键文件，需要审批",
+        task_summary="等待审批",
+        codex_session_id="sess-2",
+    )
+    tasks.fail_resolve_for.add(99)
+    codex = CodexStub(
+        run_result=_codex_result("unused", ok=True),
+        resume_result=_codex_result("继续执行完成", ok=True),
+    )
+    router = _build_router(tasks, AuditStub(), codex)
+
+    result = router.handle(_ctx("/approve 99 继续"))
+
+    assert result.reply_text == "审批 #99 已处理或已过期。"
+    assert codex.calls == []
 
 
 def test_prepare_document_upload_rejects_too_large_file() -> None:

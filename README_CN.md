@@ -54,6 +54,15 @@ OpenFish 不做：
 - 项目记忆：笔记、任务摘要、状态快照
 - 文件安全分析：上传后按后缀/大小/路径规则处理
 
+## Telegram 交互演进
+
+- 高频主键盘：`项目`、`提问`、`执行`、`状态`、`继续`、`变更`、`定时`、`更多`、`帮助`
+- 审批流程优先按钮化，备注/原因向导也绑定显式 `approval_id`
+- 新增项目、定时任务、模板执行、审批备注/拒绝原因都支持可恢复的分步向导
+- chat 级 UI 模式支持精简/详细两种信息密度
+- `状态`、`项目`、`定时`、`审批`、`更多` 这些卡片会优先更新已有消息，而不是不断堆新消息
+- 发送链路增加短窗口去重和最近消息引用跟踪，减少重复输出
+
 ## 快速开始
 
 ```bash
@@ -96,6 +105,7 @@ bash mvp_scaffold/scripts/install_start.sh tg-user-id
 面向使用者：
 
 - 架构说明：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- 持久化说明：[docs/PERSISTENCE_ARCHITECTURE.md](docs/PERSISTENCE_ARCHITECTURE.md)
 - 安装部署与使用手册：[docs/安装部署和使用手册.md](docs/安装部署和使用手册.md)
 
 内部文档：

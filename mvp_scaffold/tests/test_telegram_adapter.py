@@ -21,6 +21,15 @@ class WizardTasksStub:
         self.user = SimpleNamespace(id=1)
         self.active_project_key = "demo"
         self.recent_projects = ["demo", "ops"]
+        self.recent_by_context = {
+            ("1", "sending approval panel"): "10",
+            ("1", "sending status result"): "10",
+        }
+        self.pending_approval = SimpleNamespace(
+            approval_id=12,
+            task_summary="等待审批",
+        )
+        self.scheduled_tasks = []
 
     def ensure_user(self, ctx):  # noqa: ANN001
         _ = ctx
@@ -44,6 +53,27 @@ class WizardTasksStub:
         _ = chat_id
         return self.active_project_key
 
+    def get_project_id(self, project_key: str) -> int:
+        _ = project_key
+        return 101
+
+    def get_pending_approval(self, project_id: int, approval_id: int | None = None):  # noqa: ANN201
+        _ = project_id
+        if approval_id is not None and self.pending_approval is not None:
+            if int(self.pending_approval.approval_id) != approval_id:
+                return None
+        return self.pending_approval
+
+    def get_recent_outbound_message_id_by_context(
+        self,
+        *,
+        chat_id: str,
+        context: str,
+        max_age_seconds: float,
+    ) -> str | None:
+        _ = max_age_seconds
+        return self.recent_by_context.get((chat_id, context))
+
     def list_recent_project_keys(self, *, user_id: int, limit: int = 6) -> list[str]:
         _ = user_id
         return self.recent_projects[:limit]
@@ -65,6 +95,10 @@ class WizardTasksStub:
             pending_approval=False,
             most_recent_task_summary=None,
         )
+
+    def list_scheduled_tasks(self, project_id: int):  # noqa: ANN201
+        _ = project_id
+        return self.scheduled_tasks
 
 
 class WizardRouterStub:
@@ -102,6 +136,7 @@ class MessageStub:
         self.sent_texts: list[str] = []
         self.sent_markups: list[object] = []
         self.edit_reply_markup_calls: list[object] = []
+        self.chat_actions: list[str] = []
 
     async def reply_text(self, text: str, **kwargs):  # noqa: ANN003
         self.sent_markups.append(kwargs.get("reply_markup"))
@@ -110,6 +145,11 @@ class MessageStub:
             raise outcome
         self.sent_texts.append(text)
         return outcome
+
+    async def reply_chat_action(self, action: str, **kwargs):  # noqa: ANN003
+        _ = kwargs
+        self.chat_actions.append(action)
+        return object()
 
     async def edit_reply_markup(self, **kwargs):  # noqa: ANN003
         self.edit_reply_markup_calls.append(kwargs.get("reply_markup"))
@@ -288,6 +328,109 @@ def test_activate_project_add_wizard_persists_state(monkeypatch) -> None:
     assert any("项目新增向导 1/4" in text for text in sent_texts)
 
 
+def test_activate_approve_prompt_starts_approval_note_wizard(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    sent_texts: list[str] = []
+
+    async def fake_send_view_spec(message, spec, *, context: str, command=None) -> bool:  # noqa: ANN001, ANN202
+        _ = message
+        _ = context
+        _ = command
+        sent_texts.append(spec.text)
+        return True
+
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="chat-1",
+        telegram_message_id="1",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._activate_prompt(object(), ctx, "approve"))
+
+    assert router.tasks.state == {
+        "kind": "approve_note",
+        "step": "note",
+        "data": {"approval_id": 12, "task_summary": "等待审批"},
+    }
+    assert any("批准向导 1/2" in text for text in sent_texts)
+
+
+def test_activate_explicit_approve_prompt_uses_matching_approval_id(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    sent_texts: list[str] = []
+
+    async def fake_send_view_spec(message, spec, *, context: str, command=None) -> bool:  # noqa: ANN001, ANN202
+        _ = message
+        _ = context
+        _ = command
+        sent_texts.append(spec.text)
+        return True
+
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="chat-1",
+        telegram_message_id="1",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._activate_prompt(object(), ctx, "approve:12"))
+
+    assert router.tasks.state == {
+        "kind": "approve_note",
+        "step": "note",
+        "data": {"approval_id": 12, "task_summary": "等待审批"},
+    }
+    assert any("批准向导 1/2" in text for text in sent_texts)
+
+
+def test_activate_explicit_approve_prompt_rejects_stale_approval_id(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    sent_texts: list[str] = []
+
+    async def fake_send_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+        _ = message
+        _ = context
+        _ = reply_markup
+        sent_texts.append(text)
+        return True
+
+    monkeypatch.setattr(service, "_send_text", fake_send_text)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="chat-1",
+        telegram_message_id="1",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._activate_prompt(object(), ctx, "approve:99"))
+
+    assert any("审批 #99 不存在" in text for text in sent_texts)
+
+
 def test_project_add_path_step_has_default_button() -> None:
     config = SimpleNamespace(
         telegram_bot_token="dummy",
@@ -341,6 +484,83 @@ def test_wizard_default_callback_advances_project_add(monkeypatch) -> None:
     }
     assert message.edit_reply_markup_calls == [None]
     assert any("项目新增向导 3/4" in text for text in sent_texts)
+
+
+def test_reject_note_wizard_preset_advances_to_confirm(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    router.tasks.state = {
+        "kind": "reject_note",
+        "step": "note",
+        "data": {"approval_id": 12, "task_summary": "等待审批"},
+    }
+    service = TelegramBotService(config=config, router=router)
+    sent_texts: list[str] = []
+
+    async def fake_send_view_spec(message, spec, *, context: str, command=None) -> bool:  # noqa: ANN001, ANN202
+        _ = message
+        _ = context
+        _ = command
+        sent_texts.append(spec.text)
+        return True
+
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="chat-1",
+        telegram_message_id="1",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+    message = MessageStub([object()])
+
+    asyncio.run(service._handle_wizard_callback(message, ctx, "wizard:preset:风险太高"))
+
+    assert router.tasks.state == {
+        "kind": "reject_note",
+        "step": "confirm",
+        "data": {"approval_id": 12, "task_summary": "等待审批", "note": "风险太高"},
+    }
+    assert any("拒绝向导 2/2" in text for text in sent_texts)
+
+
+def test_approve_note_wizard_confirm_executes_explicit_approval_command(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    router.tasks.state = {
+        "kind": "approve_note",
+        "step": "confirm",
+        "data": {"approval_id": 12, "task_summary": "等待审批", "note": "继续执行"},
+    }
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="chat-1",
+        telegram_message_id="1",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+    message = MessageStub([object()])
+
+    asyncio.run(service._handle_wizard_callback(message, ctx, "wizard:confirm"))
+
+    assert executed == ["/approve 12 继续执行"]
 
 
 def test_wizard_callback_with_missing_state_reports_expired(monkeypatch) -> None:
@@ -421,7 +641,7 @@ def test_approval_callback_clears_inline_keyboard(monkeypatch) -> None:
     message = MessageStub([object()])
     query = SimpleNamespace(
         message=message,
-        data="approval:approve",
+        data="approval:approve:12",
         answer=lambda *args, **kwargs: None,
     )
 
@@ -437,5 +657,283 @@ def test_approval_callback_clears_inline_keyboard(monkeypatch) -> None:
 
     asyncio.run(service._on_callback_query(update, SimpleNamespace()))
 
-    assert executed == ["/approve"]
+    assert executed == ["/approve 12"]
     assert message.edit_reply_markup_calls == [None]
+
+
+def test_expired_approval_callback_is_rejected(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    router.tasks.recent_by_context = {("1", "sending approval panel"): "99"}
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+    sent_texts: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    async def fake_send_text(message, text: str, *, context: str, reply_markup=None) -> bool:  # noqa: ANN001
+        _ = message
+        _ = context
+        _ = reply_markup
+        sent_texts.append(text)
+        return True
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    monkeypatch.setattr(service, "_send_text", fake_send_text)
+    message = MessageStub([object()])
+    message.message_id = 10
+    query = SimpleNamespace(
+        message=message,
+        data="approval:approve:12",
+        answer=lambda *args, **kwargs: None,
+    )
+
+    async def fake_answer(*args, **kwargs):  # noqa: ANN003
+        return None
+
+    query.answer = fake_answer
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_callback_query(update, SimpleNamespace()))
+
+    assert executed == []
+    assert any("已过期" in text for text in sent_texts)
+
+
+def test_execute_command_sends_typing_for_long_running_command() -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    message = MessageStub([object(), object()])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._execute_command(message, ctx, "/do fix issue"))
+
+    assert message.chat_actions == ["typing"]
+
+
+def test_execute_command_skips_typing_for_fast_status_command() -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    message = MessageStub([object()])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._execute_command(message, ctx, "/status"))
+
+    assert message.chat_actions == []
+
+
+def test_send_command_result_marks_status_for_editing(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    captured = {}
+
+    async def fake_send(message, spec):  # noqa: ANN001, ANN201
+        _ = message
+        captured["spec"] = spec
+        return True
+
+    monkeypatch.setattr(service.sink, "send", fake_send)
+    message = MessageStub([])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(
+        service._send_command_result(
+            message,
+            "/status",
+            ctx,
+            SimpleNamespace(reply_text="status", metadata={"recent_projects": []}),
+        )
+    )
+
+    spec = captured["spec"]
+    assert spec.context == "sending status result"
+    assert spec.edit_context == "sending status result"
+    assert spec.edit_window_seconds == 300.0
+
+
+def test_send_command_result_marks_projects_for_editing(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    captured = {}
+
+    async def fake_send(message, spec):  # noqa: ANN001, ANN201
+        _ = message
+        captured["spec"] = spec
+        return True
+
+    monkeypatch.setattr(service.sink, "send", fake_send)
+    message = MessageStub([])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(
+        service._send_command_result(
+            message,
+            "/projects",
+            ctx,
+            SimpleNamespace(reply_text="projects", metadata={"recent_projects": []}),
+        )
+    )
+
+    spec = captured["spec"]
+    assert spec.context == "sending projects panel"
+    assert spec.edit_context == "sending projects panel"
+    assert spec.edit_window_seconds == 300.0
+
+
+def test_send_command_result_marks_schedule_list_for_editing(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    captured = {}
+
+    async def fake_send(message, spec):  # noqa: ANN001, ANN201
+        _ = message
+        captured["spec"] = spec
+        return True
+
+    monkeypatch.setattr(service.sink, "send", fake_send)
+    message = MessageStub([])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(
+        service._send_command_result(
+            message,
+            "/schedule-list",
+            ctx,
+            SimpleNamespace(reply_text="schedules", metadata={}),
+        )
+    )
+
+    spec = captured["spec"]
+    assert spec.context == "sending schedule panel"
+    assert spec.edit_context == "sending schedule panel"
+    assert spec.edit_window_seconds == 300.0
+
+
+def test_send_approval_panel_marks_panel_for_editing(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    captured = {}
+
+    async def fake_send(message, spec):  # noqa: ANN001, ANN201
+        _ = message
+        captured["spec"] = spec
+        return True
+
+    monkeypatch.setattr(service.sink, "send", fake_send)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._send_approval_panel(MessageStub([]), ctx))
+
+    spec = captured["spec"]
+    assert spec.context == "sending approval panel"
+    assert spec.edit_context == "sending approval panel"
+    assert spec.edit_window_seconds == 300.0
+
+
+def test_send_more_panel_marks_panel_for_editing(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    captured = {}
+
+    async def fake_send(message, spec):  # noqa: ANN001, ANN201
+        _ = message
+        captured["spec"] = spec
+        return True
+
+    monkeypatch.setattr(service.sink, "send", fake_send)
+
+    asyncio.run(service._send_more_panel(MessageStub([])))
+
+    spec = captured["spec"]
+    assert spec.context == "sending more panel"
+    assert spec.edit_context == "sending more panel"
+    assert spec.edit_window_seconds == 300.0

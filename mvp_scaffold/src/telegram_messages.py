@@ -113,3 +113,22 @@ def run_template_prompt(step: str, data: dict, template_keys: str) -> str:
         f"附加说明: {extra_text}\n"
         "回复“确认”执行，回复“取消”放弃。"
     )
+
+
+def approval_note_prompt(step: str, data: dict, *, action: str) -> str:
+    label = "批准" if action == "approve" else "拒绝"
+    subject = "审批备注" if action == "approve" else "拒绝原因"
+    if step == "note":
+        task_summary = data.get("task_summary") or "待审批任务"
+        return (
+            f"{label}向导 1/2\n"
+            f"任务: {task_summary}\n"
+            f"请输入{subject}，或直接点下面的快捷按钮。"
+        )
+    note_text = data.get("note") or ("无备注" if action == "approve" else "用户拒绝")
+    return (
+        f"{label}向导 2/2\n"
+        f"审批: #{data.get('approval_id')}\n"
+        f"{subject}: {note_text}\n"
+        "回复“确认”执行，回复“取消”放弃。"
+    )

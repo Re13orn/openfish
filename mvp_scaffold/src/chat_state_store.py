@@ -3,6 +3,7 @@
 import json
 import logging
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from src.db import Database
@@ -204,3 +205,99 @@ class ChatStateStore:
             connection.commit()
         except sqlite3.OperationalError:
             logger.debug("ui_mode column not available when storing chat UI mode.")
+
+    def get_recent_outbound_message_id(
+        self,
+        *,
+        chat_id: str,
+        dedup_key: str,
+        max_age_seconds: float,
+    ) -> str | None:
+        connection = self.db.get_connection()
+        try:
+            row = connection.execute(
+                """
+                SELECT last_outbound_message_id, last_outbound_dedup_key, last_outbound_sent_at
+                FROM chat_context
+                WHERE telegram_chat_id = ?
+                """,
+                (chat_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            logger.debug("chat delivery columns not available when loading outbound delivery state.")
+            return None
+        if row is None:
+            return None
+        if row["last_outbound_dedup_key"] != dedup_key or not row["last_outbound_sent_at"]:
+            return None
+        sent_at = self._parse_sqlite_timestamp(str(row["last_outbound_sent_at"]))
+        if sent_at is None:
+            return None
+        now = datetime.now(timezone.utc)
+        if now - sent_at > timedelta(seconds=max_age_seconds):
+            return None
+        return str(row["last_outbound_message_id"]) if row["last_outbound_message_id"] else None
+
+    def remember_outbound_message(
+        self,
+        *,
+        chat_id: str,
+        dedup_key: str,
+        context: str,
+        message_id: str | None,
+    ) -> None:
+        connection = self.db.get_connection()
+        try:
+            connection.execute(
+                """
+                UPDATE chat_context
+                SET last_outbound_message_id = ?,
+                    last_outbound_dedup_key = ?,
+                    last_outbound_context = ?,
+                    last_outbound_sent_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_chat_id = ?
+                """,
+                (message_id, dedup_key, context, chat_id),
+            )
+            connection.commit()
+        except sqlite3.OperationalError:
+            logger.debug("chat delivery columns not available when storing outbound delivery state.")
+
+    def get_recent_outbound_message_id_by_context(
+        self,
+        *,
+        chat_id: str,
+        context: str,
+        max_age_seconds: float,
+    ) -> str | None:
+        connection = self.db.get_connection()
+        try:
+            row = connection.execute(
+                """
+                SELECT last_outbound_message_id, last_outbound_context, last_outbound_sent_at
+                FROM chat_context
+                WHERE telegram_chat_id = ?
+                """,
+                (chat_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            logger.debug("chat delivery columns not available when loading outbound context state.")
+            return None
+        if row is None:
+            return None
+        if row["last_outbound_context"] != context or not row["last_outbound_sent_at"]:
+            return None
+        sent_at = self._parse_sqlite_timestamp(str(row["last_outbound_sent_at"]))
+        if sent_at is None:
+            return None
+        now = datetime.now(timezone.utc)
+        if now - sent_at > timedelta(seconds=max_age_seconds):
+            return None
+        return str(row["last_outbound_message_id"]) if row["last_outbound_message_id"] else None
+
+    def _parse_sqlite_timestamp(self, value: str) -> datetime | None:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None

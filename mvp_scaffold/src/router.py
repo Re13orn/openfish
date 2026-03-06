@@ -1129,30 +1129,37 @@ class CommandRouter:
         if isinstance(lock_or_result, CommandResult):
             return lock_or_result
         project_lock = lock_or_result
-
-        pending = self.tasks.get_pending_approval(active.project_id)
-        if pending is None:
-            project_lock.release()
-            return CommandResult("当前没有待审批任务。")
-
-        self.tasks.resolve_approval(
-            approval_id=pending.approval_id,
-            status="approved",
-            decided_by_user_id=active.user.id,
-            decision_note=note or None,
-        )
-        self.tasks.mark_task_resumed_after_approval(pending.task_id)
-        self.audit.log(
-            action=audit_events.APPROVAL_GRANTED,
-            message=f"已批准任务 #{pending.task_id}",
-            user_id=active.user.id,
-            project_id=active.project_id,
-            task_id=pending.task_id,
-            details={"note": note[:200] if note else None},
-        )
-
-        resume_instruction = self.approvals.build_resume_instruction(pending.requested_action, user_note=note or None)
         try:
+            approval_id_arg, approval_note = self._parse_approval_argument(note)
+            pending = self.tasks.get_pending_approval(active.project_id, approval_id=approval_id_arg)
+            if pending is None:
+                if approval_id_arg is not None:
+                    return CommandResult(f"审批 #{approval_id_arg} 不存在、已处理或不属于当前项目。")
+                return CommandResult("当前没有待审批任务。")
+
+            resolved = self.tasks.resolve_approval(
+                approval_id=pending.approval_id,
+                status="approved",
+                decided_by_user_id=active.user.id,
+                decision_note=approval_note or None,
+            )
+            if not resolved:
+                return CommandResult(f"审批 #{pending.approval_id} 已处理或已过期。")
+
+            self.tasks.mark_task_resumed_after_approval(pending.task_id)
+            self.audit.log(
+                action=audit_events.APPROVAL_GRANTED,
+                message=f"已批准任务 #{pending.task_id}",
+                user_id=active.user.id,
+                project_id=active.project_id,
+                task_id=pending.task_id,
+                details={"note": approval_note[:200] if approval_note else None},
+            )
+
+            resume_instruction = self.approvals.build_resume_instruction(
+                pending.requested_action,
+                user_note=approval_note or None,
+            )
             codex_result = self.codex.resume_last(active.project, resume_instruction)
             reassessment = self.approvals.assess(codex_result)
             if reassessment.requires_approval:
@@ -1178,36 +1185,49 @@ class CommandRouter:
         if isinstance(active, CommandResult):
             return active
 
-        pending = self.tasks.get_pending_approval(active.project_id)
-        if pending is None:
-            return CommandResult("当前没有待审批任务。")
+        lock_or_result = self._try_acquire_project_lock(active=active, operation="reject")
+        if isinstance(lock_or_result, CommandResult):
+            return lock_or_result
+        project_lock = lock_or_result
+        try:
+            approval_id_arg, reject_note = self._parse_approval_argument(reason)
+            pending = self.tasks.get_pending_approval(active.project_id, approval_id=approval_id_arg)
+            if pending is None:
+                if approval_id_arg is not None:
+                    return CommandResult(f"审批 #{approval_id_arg} 不存在、已处理或不属于当前项目。")
+                return CommandResult("当前没有待审批任务。")
 
-        reject_reason = redact_text(reason) if reason else "用户拒绝"
-        self.tasks.resolve_approval(
-            approval_id=pending.approval_id,
-            status="rejected",
-            decided_by_user_id=active.user.id,
-            decision_note=reject_reason,
-        )
-        reject_summary = f"任务已拒绝: {reject_reason}"
-        self.tasks.reject_task(task_id=pending.task_id, summary=reject_summary)
-        self.tasks.update_project_state_after_task(
-            project_id=active.project_id,
-            task_id=pending.task_id,
-            summary=reject_summary,
-            codex_session_id=pending.codex_session_id,
-            pending_approval_task_id=None,
-            next_step="准备好后可执行 /do 新建任务。",
-        )
-        self.audit.log(
-            action=audit_events.APPROVAL_REJECTED,
-            message=f"已拒绝任务 #{pending.task_id}",
-            user_id=active.user.id,
-            project_id=active.project_id,
-            task_id=pending.task_id,
-            details={"reason": reject_reason[:200]},
-        )
-        return CommandResult(f"已拒绝任务 #{pending.task_id}。原因: {reject_reason}")
+            reject_reason = redact_text(reject_note) if reject_note else "用户拒绝"
+            resolved = self.tasks.resolve_approval(
+                approval_id=pending.approval_id,
+                status="rejected",
+                decided_by_user_id=active.user.id,
+                decision_note=reject_reason,
+            )
+            if not resolved:
+                return CommandResult(f"审批 #{pending.approval_id} 已处理或已过期。")
+
+            reject_summary = f"任务已拒绝: {reject_reason}"
+            self.tasks.reject_task(task_id=pending.task_id, summary=reject_summary)
+            self.tasks.update_project_state_after_task(
+                project_id=active.project_id,
+                task_id=pending.task_id,
+                summary=reject_summary,
+                codex_session_id=pending.codex_session_id,
+                pending_approval_task_id=None,
+                next_step="准备好后可执行 /do 新建任务。",
+            )
+            self.audit.log(
+                action=audit_events.APPROVAL_REJECTED,
+                message=f"已拒绝任务 #{pending.task_id}",
+                user_id=active.user.id,
+                project_id=active.project_id,
+                task_id=pending.task_id,
+                details={"reason": reject_reason[:200]},
+            )
+            return CommandResult(f"已拒绝任务 #{pending.task_id}。原因: {reject_reason}")
+        finally:
+            project_lock.release()
 
     def _handle_note(self, ctx: CommandContext, note_text: str) -> CommandResult:
         if not note_text:
@@ -1584,6 +1604,15 @@ class CommandRouter:
             return None
 
     def _parse_resume_argument(self, argument: str) -> tuple[int | None, str]:
+        text = argument.strip()
+        if not text:
+            return None, ""
+        first, _, tail = text.partition(" ")
+        if first.isdigit():
+            return int(first), tail.strip()
+        return None, text
+
+    def _parse_approval_argument(self, argument: str) -> tuple[int | None, str]:
         text = argument.strip()
         if not text:
             return None, ""

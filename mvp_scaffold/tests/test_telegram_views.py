@@ -33,6 +33,7 @@ def test_status_result_markup_for_pending_approval_has_approve_buttons() -> None
         most_recent_task_summary="fix auth",
         recent_failed_summary=None,
         pending_approval=True,
+        pending_approval_id=99,
         next_schedule_id=None,
         next_schedule_hhmm=None,
         next_step=None,
@@ -41,5 +42,17 @@ def test_status_result_markup_for_pending_approval_has_approve_buttons() -> None
     markup = factory.status_result_markup(snapshot=snapshot, recent_projects=None)
 
     rows = markup.inline_keyboard
-    assert rows[0][0].callback_data == "approval:approve"
-    assert rows[0][1].callback_data == "approval:reject"
+    assert rows[0][0].callback_data == "approval:approve:99"
+    assert rows[0][1].callback_data == "approval:reject:99"
+
+
+def test_approval_panel_uses_explicit_approval_id_when_available() -> None:
+    factory = TelegramViewFactory()
+
+    spec = factory.approval_panel(approval_id=42)
+
+    rows = spec.reply_markup.inline_keyboard
+    assert rows[0][0].callback_data == "approval:approve:42"
+    assert rows[0][1].callback_data == "approval:reject:42"
+    assert rows[1][0].callback_data == "prompt:approve:42"
+    assert rows[1][1].callback_data == "prompt:reject:42"

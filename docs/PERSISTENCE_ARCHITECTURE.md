@@ -47,11 +47,21 @@ Responsibilities:
 - wizard state
 - UI mode
 - user default project fallback
+- outbound Telegram delivery reference tracking used for card reuse/editing
 
 Tables:
 
 - `chat_context`
 - `user_preferences`
+
+Important `chat_context` fields now also include:
+
+- `pending_flow_json`
+- `ui_mode`
+- `last_outbound_message_id`
+- `last_outbound_dedup_key`
+- `last_outbound_context`
+- `last_outbound_sent_at`
 
 ### `ApprovalStore`
 
@@ -131,12 +141,21 @@ Tables:
 3. `router.py` calls `TaskStore.create_approval_request()`
 4. approval row is stored by `ApprovalStore`
 5. `/approve` or `/reject` resolves through `ApprovalStore`
+6. approval-related Telegram callbacks are validated against explicit `approval_id` and recent panel/status-card references
 
 ### Scheduler path
 
 1. `scheduler.py` calls `TaskStore.claim_due_scheduled_tasks()`
 2. `TaskStore` delegates to `ScheduleStore`
 3. after execution, `TaskStore.record_scheduled_task_run()` delegates back to `ScheduleStore`
+
+### Telegram card reuse path
+
+1. `telegram_adapter.py` emits a send request with one logical `context`, for example `sending status result`
+2. `telegram_sink.py` computes a dedup key and checks recent outbound delivery state
+3. if an eligible recent card exists for that context, the sink edits that Telegram message
+4. otherwise it sends a new message
+5. successful delivery writes the latest outbound reference back through `ChatStateStore`
 
 ## Why This Split Helps
 

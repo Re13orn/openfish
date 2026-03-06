@@ -33,6 +33,7 @@ class StatusSnapshot:
     next_schedule_id: int | None
     next_schedule_hhmm: str | None
     next_step: str | None
+    pending_approval_id: int | None = None
 
 
 @dataclass(slots=True)
@@ -168,6 +169,47 @@ class TaskStore:
 
     def set_chat_ui_mode(self, *, chat_id: str, user_id: int, mode: str) -> None:
         self.chat_state.set_chat_ui_mode(chat_id=chat_id, user_id=user_id, mode=mode)
+
+    def get_recent_outbound_message_id(
+        self,
+        *,
+        chat_id: str,
+        dedup_key: str,
+        max_age_seconds: float,
+    ) -> str | None:
+        return self.chat_state.get_recent_outbound_message_id(
+            chat_id=chat_id,
+            dedup_key=dedup_key,
+            max_age_seconds=max_age_seconds,
+        )
+
+    def remember_outbound_message(
+        self,
+        *,
+        chat_id: str,
+        dedup_key: str,
+        context: str,
+        message_id: str | None,
+    ) -> None:
+        self.chat_state.remember_outbound_message(
+            chat_id=chat_id,
+            dedup_key=dedup_key,
+            context=context,
+            message_id=message_id,
+        )
+
+    def get_recent_outbound_message_id_by_context(
+        self,
+        *,
+        chat_id: str,
+        context: str,
+        max_age_seconds: float,
+    ) -> str | None:
+        return self.chat_state.get_recent_outbound_message_id_by_context(
+            chat_id=chat_id,
+            context=context,
+            max_age_seconds=max_age_seconds,
+        )
 
     # User/project registry helpers.
     def list_recent_project_keys(self, *, user_id: int, limit: int = 6) -> list[str]:
@@ -315,6 +357,7 @@ class TaskStore:
                 most_recent_task_summary=None,
                 recent_failed_summary=None,
                 pending_approval=False,
+                pending_approval_id=None,
                 next_schedule_id=None,
                 next_schedule_hhmm=None,
                 next_step=None,
@@ -333,6 +376,7 @@ class TaskStore:
                 most_recent_task_summary=None,
                 recent_failed_summary=None,
                 pending_approval=False,
+                pending_approval_id=None,
                 next_schedule_id=None,
                 next_schedule_hhmm=None,
                 next_step=None,
@@ -360,6 +404,7 @@ class TaskStore:
                 if failed_row["latest_error"]
                 else (str(failed_row["latest_summary"]) if failed_row["latest_summary"] else None)
             )
+        pending_approval = self.get_pending_approval(project_id)
 
         return StatusSnapshot(
             active_project_key=active_project_key,
@@ -374,7 +419,8 @@ class TaskStore:
                 str(row["last_task_summary"]) if row["last_task_summary"] else None
             ),
             recent_failed_summary=recent_failed_summary,
-            pending_approval=row["pending_approval_task_id"] is not None,
+            pending_approval=pending_approval is not None or row["pending_approval_task_id"] is not None,
+            pending_approval_id=pending_approval.approval_id if pending_approval is not None else None,
             next_schedule_id=next_schedule_id,
             next_schedule_hhmm=next_schedule_hhmm,
             next_step=str(row["next_step"]) if row["next_step"] else None,
@@ -423,8 +469,8 @@ class TaskStore:
         row = self.runtime.get_task_for_project_row(task_id=task_id, project_id=project_id)
         return self._row_to_task(row)
 
-    def get_pending_approval(self, project_id: int) -> PendingApprovalRecord | None:
-        row = self.approvals.get_pending_approval_row(project_id)
+    def get_pending_approval(self, project_id: int, approval_id: int | None = None) -> PendingApprovalRecord | None:
+        row = self.approvals.get_pending_approval_row(project_id, approval_id=approval_id)
         if row is None:
             return None
         return PendingApprovalRecord(
@@ -458,8 +504,8 @@ class TaskStore:
         status: str,
         decided_by_user_id: int,
         decision_note: str | None,
-    ) -> None:
-        self.approvals.resolve_approval(
+    ) -> bool:
+        return self.approvals.resolve_approval(
             approval_id=approval_id,
             status=status,
             decided_by_user_id=decided_by_user_id,

@@ -18,7 +18,32 @@ class ApprovalStore:
         self.db = db
         self._insert_task_event = insert_task_event
 
-    def get_pending_approval_row(self, project_id: int) -> sqlite3.Row | None:
+    def get_pending_approval_row(
+        self,
+        project_id: int,
+        *,
+        approval_id: int | None = None,
+    ) -> sqlite3.Row | None:
+        if approval_id is None:
+            return self.db.get_connection().execute(
+                """
+                SELECT
+                    a.id AS approval_id,
+                    a.task_id AS task_id,
+                    a.requested_action,
+                    t.latest_summary,
+                    t.codex_session_id
+                FROM approvals a
+                JOIN tasks t ON t.id = a.task_id
+                WHERE t.project_id = ?
+                  AND a.status = 'pending'
+                  AND t.status = 'waiting_approval'
+                ORDER BY a.id DESC
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+
         return self.db.get_connection().execute(
             """
             SELECT
@@ -30,12 +55,12 @@ class ApprovalStore:
             FROM approvals a
             JOIN tasks t ON t.id = a.task_id
             WHERE t.project_id = ?
+              AND a.id = ?
               AND a.status = 'pending'
               AND t.status = 'waiting_approval'
-            ORDER BY a.id DESC
             LIMIT 1
             """,
-            (project_id,),
+            (project_id, approval_id),
         ).fetchone()
 
     def create_approval_request(
@@ -67,17 +92,19 @@ class ApprovalStore:
         status: str,
         decided_by_user_id: int,
         decision_note: str | None,
-    ) -> None:
+    ) -> bool:
         connection = self.db.get_connection()
-        connection.execute(
+        cursor = connection.execute(
             """
             UPDATE approvals
             SET status = ?, decision_note = ?, decided_by_user_id = ?, decided_at = CURRENT_TIMESTAMP
             WHERE id = ?
+              AND status = 'pending'
             """,
             (status, decision_note, decided_by_user_id, approval_id),
         )
         connection.commit()
+        return cursor.rowcount > 0
 
     def cancel_pending_for_task(self, *, task_id: int, decision_note: str = "Cancelled by user") -> None:
         connection = self.db.get_connection()

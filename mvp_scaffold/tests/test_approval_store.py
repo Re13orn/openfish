@@ -80,3 +80,35 @@ def test_cancel_pending_for_task(tmp_path: Path) -> None:
     assert row["status"] == "cancelled"
     assert row["decision_note"] == "Cancelled by user"
     assert row["decided_at"] is not None
+
+
+def test_resolve_approval_is_atomic(tmp_path: Path) -> None:
+    db, store = _setup_store(tmp_path)
+    approval_id = store.create_approval_request(
+        task_id=1,
+        requested_action="need approval",
+        requested_by_user_id=1,
+    )
+
+    first = store.resolve_approval(
+        approval_id=approval_id,
+        status="approved",
+        decided_by_user_id=1,
+        decision_note="ok",
+    )
+    second = store.resolve_approval(
+        approval_id=approval_id,
+        status="rejected",
+        decided_by_user_id=1,
+        decision_note="late click",
+    )
+
+    row = db.get_connection().execute(
+        "SELECT status, decision_note FROM approvals WHERE id = ?",
+        (approval_id,),
+    ).fetchone()
+    assert first is True
+    assert second is False
+    assert row is not None
+    assert row["status"] == "approved"
+    assert row["decision_note"] == "ok"
