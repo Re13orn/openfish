@@ -132,6 +132,9 @@ class TelegramMessageSink:
                 if attempt >= max_attempts:
                     return False
                 await asyncio.sleep(wait_seconds)
+            except BadRequest as exc:
+                logger.warning("Telegram client error while %s: %s", spec.context, exc)
+                return False
             except (TimedOut, NetworkError) as exc:
                 if attempt >= max_attempts:
                     logger.warning("Telegram network error while %s: %s", spec.context, exc)

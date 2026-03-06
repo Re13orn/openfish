@@ -137,6 +137,7 @@ class MessageStub:
         self.sent_markups: list[object] = []
         self.edit_reply_markup_calls: list[object] = []
         self.chat_actions: list[str] = []
+        self.message_id = 10
 
     async def reply_text(self, text: str, **kwargs):  # noqa: ANN003
         self.sent_markups.append(kwargs.get("reply_markup"))
@@ -307,9 +308,12 @@ def test_activate_project_add_wizard_persists_state(monkeypatch) -> None:
     service = TelegramBotService(config=config, router=router)
     sent_texts: list[str] = []
 
-    async def fake_send_view_spec(message, spec, *, context: str) -> bool:  # noqa: ANN001, ANN202
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
         _ = message
         _ = context
+        _ = command
+        _ = edit_context
+        _ = edit_window_seconds
         sent_texts.append(spec.text)
         return True
 
@@ -338,10 +342,12 @@ def test_activate_approve_prompt_starts_approval_note_wizard(monkeypatch) -> Non
     service = TelegramBotService(config=config, router=router)
     sent_texts: list[str] = []
 
-    async def fake_send_view_spec(message, spec, *, context: str, command=None) -> bool:  # noqa: ANN001, ANN202
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
         _ = message
         _ = context
         _ = command
+        _ = edit_context
+        _ = edit_window_seconds
         sent_texts.append(spec.text)
         return True
 
@@ -374,10 +380,12 @@ def test_activate_explicit_approve_prompt_uses_matching_approval_id(monkeypatch)
     service = TelegramBotService(config=config, router=router)
     sent_texts: list[str] = []
 
-    async def fake_send_view_spec(message, spec, *, context: str, command=None) -> bool:  # noqa: ANN001, ANN202
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
         _ = message
         _ = context
         _ = command
+        _ = edit_context
+        _ = edit_window_seconds
         sent_texts.append(spec.text)
         return True
 
@@ -459,9 +467,12 @@ def test_wizard_default_callback_advances_project_add(monkeypatch) -> None:
     service = TelegramBotService(config=config, router=router)
     sent_texts: list[str] = []
 
-    async def fake_send_view_spec(message, spec, *, context: str) -> bool:  # noqa: ANN001, ANN202
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
         _ = message
         _ = context
+        _ = command
+        _ = edit_context
+        _ = edit_window_seconds
         sent_texts.append(spec.text)
         return True
 
@@ -501,10 +512,12 @@ def test_reject_note_wizard_preset_advances_to_confirm(monkeypatch) -> None:
     service = TelegramBotService(config=config, router=router)
     sent_texts: list[str] = []
 
-    async def fake_send_view_spec(message, spec, *, context: str, command=None) -> bool:  # noqa: ANN001, ANN202
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
         _ = message
         _ = context
         _ = command
+        _ = edit_context
+        _ = edit_window_seconds
         sent_texts.append(spec.text)
         return True
 
@@ -606,9 +619,12 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
     service = TelegramBotService(config=config, router=router)
     captured = {}
 
-    async def fake_send_view_spec(message, spec, *, context: str) -> bool:  # noqa: ANN001, ANN202
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
         _ = message
         _ = context
+        _ = command
+        _ = edit_context
+        _ = edit_window_seconds
         captured["markup"] = spec.reply_markup
         return True
 
