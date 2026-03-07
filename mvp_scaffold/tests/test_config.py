@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from src.config import load_config
 
 
@@ -17,3 +19,20 @@ def test_load_config_always_includes_zip_in_allowed_upload_extensions(monkeypatc
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ALLOWED_TELEGRAM_USER_IDS", raising=False)
     monkeypatch.delenv("ALLOWED_UPLOAD_EXTENSIONS", raising=False)
+
+
+def test_load_config_resolves_repo_relative_runtime_paths(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
+    monkeypatch.setenv("PROJECTS_CONFIG_PATH", "./mvp_scaffold/projects.yaml")
+    monkeypatch.setenv("SQLITE_PATH", "./mvp_scaffold/data/app.db")
+    monkeypatch.setenv("MIGRATIONS_DIR", "./mvp_scaffold/migrations")
+    monkeypatch.setenv("OPENFISH_LOCK_PATH", "./mvp_scaffold/data/openfish.lock")
+
+    config = load_config()
+
+    repo_root = Path(__file__).resolve().parents[2]
+    assert config.projects_config_path == repo_root / "mvp_scaffold/projects.yaml"
+    assert config.sqlite_path == repo_root / "mvp_scaffold/data/app.db"
+    assert config.migrations_dir == repo_root / "mvp_scaffold/migrations"
+    assert config.process_lock_path == repo_root / "mvp_scaffold/data/openfish.lock"

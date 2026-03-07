@@ -835,8 +835,10 @@ start_bg() {
   echo "[start] launching in background"
   (
     cd "$APP_DIR"
-    nohup "$VENV_DIR/bin/python" -m src.main >>"$LOG_FILE" 2>&1 &
-    echo $! > "$PID_FILE"
+    nohup "$VENV_DIR/bin/python" -m src.main </dev/null >>"$LOG_FILE" 2>&1 &
+    local child_pid="$!"
+    disown "$child_pid" 2>/dev/null || true
+    echo "$child_pid" > "$PID_FILE"
   )
 
   sleep 1

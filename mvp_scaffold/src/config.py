@@ -20,6 +20,19 @@ def _parse_bool(value: str | None, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _resolve_runtime_path(raw: str, *, repo_root: Path, app_root: Path) -> Path:
+    candidate = Path(os.path.expanduser(raw))
+    if candidate.is_absolute():
+        return candidate
+
+    normalized = raw.strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized.startswith("mvp_scaffold/"):
+        return repo_root / normalized
+    return app_root / normalized
+
+
 @dataclass(slots=True)
 class AppConfig:
     """Runtime settings for the local single-process assistant."""
@@ -77,21 +90,41 @@ def load_config() -> AppConfig:
     if schedule_missed_run_policy not in {"skip", "catchup_once"}:
         schedule_missed_run_policy = "skip"
 
-    sqlite_path = Path(os.getenv("SQLITE_PATH", "./data/app.db"))
-    process_lock_path = Path(os.getenv("OPENFISH_LOCK_PATH", str(sqlite_path.parent / "openfish.lock")))
+    sqlite_path = _resolve_runtime_path(
+        os.getenv("SQLITE_PATH", "./data/app.db"),
+        repo_root=repo_root,
+        app_root=app_root,
+    )
+    process_lock_path = _resolve_runtime_path(
+        os.getenv("OPENFISH_LOCK_PATH", str(sqlite_path.parent / "openfish.lock")),
+        repo_root=repo_root,
+        app_root=app_root,
+    )
 
     return AppConfig(
         telegram_bot_token=os.environ["TELEGRAM_BOT_TOKEN"],
         allowed_telegram_user_ids=allowed_user_ids,
-        projects_config_path=Path(os.getenv("PROJECTS_CONFIG_PATH", "./projects.yaml")),
+        projects_config_path=_resolve_runtime_path(
+            os.getenv("PROJECTS_CONFIG_PATH", "./projects.yaml"),
+            repo_root=repo_root,
+            app_root=app_root,
+        ),
         default_project_root=(
             Path(os.path.expanduser(os.getenv("DEFAULT_PROJECT_ROOT", ""))).resolve()
             if os.getenv("DEFAULT_PROJECT_ROOT", "").strip()
             else None
         ),
         sqlite_path=sqlite_path,
-        schema_path=Path(os.getenv("SCHEMA_PATH", str(repo_root / "schema.sql"))),
-        migrations_dir=Path(os.getenv("MIGRATIONS_DIR", str(app_root / "migrations"))),
+        schema_path=_resolve_runtime_path(
+            os.getenv("SCHEMA_PATH", str(repo_root / "schema.sql")),
+            repo_root=repo_root,
+            app_root=app_root,
+        ),
+        migrations_dir=_resolve_runtime_path(
+            os.getenv("MIGRATIONS_DIR", str(app_root / "migrations")),
+            repo_root=repo_root,
+            app_root=app_root,
+        ),
         process_lock_path=process_lock_path,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         codex_bin=os.getenv("CODEX_BIN", "codex"),
@@ -99,7 +132,7 @@ def load_config() -> AppConfig:
         codex_default_sandbox_mode=os.getenv("CODEX_DEFAULT_SANDBOX_MODE", "workspace-write"),
         codex_default_approval_mode=os.getenv("CODEX_DEFAULT_APPROVAL_MODE", "never"),
         codex_command_timeout_seconds=int(os.getenv("CODEX_COMMAND_TIMEOUT_SECONDS", "1800")),
-        codex_home=Path(os.path.expanduser(os.getenv("CODEX_HOME", "~/.codex"))),
+        codex_home=Path(os.path.expanduser(os.getenv("CODEX_HOME", "~/.codex"))).resolve(),
         codex_model_choices=_split_csv_list(
             os.getenv("CODEX_MODEL_CHOICES", "gpt-5.4,gpt-5,o3")
         ),
