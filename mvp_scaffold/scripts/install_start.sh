@@ -768,8 +768,9 @@ lock_file_path() {
 
 read_lock_pid() {
   local file="$1"
-  [[ -f "$file" ]] || return 1
+  [[ -f "$file" ]] || return 0
   grep -Eo '"pid"[[:space:]]*:[[:space:]]*[0-9]+' "$file" | head -n 1 | grep -Eo '[0-9]+' || true
+  return 0
 }
 
 cleanup_stale_lock_file() {

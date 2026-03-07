@@ -43,6 +43,7 @@ class Application:
         self.mcp = McpService(
             codex_bin=config.codex_bin,
             timeout_seconds=config.codex_command_timeout_seconds,
+            config_path=config.codex_home / "config.toml",
         )
         self.repo = RepoInspector()
         self.router = CommandRouter(

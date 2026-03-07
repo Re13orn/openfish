@@ -1,8 +1,12 @@
 """Telegram long-polling adapter."""
 
 import asyncio
+from collections import deque
+from contextlib import suppress
+from dataclasses import dataclass, field
 import logging
 import random
+from threading import Lock
 import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
@@ -19,6 +23,33 @@ from src.telegram_views import TelegramReplySpec, TelegramViewFactory
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _StreamProgressState:
+    command: str
+    phases: list[str]
+    phase_delay_seconds: float
+    started_at: float = field(default_factory=time.monotonic)
+    _output_lines: deque[str] = field(default_factory=lambda: deque(maxlen=5))
+    _output_version: int = 0
+    _lock: Lock = field(default_factory=Lock)
+
+    def add_output(self, text: str) -> None:
+        normalized = text.strip()
+        if not normalized:
+            return
+        if len(normalized) > 180:
+            normalized = normalized[:177] + "..."
+        with self._lock:
+            if self._output_lines and self._output_lines[-1] == normalized:
+                return
+            self._output_lines.append(normalized)
+            self._output_version += 1
+
+    def snapshot(self) -> tuple[list[str], int]:
+        with self._lock:
+            return list(self._output_lines), self._output_version
 
 
 class TelegramBotService:
@@ -42,6 +73,7 @@ class TelegramBotService:
         "templates": "/templates",
         "skills": "/skills",
         "mcp": "/mcp",
+        "model": "/model",
         "schedule_list": "/schedule-list",
         "last": "/last",
         "memory": "/memory",
@@ -56,6 +88,7 @@ class TelegramBotService:
         "project_archive_current": "/project-archive",
         "ui_show": "/ui",
         "ui_summary": "/ui summary",
+        "ui_stream": "/ui stream",
         "ui_verbose": "/ui verbose",
     }
 
@@ -78,6 +111,7 @@ class TelegramBotService:
         "approve": "/approve",
         "reject": "/reject",
         "mcp": "/mcp",
+        "model": "/model",
     }
 
     _PROMPT_HINTS = {
@@ -94,6 +128,7 @@ class TelegramBotService:
         "approve": "请输入审批备注。下一条消息将按 /approve 执行。",
         "reject": "请输入拒绝原因。下一条消息将按 /reject 执行。",
         "mcp": "请输入 MCP 名称（留空则查看列表）。下一条消息将按 /mcp 执行。",
+        "model": "请输入模型名称。下一条消息将按 /model set 执行。",
     }
     _TYPING_COMMANDS = {
         "/ask",
@@ -257,7 +292,8 @@ class TelegramBotService:
                     raw_text = f"{pending_command} {raw_text}"
 
             command = raw_text.split(" ", 1)[0].split("@", 1)[0]
-            ack_text = self.progress.ack_text(command)
+            effective_command = command if raw_text.startswith("/") else "/ask"
+            ack_text = self.progress.ack_text(effective_command)
             if ack_text:
                 await self._send_text(
                     message,
@@ -274,10 +310,14 @@ class TelegramBotService:
                 telegram_username=command_context.telegram_username,
                 telegram_display_name=command_context.telegram_display_name,
             )
-            result = self.router.handle(command_context)
+            result = await self._dispatch_router_command(
+                message,
+                command_context,
+                command=effective_command,
+            )
             if await self._maybe_start_wizard_from_result(message, command_context, result):
                 return
-            await self._send_command_result(message, command, command_context, result)
+            await self._send_command_result(message, effective_command, command_context, result)
         except Exception:  # pragma: no cover - defensive logging around external API callbacks
             logger.exception("Unhandled exception while processing Telegram message.")
             await self._send_text(
@@ -496,10 +536,22 @@ class TelegramBotService:
                 return
             if data.startswith("cmd:"):
                 token = data.split(":", 1)[1]
+                if token.startswith("mcp_detail:"):
+                    name = token.split(":", 1)[1]
+                    await self._execute_command(query.message, base_ctx, f"/mcp {name}")
+                    return
                 command = self._resolve_callback_command(token)
                 if command is not None:
                     await self._execute_command(query.message, base_ctx, command)
                     return
+            if data.startswith("mcp:enable:"):
+                name = data.split(":", 2)[2]
+                await self._execute_command(query.message, base_ctx, f"/mcp-enable {name}")
+                return
+            if data.startswith("mcp:disable:"):
+                name = data.split(":", 2)[2]
+                await self._execute_command(query.message, base_ctx, f"/mcp-disable {name}")
+                return
             if data.startswith("prompt:"):
                 token = data.split(":", 1)[1]
                 await self._activate_prompt(query.message, base_ctx, token)
@@ -521,6 +573,16 @@ class TelegramBotService:
                 if panel == "more":
                     await self._send_more_panel(query.message)
                     return
+                if panel == "model":
+                    await self._send_model_panel(query.message, base_ctx)
+                    return
+            if data.startswith("model:set:"):
+                model = data.split(":", 2)[2]
+                await self._execute_command(query.message, base_ctx, f"/model set {model}")
+                return
+            if data == "model:reset":
+                await self._execute_command(query.message, base_ctx, "/model reset")
+                return
         except Exception:  # pragma: no cover - defensive logging
             logger.exception("Unhandled callback query error: %s", data)
             await self._send_text(
@@ -657,8 +719,6 @@ class TelegramBotService:
                 context="sending ack",
                 reply_markup=self._main_menu_markup(),
             )
-        if self._should_send_typing(command):
-            await self.sink.send_typing(message, context=f"executing {command}")
         command_context = CommandContext(
             telegram_user_id=base_ctx.telegram_user_id,
             telegram_chat_id=base_ctx.telegram_chat_id,
@@ -667,10 +727,160 @@ class TelegramBotService:
             telegram_username=base_ctx.telegram_username,
             telegram_display_name=base_ctx.telegram_display_name,
         )
-        result = self.router.handle(command_context)
+        result = await self._dispatch_router_command(
+            message,
+            command_context,
+            command=command,
+        )
         if await self._maybe_start_wizard_from_result(message, command_context, result):
             return
         await self._send_command_result(message, command, command_context, result)
+
+    async def _dispatch_router_command(
+        self,
+        message,  # noqa: ANN001
+        command_context: CommandContext,
+        *,
+        command: str,
+    ):
+        if not self._should_send_typing(command):
+            return self.router.handle(command_context)
+
+        typing_context = f"executing {command}"
+        typing_task: asyncio.Task[None] | None = None
+        progress_task: asyncio.Task[None] | None = None
+        progress_context: str | None = None
+        stream_state: _StreamProgressState | None = None
+        try:
+            await self.sink.send_typing(message, context=typing_context)
+            if self._should_stream_progress(command_context.telegram_chat_id, command):
+                progress_context = self._stream_progress_context(command_context, command)
+                stream_state = _StreamProgressState(
+                    command=command,
+                    phases=self.progress.phases(command),
+                    phase_delay_seconds=max(
+                        0.5,
+                        float(getattr(self.config, "telegram_stream_phase_delay_seconds", 1.5)),
+                    ),
+                )
+                command_context.progress_callback = self._make_progress_callback(stream_state)
+                progress_task = asyncio.create_task(
+                    self._stream_progress_updates(
+                        message,
+                        state=stream_state,
+                        progress_context=progress_context,
+                    )
+                )
+            typing_task = asyncio.create_task(
+                self._typing_heartbeat(
+                    message,
+                    context=typing_context,
+                )
+            )
+            return await asyncio.to_thread(self.router.handle, command_context)
+        finally:
+            if progress_task is not None:
+                progress_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await progress_task
+            if progress_context is not None:
+                await self.sink.delete_recent_message_by_context(
+                    message,
+                    context=progress_context,
+                    max_age_seconds=float(getattr(self.config, "telegram_stream_edit_window_seconds", 3600.0)),
+                )
+            if typing_task is not None:
+                typing_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await typing_task
+
+    async def _typing_heartbeat(
+        self,
+        message,  # noqa: ANN001
+        *,
+        context: str,
+    ) -> None:
+        interval_seconds = float(getattr(self.config, "telegram_typing_heartbeat_seconds", 4.0))
+        interval_seconds = max(1.0, interval_seconds)
+        while True:
+            await asyncio.sleep(interval_seconds)
+            await self.sink.send_typing(message, context=context)
+
+    def _should_stream_progress(self, chat_id: str, command: str) -> bool:
+        if not self._should_send_typing(command):
+            return False
+        if not hasattr(self.router, "tasks"):
+            return False
+        return self.router.tasks.get_chat_ui_mode(chat_id=chat_id) == "stream"
+
+    async def _stream_progress_updates(
+        self,
+        message,  # noqa: ANN001
+        *,
+        state: _StreamProgressState,
+        progress_context: str,
+    ) -> None:
+        heartbeat_delay = max(2.0, float(getattr(self.config, "telegram_stream_heartbeat_seconds", 5.0)))
+        poll_interval = min(0.8, max(0.3, state.phase_delay_seconds / 2))
+        last_render_key: tuple[int, int, int] | None = None
+        total = max(1, len(state.phases))
+        while True:
+            elapsed_seconds = max(1, int(time.monotonic() - state.started_at))
+            outputs, output_version = state.snapshot()
+            phase_index = min(total - 1, int((time.monotonic() - state.started_at) // state.phase_delay_seconds))
+            phase = state.phases[phase_index] if state.phases else "运行中"
+            heartbeat_bucket = max(1, int(elapsed_seconds // heartbeat_delay))
+            render_key = (phase_index, output_version, heartbeat_bucket)
+            if render_key != last_render_key:
+                await self._send_stream_progress_text(
+                    message,
+                    text=self.progress.stream_status_text(
+                        state.command,
+                        phase=phase,
+                        index=phase_index + 1,
+                        total=total,
+                        elapsed_seconds=elapsed_seconds,
+                        output_lines=outputs,
+                    ),
+                    progress_context=progress_context,
+                )
+                last_render_key = render_key
+            await asyncio.sleep(poll_interval)
+
+    def _make_progress_callback(self, state: _StreamProgressState):
+        def _callback(channel: str, text: str) -> None:
+            _ = channel
+            state.add_output(text)
+
+        return _callback
+
+    def _stream_progress_context(self, command_context: CommandContext, command: str) -> str:
+        token = command_context.telegram_message_id or str(time.time_ns())
+        return f"stream progress {command_context.telegram_chat_id}:{command}:{token}"
+
+    async def _send_stream_progress_text(
+        self,
+        message,  # noqa: ANN001
+        *,
+        text: str,
+        progress_context: str,
+    ) -> bool:
+        if await self.sink.send_message_draft(
+            message,
+            draft_id=self.sink.build_draft_id(context=progress_context),
+            text=text,
+            context=progress_context,
+        ):
+            return True
+        return await self.sink.send(
+            message,
+            TelegramSendSpec(
+                text=text,
+                context=progress_context,
+                edit_context=progress_context,
+                edit_window_seconds=float(getattr(self.config, "telegram_stream_edit_window_seconds", 3600.0)),
+            ),
+        )
 
     async def _send_projects_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
         user = self.router.tasks.ensure_user(ctx)
@@ -716,6 +926,20 @@ class TelegramBotService:
             context="sending more panel",
             edit_context="sending more panel",
             edit_window_seconds=float(getattr(self.config, "telegram_more_edit_window_seconds", 300.0)),
+        )
+
+    async def _send_model_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
+        current_model = self.router.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+        spec = self.views.model_panel(
+            current_model=current_model,
+            model_choices=list(getattr(self.config, "codex_model_choices", ()) or ()),
+        )
+        await self._send_view_spec(
+            message,
+            spec,
+            context="sending model panel",
+            edit_context="sending model panel",
+            edit_window_seconds=float(getattr(self.config, "telegram_model_edit_window_seconds", 300.0)),
         )
 
     def _should_send_typing(self, command: str) -> bool:
@@ -853,15 +1077,57 @@ class TelegramBotService:
         *,
         context: str = "sending command result",
     ) -> bool:  # noqa: ANN001
-        return await self._send_view_spec(
+        parts = self._split_long_text(result.reply_text)
+        if len(parts) == 1:
+            return await self._send_view_spec(
+                message,
+                TelegramReplySpec(
+                    text=result.reply_text,
+                    reply_markup=self._reply_markup_for_result(command, ctx, result),
+                ),
+                context=context,
+                command=command,
+            )
+
+        first_ok = await self._send_view_spec(
             message,
             TelegramReplySpec(
-                text=result.reply_text,
+                text=parts[0],
                 reply_markup=self._reply_markup_for_result(command, ctx, result),
             ),
             context=context,
             command=command,
         )
+        if not first_ok:
+            return False
+        for index, part in enumerate(parts[1:], start=2):
+            ok = await self._send_text(
+                message,
+                f"续 {index}/{len(parts)}\n{part}",
+                context=f"{context} continuation",
+                reply_markup=None,
+            )
+            if not ok:
+                return False
+        return True
+
+    def _split_long_text(self, text: str) -> list[str]:
+        limit = int(getattr(self.config, "max_telegram_message_length", 3500))
+        if len(text) <= limit:
+            return [text]
+
+        parts: list[str] = []
+        remaining = text
+        soft_limit = max(80, limit - 32)
+        while len(remaining) > limit:
+            split_at = remaining.rfind("\n", 0, soft_limit)
+            if split_at < soft_limit // 2:
+                split_at = soft_limit
+            parts.append(remaining[:split_at].rstrip())
+            remaining = remaining[split_at:].lstrip()
+        if remaining:
+            parts.append(remaining)
+        return parts
 
     def _main_menu_markup(self) -> ReplyKeyboardMarkup:
         return self.views.main_menu_markup()
@@ -1364,5 +1630,11 @@ class TelegramBotService:
             project_id = self.router.tasks.get_project_id(active_key)
             schedules = self.router.tasks.list_scheduled_tasks(project_id)
             return self.views.schedule_list_markup(schedules)
+        if command in {"/mcp", "/mcp-enable", "/mcp-disable"}:
+            metadata = result.metadata or {}
+            name = metadata.get("mcp_name")
+            enabled = metadata.get("mcp_enabled")
+            if isinstance(name, str) and isinstance(enabled, bool):
+                return self.views.mcp_detail_markup(name=name, enabled=enabled)
         recent_projects = (result.metadata or {}).get("recent_projects")
         return self.views.default_result_markup(recent_projects)

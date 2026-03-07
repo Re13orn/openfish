@@ -47,6 +47,7 @@ from src.task_store import ScheduledTaskRecord, TaskStore
 
 
 PROJECT_ADD_KEY_PATTERN = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
+MODEL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 @dataclass(slots=True)
@@ -129,6 +130,12 @@ class CommandRouter:
             return self._handle_skill_install(ctx, argument)
         if command == "/mcp":
             return self._handle_mcp(ctx, argument)
+        if command == "/mcp-enable":
+            return self._handle_mcp_toggle(ctx, argument, enabled=True)
+        if command == "/mcp-disable":
+            return self._handle_mcp_toggle(ctx, argument, enabled=False)
+        if command == "/model":
+            return self._handle_model(ctx, argument)
         if command == "/ui":
             return self._handle_ui(ctx, argument)
         if command == "/schedule-add":
@@ -254,10 +261,39 @@ class CommandRouter:
         current = self._chat_ui_mode(chat_id=ctx.telegram_chat_id)
         if mode_arg in {"", "show"}:
             return CommandResult(f"当前界面模式: {current}")
-        if mode_arg not in {"summary", "verbose"}:
-            return CommandResult("用法: /ui [show|summary|verbose]")
+        if mode_arg not in {"summary", "verbose", "stream"}:
+            return CommandResult("用法: /ui [show|summary|verbose|stream]")
         self.tasks.set_chat_ui_mode(chat_id=ctx.telegram_chat_id, user_id=user.id, mode=mode_arg)
         return CommandResult(f"界面模式已切换为: {mode_arg}")
+
+    def _handle_model(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        current = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+        text = argument.strip()
+        if not text or text.lower() == "show":
+            choices = ", ".join(getattr(self.config, "codex_model_choices", ()) or ()) or "未配置"
+            return CommandResult(
+                f"当前模型: {current or '默认（跟随 Codex 配置）'}\n"
+                f"快捷可选: {choices}\n"
+                "用法: /model set <name> | /model reset"
+            )
+
+        normalized = text
+        lowered = text.lower()
+        if lowered.startswith("set "):
+            normalized = text[4:].strip()
+        if lowered in {"reset", "default"}:
+            self.tasks.clear_chat_codex_model(chat_id=ctx.telegram_chat_id)
+            return CommandResult("当前会话模型已恢复为默认配置。")
+        if not normalized or not MODEL_NAME_PATTERN.fullmatch(normalized):
+            return CommandResult("模型名称不合法。用法: /model set <name> | /model reset")
+
+        self.tasks.set_chat_codex_model(
+            chat_id=ctx.telegram_chat_id,
+            user_id=user.id,
+            model=normalized,
+        )
+        return CommandResult(f"当前会话模型已切换为: {normalized}")
 
     def _handle_projects(self, ctx: CommandContext) -> CommandResult:
         user = self.tasks.ensure_user(ctx)
@@ -619,7 +655,12 @@ class CommandRouter:
                 },
             )
 
-            codex_result = self.codex.ask(plan.active.project, task_instruction)
+            codex_result = self.codex.ask(
+                plan.active.project,
+                task_instruction,
+                model=self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id),
+                progress_callback=ctx.progress_callback,
+            )
             return self._finalize_task_execution(
                 active=plan.active,
                 task_id=task_id,
@@ -762,7 +803,7 @@ class CommandRouter:
                 (item.name, item.enabled, item.transport_type, item.target, item.auth_status)
                 for item in result.servers
             ]
-            return CommandResult(format_mcp_list(items))
+            return CommandResult(format_mcp_list(items), metadata={"mcp_panel": "list"})
 
         result = self.mcp_service.get_server(name)
         self.audit.log(
@@ -792,7 +833,31 @@ class CommandRouter:
                 tool_timeout_sec=detail.tool_timeout_sec,
                 enabled_tools=detail.enabled_tools,
                 disabled_tools=detail.disabled_tools,
-            )
+            ),
+            metadata={"mcp_name": detail.name, "mcp_enabled": detail.enabled},
+        )
+
+    def _handle_mcp_toggle(self, ctx: CommandContext, argument: str, *, enabled: bool) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.mcp_service is None:
+            return CommandResult("当前未启用 MCP 管理功能。")
+        name = argument.strip()
+        if not name:
+            return CommandResult(f"用法: /mcp-{'enable' if enabled else 'disable'} <name>")
+        result = self.mcp_service.set_server_enabled(name, enabled=enabled)
+        self.audit.log(
+            action=audit_events.MCP_UPDATED,
+            message=f"{'启用' if enabled else '停用'} MCP: {name}",
+            user_id=user.id,
+            severity="info" if result.ok else "warning",
+            details={"ok": result.ok, "name": name[:128], "enabled": enabled},
+        )
+        if not result.ok:
+            return CommandResult(f"MCP 配置更新失败：{result.summary}")
+        suffix = f"\n配置文件: {result.config_path}" if result.config_path else ""
+        return CommandResult(
+            f"{result.summary}{suffix}",
+            metadata={"mcp_name": result.name, "mcp_enabled": result.enabled},
         )
 
     def _handle_schedule_add(self, ctx: CommandContext, argument: str) -> CommandResult:
@@ -1160,7 +1225,11 @@ class CommandRouter:
                 pending.requested_action,
                 user_note=approval_note or None,
             )
-            codex_result = self.codex.resume_last(active.project, resume_instruction)
+            codex_result = self.codex.resume_last(
+                active.project,
+                resume_instruction,
+                progress_callback=ctx.progress_callback,
+            )
             reassessment = self.approvals.assess(codex_result)
             if reassessment.requires_approval:
                 return self._handle_waiting_approval(
@@ -1343,19 +1412,37 @@ class CommandRouter:
         )
 
         try:
+            model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
             if run_mode == "ask":
-                codex_result = self.codex.ask(active.project, request_text)
+                codex_result = self.codex.ask(
+                    active.project,
+                    request_text,
+                    model=model,
+                    progress_callback=ctx.progress_callback,
+                )
             elif run_mode == "resume":
                 if resume_session_id:
                     codex_result = self.codex.resume_session(
                         active.project,
                         resume_session_id,
                         request_text,
+                        model=model,
+                        progress_callback=ctx.progress_callback,
                     )
                 else:
-                    codex_result = self.codex.resume_last(active.project, request_text)
+                    codex_result = self.codex.resume_last(
+                        active.project,
+                        request_text,
+                        model=model,
+                        progress_callback=ctx.progress_callback,
+                    )
             else:
-                codex_result = self.codex.run(active.project, request_text)
+                codex_result = self.codex.run(
+                    active.project,
+                    request_text,
+                    model=model,
+                    progress_callback=ctx.progress_callback,
+                )
 
             assessment = self.approvals.assess(codex_result)
             if assessment.requires_approval:
@@ -1456,6 +1543,7 @@ class CommandRouter:
             )
 
         safe_summary = redact_text(codex_result.summary)
+        display_text = redact_text(codex_result.display_text or codex_result.summary)
         task_status = "completed" if codex_result.ok else "failed"
         error_summary = (
             redact_text(codex_result.stderr[:500]) if not codex_result.ok and codex_result.stderr else None
@@ -1496,7 +1584,7 @@ class CommandRouter:
                 project_key=active.project_key,
                 task_id=task_id,
                 status=task_status,
-                summary=safe_summary,
+                summary=display_text,
                 session_id=codex_result.session_id,
                 next_action=next_action,
             ),

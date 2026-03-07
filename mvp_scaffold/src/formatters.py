@@ -55,7 +55,8 @@ def format_help(mode: str = "verbose") -> str:
             "/status\n"
             "/resume [task_id] [instruction]\n"
             "/diff\n"
-            "/ui summary|verbose\n"
+            "/model\n"
+            "/ui summary|verbose|stream\n"
             "\n"
             "更多命令可用 /help verbose 查看。"
         )
@@ -69,6 +70,7 @@ def format_help(mode: str = "verbose") -> str:
         "/status\n"
         "/resume [task_id] [instruction]\n"
         "/diff\n"
+        "/model [show|set <name>|reset]\n"
         "\n"
         "项目与模板：\n"
         "/project-root [abs_path]\n"
@@ -96,7 +98,9 @@ def format_help(mode: str = "verbose") -> str:
         "/skills\n"
         "/skill-install <source>\n"
         "/mcp [name]\n"
-        "/ui [show|summary|verbose]\n"
+        "/mcp-enable <name>\n"
+        "/mcp-disable <name>\n"
+        "/ui [show|summary|verbose|stream]\n"
         "/upload_policy\n"
         "/cancel\n"
         "\n"
@@ -428,6 +432,7 @@ def format_mcp_list(items: list[tuple[str, bool, str, str | None, str | None]]) 
         if target:
             lines.append(f"  {_clip(target, 100)}")
     lines.append("详情: /mcp <name>")
+    lines.append("控制: /mcp-enable <name> /mcp-disable <name>")
     return "\n".join(lines)
 
 
@@ -475,6 +480,7 @@ def format_mcp_detail(
         lines.append(f"启用工具限制: {', '.join(enabled_tools)}")
     if disabled_tools:
         lines.append(f"禁用工具限制: {', '.join(disabled_tools)}")
+    lines.append(f"控制: /mcp-{'disable' if enabled else 'enable'} {name}")
     return "\n".join(lines)
 
 

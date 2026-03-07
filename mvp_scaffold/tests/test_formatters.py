@@ -145,6 +145,9 @@ def test_help_contains_last_and_retry() -> None:
     assert "/skills" in text
     assert "/skill-install <source>" in text
     assert "/mcp [name]" in text
+    assert "/mcp-enable <name>" in text
+    assert "/mcp-disable <name>" in text
+    assert "/model [show|set <name>|reset]" in text
     assert "/project-add <key> [abs_path] [name]" in text
     assert "/schedule-add <HH:MM> <ask|do> <text>" in text
     assert "/schedule-run <id>" in text
@@ -152,7 +155,8 @@ def test_help_contains_last_and_retry() -> None:
 
 def test_help_summary_mode_is_shorter() -> None:
     text = format_help("summary")
-    assert "/ui summary|verbose" in text
+    assert "/ui summary|verbose|stream" in text
+    assert "/model" in text
     assert "/project-add <key> [abs_path] [name]" not in text
 
 

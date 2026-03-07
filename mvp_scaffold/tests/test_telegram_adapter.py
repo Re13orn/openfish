@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 pytest.importorskip("telegram")
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 
+from src.models import CommandResult
 from src.telegram_adapter import TelegramBotService
 
 
@@ -18,6 +20,7 @@ class WizardTasksStub:
     def __init__(self) -> None:
         self.state = None
         self.ui_mode = None
+        self.codex_model = None
         self.user = SimpleNamespace(id=1)
         self.active_project_key = "demo"
         self.recent_projects = ["demo", "ops"]
@@ -86,6 +89,19 @@ class WizardTasksStub:
         _ = chat_id
         _ = user_id
         self.ui_mode = mode
+
+    def get_chat_codex_model(self, *, chat_id: str) -> str | None:
+        _ = chat_id
+        return self.codex_model
+
+    def set_chat_codex_model(self, *, chat_id: str, user_id: int, model: str) -> None:
+        _ = chat_id
+        _ = user_id
+        self.codex_model = model
+
+    def clear_chat_codex_model(self, *, chat_id: str) -> None:
+        _ = chat_id
+        self.codex_model = None
 
     def get_status_snapshot(self, user_id: int, chat_id: str | None = None):  # noqa: ANN201
         _ = user_id
@@ -259,8 +275,10 @@ def test_callback_token_maps_to_command() -> None:
     service = _service()
     assert service._resolve_callback_command("status") == "/status"
     assert service._resolve_callback_command("mcp") == "/mcp"
+    assert service._resolve_callback_command("model") == "/model"
     assert service._resolve_callback_command("project_disable_current") == "/project-disable"
     assert service._resolve_callback_command("ui_summary") == "/ui summary"
+    assert service._resolve_callback_command("ui_stream") == "/ui stream"
     assert service._resolve_callback_command("missing") is None
 
 
@@ -634,8 +652,43 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
 
     markup = captured["markup"]
     rows = markup.inline_keyboard
+    assert any(button.callback_data == "panel:model" for row in rows for button in row)
     assert any(button.callback_data == "cmd:ui_summary" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:ui_stream" for row in rows for button in row)
     assert any(button.callback_data == "cmd:ui_verbose" for row in rows for button in row)
+
+
+def test_send_model_panel_contains_model_buttons(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+        codex_model_choices=("gpt-5.4", "gpt-5", "o3"),
+    )
+    router = WizardRouterStub()
+    router.tasks.codex_model = "o3"
+    service = TelegramBotService(config=config, router=router)
+    captured = {}
+
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
+        _ = message
+        _ = context
+        _ = command
+        _ = edit_context
+        _ = edit_window_seconds
+        captured["text"] = spec.text
+        captured["markup"] = spec.reply_markup
+        return True
+
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
+
+    ctx = SimpleNamespace(telegram_chat_id="1")
+    asyncio.run(service._send_model_panel(object(), ctx))
+
+    assert "当前: o3" in captured["text"]
+    rows = captured["markup"].inline_keyboard
+    assert any(button.callback_data == "model:set:o3" for row in rows for button in row)
+    assert any(button.callback_data == "model:reset" for row in rows for button in row)
 
 
 def test_approval_callback_clears_inline_keyboard(monkeypatch) -> None:
@@ -727,6 +780,101 @@ def test_expired_approval_callback_is_rejected(monkeypatch) -> None:
     assert any("已过期" in text for text in sent_texts)
 
 
+def test_model_set_callback_executes_model_command(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    message = MessageStub([object()])
+    query = SimpleNamespace(message=message, data="model:set:o3")
+
+    async def fake_answer(*args, **kwargs):  # noqa: ANN003
+        _ = args
+        _ = kwargs
+        return None
+
+    query.answer = fake_answer
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_callback_query(update, SimpleNamespace()))
+
+    assert executed == ["/model set o3"]
+
+
+def test_mcp_disable_callback_executes_toggle_command(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    message = MessageStub([object()])
+    query = SimpleNamespace(message=message, data="mcp:disable:playwright")
+
+    async def fake_answer(*args, **kwargs):  # noqa: ANN003
+        _ = args
+        _ = kwargs
+        return None
+
+    query.answer = fake_answer
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_callback_query(update, SimpleNamespace()))
+
+    assert executed == ["/mcp-disable playwright"]
+
+
+def test_send_command_result_splits_long_text() -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=120,
+        ),
+        router=WizardRouterStub(),
+    )
+    message = MessageStub([object(), object(), object()])
+    ctx = SimpleNamespace(telegram_chat_id="1", telegram_user_id="123")
+    result = CommandResult(
+        "项目: demo\n任务 #1: 已完成\n摘要:\n" + ("A" * 220)
+    )
+
+    ok = asyncio.run(service._send_command_result(message, "/do", ctx, result))
+
+    assert ok is True
+    assert len(message.sent_texts) >= 2
+    assert message.sent_texts[0].startswith("项目: demo")
+    assert any(text.startswith("续 2/") for text in message.sent_texts[1:])
+
+
 def test_execute_command_sends_typing_for_long_running_command() -> None:
     service = TelegramBotService(
         config=SimpleNamespace(
@@ -748,6 +896,137 @@ def test_execute_command_sends_typing_for_long_running_command() -> None:
     asyncio.run(service._execute_command(message, ctx, "/do fix issue"))
 
     assert message.chat_actions == ["typing"]
+
+
+def test_on_text_message_sends_typing_for_prompted_long_running_command() -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    service._pending_command_by_chat["1"] = "/do"
+    message = MessageStub([object(), object()])
+    message.text = "fix issue"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert message.chat_actions == ["typing"]
+
+
+def test_on_text_message_sends_typing_for_plain_text_question() -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    message = MessageStub([object(), object()])
+    message.text = "帮我看看这个报错"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert message.chat_actions == ["typing"]
+
+
+def test_dispatch_router_command_keeps_typing_heartbeat_during_wait() -> None:
+    class SlowRouterStub(WizardRouterStub):
+        def handle(self, ctx):  # noqa: ANN001, ANN201
+            _ = ctx
+            time.sleep(2.2)
+            return SimpleNamespace(reply_text="ok", metadata=None)
+
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+            telegram_typing_heartbeat_seconds=1.0,
+        ),
+        router=SlowRouterStub(),
+    )
+    message = MessageStub([])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+        text="/do fix issue",
+    )
+
+    asyncio.run(service._dispatch_router_command(message, ctx, command="/do"))
+
+    assert len(message.chat_actions) >= 2
+
+
+def test_dispatch_router_command_stream_mode_sends_progress_updates(monkeypatch) -> None:
+    class SlowRouterStub(WizardRouterStub):
+        def handle(self, ctx):  # noqa: ANN001, ANN201
+            if getattr(ctx, "progress_callback", None):
+                ctx.progress_callback("stdout", "Reading package.json")
+            _ = ctx
+            time.sleep(1.3)
+            return SimpleNamespace(reply_text="ok", metadata=None)
+
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+            telegram_typing_heartbeat_seconds=1.0,
+            telegram_stream_phase_delay_seconds=0.2,
+            telegram_stream_heartbeat_seconds=2.0,
+        ),
+        router=SlowRouterStub(),
+    )
+    service.router.tasks.ui_mode = "stream"
+    captured: list[tuple[str, str, str | None]] = []
+
+    async def fake_send(message, spec):  # noqa: ANN001, ANN202
+        captured.append((spec.context, spec.text, spec.edit_context))
+        return True
+
+    async def fake_delete(message, *, context: str, max_age_seconds: float):  # noqa: ANN001, ANN202
+        _ = message
+        _ = max_age_seconds
+        captured.append(("delete", context, None))
+        return True
+
+    monkeypatch.setattr(service.sink, "send", fake_send)
+    monkeypatch.setattr(service.sink, "delete_recent_message_by_context", fake_delete)
+    message = MessageStub([])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+        text="/do fix issue",
+    )
+
+    asyncio.run(service._dispatch_router_command(message, ctx, command="/do"))
+
+    progress_contexts = {context for context, _, edit_context in captured if edit_context}
+    assert len(progress_contexts) == 1
+    progress_context = next(iter(progress_contexts))
+    assert any("当前阶段" in text for _, text, _ in captured)
+    assert any("Reading package.json" in text for _, text, _ in captured)
+    assert ("delete", progress_context, None) in captured
 
 
 def test_execute_command_skips_typing_for_fast_status_command() -> None:

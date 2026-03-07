@@ -181,13 +181,13 @@ class ChatStateStore:
         if row is None or not row["ui_mode"]:
             return None
         value = str(row["ui_mode"]).strip().lower()
-        if value not in {"summary", "verbose"}:
+        if value not in {"summary", "verbose", "stream"}:
             return None
         return value
 
     def set_chat_ui_mode(self, *, chat_id: str, user_id: int, mode: str) -> None:
         normalized = mode.strip().lower()
-        if normalized not in {"summary", "verbose"}:
+        if normalized not in {"summary", "verbose", "stream"}:
             raise ValueError(f"Unsupported ui mode: {mode}")
         connection = self.db.get_connection()
         try:
@@ -205,6 +205,62 @@ class ChatStateStore:
             connection.commit()
         except sqlite3.OperationalError:
             logger.debug("ui_mode column not available when storing chat UI mode.")
+
+    def get_chat_codex_model(self, *, chat_id: str) -> str | None:
+        connection = self.db.get_connection()
+        try:
+            row = connection.execute(
+                """
+                SELECT codex_model
+                FROM chat_context
+                WHERE telegram_chat_id = ?
+                """,
+                (chat_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            logger.debug("codex_model column not available when loading chat model.")
+            return None
+        if row is None or not row["codex_model"]:
+            return None
+        value = str(row["codex_model"]).strip()
+        return value or None
+
+    def set_chat_codex_model(self, *, chat_id: str, user_id: int, model: str) -> None:
+        normalized = model.strip()
+        if not normalized:
+            raise ValueError("Model must not be empty.")
+        connection = self.db.get_connection()
+        try:
+            connection.execute(
+                """
+                INSERT INTO chat_context (telegram_chat_id, user_id, codex_model)
+                VALUES (?, ?, ?)
+                ON CONFLICT(telegram_chat_id) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    codex_model = excluded.codex_model,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (chat_id, user_id, normalized),
+            )
+            connection.commit()
+        except sqlite3.OperationalError:
+            logger.debug("codex_model column not available when storing chat model.")
+
+    def clear_chat_codex_model(self, *, chat_id: str) -> None:
+        connection = self.db.get_connection()
+        try:
+            connection.execute(
+                """
+                UPDATE chat_context
+                SET codex_model = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_chat_id = ?
+                """,
+                (chat_id,),
+            )
+            connection.commit()
+        except sqlite3.OperationalError:
+            logger.debug("codex_model column not available when clearing chat model.")
 
     def get_recent_outbound_message_id(
         self,

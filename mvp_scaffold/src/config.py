@@ -9,6 +9,11 @@ def _split_csv(value: str) -> set[str]:
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
+def _split_csv_list(value: str) -> tuple[str, ...]:
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return tuple(dict.fromkeys(items))
+
+
 def _parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
@@ -34,6 +39,7 @@ class AppConfig:
     codex_default_approval_mode: str
     codex_command_timeout_seconds: int
     codex_home: Path
+    codex_model_choices: tuple[str, ...]
     enable_skill_install: bool
     skill_install_timeout_seconds: int
     poll_interval_seconds: int
@@ -94,6 +100,9 @@ def load_config() -> AppConfig:
         codex_default_approval_mode=os.getenv("CODEX_DEFAULT_APPROVAL_MODE", "never"),
         codex_command_timeout_seconds=int(os.getenv("CODEX_COMMAND_TIMEOUT_SECONDS", "1800")),
         codex_home=Path(os.path.expanduser(os.getenv("CODEX_HOME", "~/.codex"))),
+        codex_model_choices=_split_csv_list(
+            os.getenv("CODEX_MODEL_CHOICES", "gpt-5.4,gpt-5,o3")
+        ),
         enable_skill_install=_parse_bool(os.getenv("ENABLE_SKILL_INSTALL"), default=True),
         skill_install_timeout_seconds=int(os.getenv("SKILL_INSTALL_TIMEOUT_SECONDS", "600")),
         poll_interval_seconds=int(os.getenv("TELEGRAM_POLL_INTERVAL_SECONDS", "2")),

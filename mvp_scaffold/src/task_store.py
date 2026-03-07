@@ -170,6 +170,15 @@ class TaskStore:
     def set_chat_ui_mode(self, *, chat_id: str, user_id: int, mode: str) -> None:
         self.chat_state.set_chat_ui_mode(chat_id=chat_id, user_id=user_id, mode=mode)
 
+    def get_chat_codex_model(self, *, chat_id: str) -> str | None:
+        return self.chat_state.get_chat_codex_model(chat_id=chat_id)
+
+    def set_chat_codex_model(self, *, chat_id: str, user_id: int, model: str) -> None:
+        self.chat_state.set_chat_codex_model(chat_id=chat_id, user_id=user_id, model=model)
+
+    def clear_chat_codex_model(self, *, chat_id: str) -> None:
+        self.chat_state.clear_chat_codex_model(chat_id=chat_id)
+
     def get_recent_outbound_message_id(
         self,
         *,

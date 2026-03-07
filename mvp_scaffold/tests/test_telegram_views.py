@@ -56,3 +56,24 @@ def test_approval_panel_uses_explicit_approval_id_when_available() -> None:
     assert rows[0][1].callback_data == "approval:reject:42"
     assert rows[1][0].callback_data == "prompt:approve:42"
     assert rows[1][1].callback_data == "prompt:reject:42"
+
+
+def test_model_panel_marks_current_model_and_reset_action() -> None:
+    factory = TelegramViewFactory()
+
+    spec = factory.model_panel(current_model="o3", model_choices=["gpt-5.4", "o3", "gpt-5"])
+
+    assert "当前: o3" in spec.text
+    rows = spec.reply_markup.inline_keyboard
+    assert any(button.callback_data == "model:set:o3" for row in rows for button in row)
+    assert any(button.callback_data == "model:reset" for row in rows for button in row)
+
+
+def test_mcp_detail_markup_contains_toggle_and_refresh() -> None:
+    factory = TelegramViewFactory()
+
+    markup = factory.mcp_detail_markup(name="playwright", enabled=True)
+
+    rows = markup.inline_keyboard
+    assert rows[0][0].callback_data == "mcp:disable:playwright"
+    assert rows[1][0].callback_data == "cmd:mcp_detail:playwright"

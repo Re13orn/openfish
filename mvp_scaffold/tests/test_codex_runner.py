@@ -14,13 +14,21 @@ class StubCodexRunner(CodexRunner):
             codex_default_sandbox_mode="workspace-write",
             codex_default_approval_mode="on-request",
             codex_command_timeout_seconds=30,
+            codex_model_choices=("gpt-5.4", "gpt-5", "o3"),
         )
         super().__init__(config)
         self._responses = responses
         self.commands: list[list[str]] = []
 
-    def _run_subprocess(self, command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    def _run_subprocess(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        progress_callback=None,
+    ) -> subprocess.CompletedProcess[str]:
         _ = cwd
+        _ = progress_callback
         self.commands.append(list(command))
         if not self._responses:
             raise RuntimeError("No stub response left.")
@@ -71,6 +79,21 @@ def test_on_request_approval_mode_is_coerced_to_never_for_noninteractive_runs() 
     assert "--ask-for-approval" in runner.commands[0]
     approval_flag_index = runner.commands[0].index("--ask-for-approval")
     assert runner.commands[0][approval_flag_index + 1] == "never"
+
+
+def test_model_is_passed_to_codex_exec() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    result = runner.run(_project(), "hello", model="o3")
+
+    assert result.ok is True
+    assert "-m" in runner.commands[0]
+    model_index = runner.commands[0].index("-m")
+    assert runner.commands[0][model_index + 1] == "o3"
 
 
 def test_fallback_removes_json_then_approval_flag() -> None:
@@ -231,3 +254,51 @@ def test_resume_session_uses_explicit_session_command() -> None:
     assert result.ok is True
     assert len(runner.commands) == 1
     assert runner.commands[0][:4] == ["codex", "exec", "resume", "sess-123"]
+
+
+def test_normalize_progress_line_extracts_json_text() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    normalized = runner._normalize_progress_line("stdout", '{"text":"Working on file a.py"}')
+
+    assert normalized == "Working on file a.py"
+
+
+def test_normalize_progress_line_ignores_mcp_startup_noise() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    assert runner._normalize_progress_line("stderr", "mcp: playwright ready") is None
+    assert (
+        runner._normalize_progress_line(
+            "stderr",
+            "mcp: android-control failed: MCP client for `android-control` failed to start: foo",
+        )
+        is None
+    )
+    assert (
+        runner._normalize_progress_line(
+            "stderr",
+            "2026-03-07T06:00:56Z ERROR mcp::transport::worker: worker quit with fatal: Transport channel closed",
+        )
+        is None
+    )
+
+
+def test_normalize_progress_line_keeps_non_mcp_stderr() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    normalized = runner._normalize_progress_line("stderr", "pytest failed: 2 tests failed")
+
+    assert normalized == "[stderr] pytest failed: 2 tests failed"

@@ -163,9 +163,11 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="MCP 列表", callback_data="cmd:mcp"),
                         InlineKeyboardButton(text="MCP 详情", callback_data="prompt:mcp"),
                     ],
+                    [InlineKeyboardButton(text="模型", callback_data="panel:model")],
                     [
                         InlineKeyboardButton(text="精简模式", callback_data="cmd:ui_summary"),
                         InlineKeyboardButton(text="详细模式", callback_data="cmd:ui_verbose"),
+                        InlineKeyboardButton(text="过程流模式", callback_data="cmd:ui_stream"),
                     ],
                     [
                         InlineKeyboardButton(text="查看根目录", callback_data="cmd:project_root_show"),
@@ -174,6 +176,48 @@ class TelegramViewFactory:
                     [InlineKeyboardButton(text="清除输入引导", callback_data="prompt:clear")],
                 ]
             ),
+        )
+
+    def model_panel(
+        self,
+        *,
+        current_model: str | None,
+        model_choices: list[str],
+    ) -> TelegramReplySpec:
+        rows: list[list[InlineKeyboardButton]] = []
+        current_row: list[InlineKeyboardButton] = []
+        for model in model_choices[:8]:
+            label = f"当前: {model}" if current_model == model else model
+            current_row.append(InlineKeyboardButton(text=label, callback_data=f"model:set:{model}"))
+            if len(current_row) == 2:
+                rows.append(current_row)
+                current_row = []
+        if current_row:
+            rows.append(current_row)
+        rows.extend(
+            [
+                [InlineKeyboardButton(text="手动输入模型", callback_data="prompt:model")],
+                [InlineKeyboardButton(text="恢复默认", callback_data="model:reset")],
+                [InlineKeyboardButton(text="查看当前模型", callback_data="cmd:model")],
+            ]
+        )
+        current = current_model or "默认（跟随 Codex 配置）"
+        return TelegramReplySpec(
+            text=f"模型设置：\n当前: {current}",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+
+    def mcp_detail_markup(self, *, name: str, enabled: bool) -> InlineKeyboardMarkup:
+        toggle_callback = f"mcp:{'disable' if enabled else 'enable'}:{name}"
+        toggle_text = "停用 MCP" if enabled else "启用 MCP"
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton(text=toggle_text, callback_data=toggle_callback)],
+                [
+                    InlineKeyboardButton(text="刷新详情", callback_data=f"cmd:mcp_detail:{name}"),
+                    InlineKeyboardButton(text="返回列表", callback_data="cmd:mcp"),
+                ],
+            ]
         )
 
     def status_result_markup(

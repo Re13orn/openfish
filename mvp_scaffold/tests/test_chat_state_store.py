@@ -59,6 +59,18 @@ def test_invalid_ui_mode_raises_value_error(tmp_path: Path) -> None:
         raise AssertionError("expected ValueError for unsupported ui mode")
 
 
+def test_chat_codex_model_round_trip(tmp_path: Path) -> None:
+    _, store = _setup_store(tmp_path)
+
+    store.set_chat_codex_model(chat_id="chat-1", user_id=1, model="o3")
+
+    assert store.get_chat_codex_model(chat_id="chat-1") == "o3"
+
+    store.clear_chat_codex_model(chat_id="chat-1")
+
+    assert store.get_chat_codex_model(chat_id="chat-1") is None
+
+
 def test_outbound_message_delivery_round_trip(tmp_path: Path) -> None:
     _, store = _setup_store(tmp_path)
     store.set_chat_wizard_state(chat_id="chat-1", user_id=1, state={"kind": "noop"})

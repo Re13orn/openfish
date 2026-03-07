@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
 import re
 import subprocess
 from typing import Any
@@ -56,12 +57,26 @@ class McpDetailResult:
     command: list[str] | None
 
 
+@dataclass(slots=True)
+class McpToggleResult:
+    ok: bool
+    summary: str
+    name: str
+    enabled: bool
+    config_path: str | None
+
+
 class McpService:
     """Read configured Codex MCP servers without exposing sensitive values."""
 
-    def __init__(self, *, codex_bin: str, timeout_seconds: int) -> None:
+    _SECTION_PATTERN = re.compile(
+        r"^\s*(?P<comment>#\s*)?\[(?P<section>mcp_servers\.[^\]]+)\]\s*$"
+    )
+
+    def __init__(self, *, codex_bin: str, timeout_seconds: int, config_path: Path | None = None) -> None:
         self.codex_bin = codex_bin
         self.timeout_seconds = timeout_seconds
+        self.config_path = config_path
         self._name_pattern = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
     def list_servers(self) -> McpListResult:
@@ -94,6 +109,20 @@ class McpService:
             if not isinstance(item, dict):
                 continue
             servers.append(self._to_summary(item))
+        configured = self._load_configured_servers()
+        known = {item.name for item in servers}
+        for name, enabled in configured.items():
+            if name in known:
+                continue
+            servers.append(
+                McpServerSummary(
+                    name=name,
+                    enabled=enabled,
+                    transport_type="configured",
+                    target=None,
+                    auth_status=None,
+                )
+            )
         servers.sort(key=lambda item: item.name.lower())
         return McpListResult(
             ok=True,
@@ -128,6 +157,16 @@ class McpService:
         command = [self.codex_bin, "mcp", "get", normalized, "--json"]
         proc = self._run(command)
         if proc.returncode != 0:
+            fallback = self._detail_from_config(normalized)
+            if fallback is not None:
+                return McpDetailResult(
+                    ok=True,
+                    summary=f"已读取 MCP 详情: {normalized}",
+                    detail=fallback,
+                    stdout=proc.stdout,
+                    stderr=proc.stderr,
+                    command=command,
+                )
             error = self._clean_cli_message(proc.stderr, proc.stdout) or "读取 MCP 详情失败。"
             return McpDetailResult(
                 ok=False,
@@ -156,6 +195,54 @@ class McpService:
             stdout=proc.stdout,
             stderr=proc.stderr,
             command=command,
+        )
+
+    def set_server_enabled(self, name: str, *, enabled: bool) -> McpToggleResult:
+        normalized = name.strip()
+        if not normalized or not self._name_pattern.fullmatch(normalized):
+            return McpToggleResult(
+                ok=False,
+                summary="MCP 名称不合法。",
+                name=normalized or name,
+                enabled=enabled,
+                config_path=str(self.config_path) if self.config_path else None,
+            )
+        if self.config_path is None:
+            return McpToggleResult(
+                ok=False,
+                summary="未配置 Codex config.toml 路径。",
+                name=normalized,
+                enabled=enabled,
+                config_path=None,
+            )
+        if not self.config_path.exists():
+            return McpToggleResult(
+                ok=False,
+                summary="Codex config.toml 不存在。",
+                name=normalized,
+                enabled=enabled,
+                config_path=str(self.config_path),
+            )
+
+        original = self.config_path.read_text(encoding="utf-8")
+        updated = self._set_block_enabled(original, normalized, enabled=enabled)
+        if updated is None:
+            return McpToggleResult(
+                ok=False,
+                summary=f"未找到 MCP 配置段: {normalized}",
+                name=normalized,
+                enabled=enabled,
+                config_path=str(self.config_path),
+            )
+        if updated != original:
+            self.config_path.write_text(updated, encoding="utf-8")
+        action = "启用" if enabled else "停用"
+        return McpToggleResult(
+            ok=True,
+            summary=f"已{action} MCP: {normalized}",
+            name=normalized,
+            enabled=enabled,
+            config_path=str(self.config_path),
         )
 
     def _to_summary(self, payload: dict[str, Any]) -> McpServerSummary:
@@ -220,6 +307,53 @@ class McpService:
             return []
         return [str(item) for item in value]
 
+    def _load_configured_servers(self) -> dict[str, bool]:
+        if self.config_path is None or not self.config_path.exists():
+            return {}
+        mapping: dict[str, bool] = {}
+        for line in self.config_path.read_text(encoding="utf-8").splitlines():
+            match = self._SECTION_PATTERN.match(line)
+            if not match:
+                continue
+            root_name = self._root_name_from_section(match.group("section"))
+            if root_name is None:
+                continue
+            mapping[root_name] = match.group("comment") is None
+        return mapping
+
+    def _detail_from_config(self, name: str) -> McpServerDetail | None:
+        if self.config_path is None or not self.config_path.exists():
+            return None
+        block = self._extract_block(self.config_path.read_text(encoding="utf-8"), name)
+        if block is None:
+            return None
+        enabled, lines = block
+        command = self._extract_assignment(lines, "command")
+        url = self._extract_assignment(lines, "url")
+        cwd = self._extract_assignment(lines, "cwd")
+        args = self._extract_array_assignment(lines, "args")
+        transport_type = "unknown"
+        if url:
+            transport_type = "streamable_http"
+        elif command:
+            transport_type = "stdio"
+        return McpServerDetail(
+            name=name,
+            enabled=enabled,
+            disabled_reason=None if enabled else "配置段已注释",
+            transport_type=transport_type,
+            url=redact_text(url) if url else None,
+            command=command,
+            args=args,
+            cwd=cwd,
+            bearer_token_env_var=None,
+            auth_status=None,
+            startup_timeout_sec=None,
+            tool_timeout_sec=None,
+            enabled_tools=[],
+            disabled_tools=[],
+        )
+
     def _run(self, command: list[str]) -> subprocess.CompletedProcess[str]:
         try:
             return subprocess.run(
@@ -273,3 +407,94 @@ class McpService:
         filtered = [line for line in lines if not line.lstrip().startswith("WARNING: proceeding")]
         cleaned = "\n".join(filtered if filtered else lines)
         return self._shorten(cleaned)
+
+    def _extract_block(self, text: str, name: str) -> tuple[bool, list[str]] | None:
+        current_name: str | None = None
+        current_enabled = False
+        captured: list[str] = []
+
+        for line in text.splitlines():
+            match = self._SECTION_PATTERN.match(line)
+            if match:
+                section_name = self._root_name_from_section(match.group("section"))
+                if section_name is None:
+                    continue
+                section_enabled = match.group("comment") is None
+                if current_name == name and section_name != name:
+                    return current_enabled, captured
+                current_name = section_name
+                current_enabled = section_enabled
+                captured = [line] if section_name == name else []
+                continue
+            if current_name == name:
+                captured.append(line)
+
+        if current_name == name and captured:
+            return current_enabled, captured
+        return None
+
+    def _set_block_enabled(self, text: str, name: str, *, enabled: bool) -> str | None:
+        lines = text.splitlines()
+        result: list[str] = []
+        current_name: str | None = None
+        found = False
+
+        for line in lines:
+            match = self._SECTION_PATTERN.match(line)
+            if match:
+                current_name = self._root_name_from_section(match.group("section"))
+            if current_name == name:
+                found = True
+                result.append(self._uncomment_line(line) if enabled else self._comment_line(line))
+            else:
+                result.append(line)
+        if not found:
+            return None
+        return "\n".join(result) + ("\n" if text.endswith("\n") else "")
+
+    def _comment_line(self, line: str) -> str:
+        if not line.strip():
+            return line
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            return line
+        indent = line[: len(line) - len(stripped)]
+        return f"{indent}# {stripped}"
+
+    def _uncomment_line(self, line: str) -> str:
+        stripped = line.lstrip()
+        if not stripped.startswith("#"):
+            return line
+        indent = line[: len(line) - len(stripped)]
+        uncommented = stripped[1:]
+        if uncommented.startswith(" "):
+            uncommented = uncommented[1:]
+        return f"{indent}{uncommented}"
+
+    def _extract_assignment(self, lines: list[str], key: str) -> str | None:
+        pattern = re.compile(rf"^\s*(?:#\s*)?{re.escape(key)}\s*=\s*\"([^\"]+)\"")
+        for line in lines:
+            match = pattern.match(line)
+            if match:
+                return match.group(1)
+        return None
+
+    def _extract_array_assignment(self, lines: list[str], key: str) -> list[str]:
+        pattern = re.compile(rf"^\s*(?:#\s*)?{re.escape(key)}\s*=\s*\[(.*)\]\s*$")
+        for line in lines:
+            match = pattern.match(line)
+            if not match:
+                continue
+            raw = match.group(1).strip()
+            if not raw:
+                return []
+            return [item.strip().strip('"').strip("'") for item in raw.split(",") if item.strip()]
+        return []
+
+    def _root_name_from_section(self, section: str) -> str | None:
+        if not section.startswith("mcp_servers."):
+            return None
+        remainder = section[len("mcp_servers.") :]
+        if not remainder:
+            return None
+        return remainder.split(".", 1)[0]

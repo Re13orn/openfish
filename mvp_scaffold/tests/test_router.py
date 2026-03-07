@@ -120,22 +120,29 @@ class CodexStub:
         self.resume_result = resume_result or run_result
         self.calls: list[str] = []
         self.prompts: list[str] = []
+        self.models: list[str | None] = []
 
-    def run(self, project: ProjectConfig, prompt: str) -> CodexRunResult:
+    def run(self, project: ProjectConfig, prompt: str, *, model=None, progress_callback=None) -> CodexRunResult:
         _ = project
+        _ = progress_callback
         self.prompts.append(prompt)
+        self.models.append(model)
         self.calls.append("run")
         return self.run_result
 
-    def ask(self, project: ProjectConfig, question: str) -> CodexRunResult:
+    def ask(self, project: ProjectConfig, question: str, *, model=None, progress_callback=None) -> CodexRunResult:
         _ = project
+        _ = progress_callback
         self.prompts.append(question)
+        self.models.append(model)
         self.calls.append("ask")
         return self.run_result
 
-    def resume_last(self, project: ProjectConfig, instruction: str) -> CodexRunResult:
+    def resume_last(self, project: ProjectConfig, instruction: str, *, model=None, progress_callback=None) -> CodexRunResult:
         _ = project
         _ = instruction
+        _ = progress_callback
+        self.models.append(model)
         self.calls.append("resume_last")
         return self.resume_result
 
@@ -144,10 +151,15 @@ class CodexStub:
         project: ProjectConfig,
         session_id: str,
         instruction: str,
+        *,
+        model=None,
+        progress_callback=None,
     ) -> CodexRunResult:
         _ = project
         _ = session_id
         _ = instruction
+        _ = progress_callback
+        self.models.append(model)
         self.calls.append("resume_session")
         return self.resume_result
 
@@ -158,6 +170,7 @@ class TasksStub:
         self.active_project_key = "demo"
         self.recent_project_keys = ["demo"]
         self.ui_mode = None
+        self.codex_model = None
         self.project_id = 101
         self.next_task_id = 1
         self.pending: PendingApprovalRecord | None = None
@@ -219,6 +232,19 @@ class TasksStub:
         _ = chat_id
         _ = user_id
         self.ui_mode = mode
+
+    def get_chat_codex_model(self, *, chat_id: str) -> str | None:
+        _ = chat_id
+        return self.codex_model
+
+    def set_chat_codex_model(self, *, chat_id: str, user_id: int, model: str) -> None:
+        _ = chat_id
+        _ = user_id
+        self.codex_model = model
+
+    def clear_chat_codex_model(self, *, chat_id: str) -> None:
+        _ = chat_id
+        self.codex_model = None
 
     def create_task(
         self,
@@ -538,6 +564,7 @@ class McpStub:
             stderr="",
             command=["codex", "mcp", "get", "playwright", "--json"],
         )
+        self.toggled: list[tuple[str, bool]] = []
 
     def list_servers(self) -> McpListResult:
         return self.list_result
@@ -545,6 +572,16 @@ class McpStub:
     def get_server(self, name: str) -> McpDetailResult:
         _ = name
         return self.detail_result
+
+    def set_server_enabled(self, name: str, *, enabled: bool):  # noqa: ANN201
+        self.toggled.append((name, enabled))
+        return SimpleNamespace(
+            ok=True,
+            summary=f"已{'启用' if enabled else '停用'} MCP: {name}",
+            name=name,
+            enabled=enabled,
+            config_path="/tmp/config.toml",
+        )
 
 
 def _build_router(
@@ -834,6 +871,50 @@ def test_ui_command_sets_chat_mode() -> None:
     assert tasks.ui_mode == "verbose"
 
 
+def test_ui_command_sets_stream_mode() -> None:
+    tasks = TasksStub()
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/ui stream"))
+
+    assert result.reply_text == "界面模式已切换为: stream"
+    assert tasks.ui_mode == "stream"
+
+
+def test_model_command_sets_chat_model() -> None:
+    tasks = TasksStub()
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/model set o3"))
+
+    assert result.reply_text == "当前会话模型已切换为: o3"
+    assert tasks.codex_model == "o3"
+
+
+def test_model_command_reset_clears_chat_model() -> None:
+    tasks = TasksStub()
+    tasks.codex_model = "o3"
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/model reset"))
+
+    assert result.reply_text == "当前会话模型已恢复为默认配置。"
+    assert tasks.codex_model is None
+
+
+def test_do_uses_selected_chat_model() -> None:
+    tasks = TasksStub()
+    tasks.codex_model = "o3"
+    codex = CodexStub(_codex_result("done", ok=True))
+    router = _build_router(tasks, AuditStub(), codex)
+
+    result = router.handle(_ctx("/do 修复测试"))
+
+    assert "任务 #1: 已完成" in result.reply_text
+    assert codex.calls == ["run"]
+    assert codex.models == ["o3"]
+
+
 def test_help_command_uses_current_ui_mode() -> None:
     tasks = TasksStub()
     tasks.ui_mode = "summary"
@@ -1007,6 +1088,22 @@ def test_mcp_list_and_detail_commands() -> None:
     assert "MCP: playwright" in detail.reply_text
     codes = [event[0] for event in audit.events]
     assert audit_events.MCP_VIEWED in codes
+
+
+def test_mcp_disable_command_updates_config() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    mcp = McpStub()
+    router = _build_router(tasks, audit, codex, mcp=mcp)
+
+    result = router.handle(_ctx("/mcp-disable playwright"))
+
+    assert "已停用 MCP: playwright" in result.reply_text
+    assert mcp.toggled == [("playwright", False)]
+    assert result.metadata == {"mcp_name": "playwright", "mcp_enabled": False}
+    codes = [event[0] for event in audit.events]
+    assert audit_events.MCP_UPDATED in codes
 
 
 def test_schedule_add_list_delete() -> None:

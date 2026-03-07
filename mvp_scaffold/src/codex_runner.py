@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import re
 import subprocess
+from threading import Thread
+from typing import Callable
 
 from src.config import AppConfig
 from src.models import ProjectConfig
@@ -25,6 +27,7 @@ class CodexRunResult:
     session_id: str | None
     used_json_output: bool
     command: list[str]
+    display_text: str | None = None
 
 
 class CodexRunner:
@@ -33,14 +36,37 @@ class CodexRunner:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
 
-    def run(self, project: ProjectConfig, prompt: str) -> CodexRunResult:
+    def run(
+        self,
+        project: ProjectConfig,
+        prompt: str,
+        *,
+        model: str | None = None,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> CodexRunResult:
         """Execute a standard write-oriented Codex task."""
 
-        command = self._build_command(project.path, prompt, use_json=self.config.codex_json_output)
-        proc, used_json, resolved_command = self._execute_with_optional_fallback(command, project.path)
+        command = self._build_command(
+            project.path,
+            prompt,
+            use_json=self.config.codex_json_output,
+            model=model,
+        )
+        proc, used_json, resolved_command = self._execute_with_optional_fallback(
+            command,
+            project.path,
+            progress_callback=progress_callback,
+        )
         return self._build_result(proc, used_json, resolved_command)
 
-    def ask(self, project: ProjectConfig, question: str) -> CodexRunResult:
+    def ask(
+        self,
+        project: ProjectConfig,
+        question: str,
+        *,
+        model: str | None = None,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> CodexRunResult:
         """Execute a conservative read-oriented Codex request."""
 
         prompt = (
@@ -48,14 +74,32 @@ class CodexRunner:
             "Answer concisely for a mobile Telegram summary.\n\n"
             f"Question: {question}"
         )
-        command = self._build_command(project.path, prompt, use_json=self.config.codex_json_output)
-        proc, used_json, resolved_command = self._execute_with_optional_fallback(command, project.path)
+        command = self._build_command(
+            project.path,
+            prompt,
+            use_json=self.config.codex_json_output,
+            model=model,
+        )
+        proc, used_json, resolved_command = self._execute_with_optional_fallback(
+            command,
+            project.path,
+            progress_callback=progress_callback,
+        )
         return self._build_result(proc, used_json, resolved_command)
 
-    def resume_last(self, project: ProjectConfig, instruction: str) -> CodexRunResult:
+    def resume_last(
+        self,
+        project: ProjectConfig,
+        instruction: str,
+        *,
+        model: str | None = None,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> CodexRunResult:
         """Resume the previous Codex session if supported by the CLI."""
 
         command = [self.config.codex_bin, "exec", "resume", "--last"]
+        if model:
+            command.extend(["-m", model])
         if self.config.codex_json_output:
             command.append("--json")
         command.append(instruction)
@@ -64,6 +108,8 @@ class CodexRunner:
             project=project,
             command=command,
             instruction=instruction,
+            model=model,
+            progress_callback=progress_callback,
         )
 
     def resume_session(
@@ -71,6 +117,9 @@ class CodexRunner:
         project: ProjectConfig,
         session_id: str,
         instruction: str,
+        *,
+        model: str | None = None,
+        progress_callback: Callable[[str, str], None] | None = None,
     ) -> CodexRunResult:
         """Resume a specific Codex session if CLI supports explicit session target."""
 
@@ -79,6 +128,8 @@ class CodexRunner:
             [self.config.codex_bin, "exec", "resume", "--session", session_id],
         ]
         for command in attempts:
+            if model:
+                command.extend(["-m", model])
             if self.config.codex_json_output:
                 command.append("--json")
             command.append(instruction)
@@ -87,6 +138,8 @@ class CodexRunner:
                 command=command,
                 instruction=instruction,
                 fallback_to_exec=False,
+                model=model,
+                progress_callback=progress_callback,
             )
             if result.ok:
                 return result
@@ -97,7 +150,12 @@ class CodexRunner:
             f"Prefer resuming session {session_id} if possible.\n"
             f"{instruction}"
         )
-        return self.resume_last(project, fallback_instruction)
+        return self.resume_last(
+            project,
+            fallback_instruction,
+            model=model,
+            progress_callback=progress_callback,
+        )
 
     def _build_result(
         self,
@@ -113,6 +171,12 @@ class CodexRunner:
             stderr=proc.stderr,
             prefer_json_summary=used_json,
         )
+        display_text = self._build_display_text(
+            exit_code=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            prefer_json_summary=used_json,
+        )
         return CodexRunResult(
             ok=proc.returncode == 0,
             stdout=proc.stdout,
@@ -122,10 +186,20 @@ class CodexRunner:
             session_id=session_id,
             used_json_output=used_json,
             command=resolved_command,
+            display_text=display_text,
         )
 
-    def _build_command(self, project_path: Path, prompt: str, *, use_json: bool) -> list[str]:
+    def _build_command(
+        self,
+        project_path: Path,
+        prompt: str,
+        *,
+        use_json: bool,
+        model: str | None = None,
+    ) -> list[str]:
         command = [self.config.codex_bin, "exec", "--cd", str(project_path)]
+        if model:
+            command.extend(["-m", model])
         if use_json:
             command.append("--json")
         if self.config.codex_default_sandbox_mode:
@@ -137,14 +211,18 @@ class CodexRunner:
         return command
 
     def _execute_with_optional_fallback(
-        self, command: list[str], project_path: Path
+        self,
+        command: list[str],
+        project_path: Path,
+        *,
+        progress_callback: Callable[[str, str], None] | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], bool, list[str]]:
         current_command = list(command)
         last_proc: subprocess.CompletedProcess[str] | None = None
         max_attempts = 8
 
         for _ in range(max_attempts):
-            proc = self._run_subprocess(current_command, cwd=project_path)
+            proc = self._run_subprocess(current_command, cwd=project_path, progress_callback=progress_callback)
             last_proc = proc
             if proc.returncode == 0:
                 return proc, "--json" in current_command, current_command
@@ -168,10 +246,21 @@ class CodexRunner:
             current_command = next_command
 
         if last_proc is None:
-            last_proc = self._run_subprocess(current_command, cwd=project_path)
+            last_proc = self._run_subprocess(current_command, cwd=project_path, progress_callback=progress_callback)
         return last_proc, "--json" in current_command, current_command
 
-    def _run_subprocess(self, command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    def _run_subprocess(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        if progress_callback is None:
+            return self._run_subprocess_blocking(command, cwd=cwd)
+        return self._run_subprocess_streaming(command, cwd=cwd, progress_callback=progress_callback)
+
+    def _run_subprocess_blocking(self, command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
         try:
             return subprocess.run(
                 command,
@@ -194,6 +283,77 @@ class CodexRunner:
                 stdout="",
                 stderr=f"Codex command timed out after {self.config.codex_command_timeout_seconds}s",
             )
+
+    def _run_subprocess_streaming(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        progress_callback: Callable[[str, str], None],
+    ) -> subprocess.CompletedProcess[str]:
+        try:
+            proc = subprocess.Popen(
+                command,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=127,
+                stdout="",
+                stderr=f"Codex binary not found: {self.config.codex_bin}",
+            )
+
+        stdout_parts: list[str] = []
+        stderr_parts: list[str] = []
+
+        def _reader(stream, sink: list[str], channel: str) -> None:  # noqa: ANN001
+            try:
+                for line in iter(stream.readline, ""):
+                    sink.append(line)
+                    normalized = self._normalize_progress_line(channel, line)
+                    if normalized:
+                        progress_callback(channel, normalized)
+            finally:
+                stream.close()
+
+        stdout_thread = Thread(target=_reader, args=(proc.stdout, stdout_parts, "stdout"), daemon=True)
+        stderr_thread = Thread(target=_reader, args=(proc.stderr, stderr_parts, "stderr"), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+
+        try:
+            returncode = proc.wait(timeout=self.config.codex_command_timeout_seconds)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            stdout_thread.join(timeout=1.0)
+            stderr_thread.join(timeout=1.0)
+            stderr_text = "".join(stderr_parts)
+            timeout_message = f"Codex command timed out after {self.config.codex_command_timeout_seconds}s"
+            if stderr_text:
+                stderr_text = f"{stderr_text.rstrip()}\n{timeout_message}"
+            else:
+                stderr_text = timeout_message
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=124,
+                stdout="".join(stdout_parts),
+                stderr=stderr_text,
+            )
+
+        stdout_thread.join(timeout=1.0)
+        stderr_thread.join(timeout=1.0)
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=returncode,
+            stdout="".join(stdout_parts),
+            stderr="".join(stderr_parts),
+        )
 
     def _looks_like_json_flag_error(self, stderr: str) -> bool:
         lower = stderr.lower()
@@ -234,8 +394,10 @@ class CodexRunner:
         command: list[str],
         instruction: str,
         fallback_to_exec: bool = True,
+        model: str | None = None,
+        progress_callback: Callable[[str, str], None] | None = None,
     ) -> CodexRunResult:
-        proc = self._run_subprocess(command, cwd=project.path)
+        proc = self._run_subprocess(command, cwd=project.path, progress_callback=progress_callback)
         used_json = self.config.codex_json_output
         if proc.returncode != 0 and fallback_to_exec and self._looks_like_resume_command_error(proc.stderr):
             fallback_prompt = (
@@ -243,10 +405,15 @@ class CodexRunner:
                 f"Instruction: {instruction}"
             )
             fallback_command = self._build_command(
-                project.path, fallback_prompt, use_json=self.config.codex_json_output
+                project.path,
+                fallback_prompt,
+                use_json=self.config.codex_json_output,
+                model=model,
             )
             fallback_proc, used_json, resolved_command = self._execute_with_optional_fallback(
-                fallback_command, project.path
+                fallback_command,
+                project.path,
+                progress_callback=progress_callback,
             )
             return self._build_result(fallback_proc, used_json, resolved_command)
 
@@ -300,6 +467,36 @@ class CodexRunner:
                 last_text = candidate
         return self._truncate(last_text, 500) if last_text else None
 
+    def _build_display_text(self, *, exit_code: int, stdout: str, stderr: str, prefer_json_summary: bool) -> str | None:
+        if prefer_json_summary:
+            json_text = self._extract_json_display_text(stdout)
+            if json_text:
+                return self._truncate(json_text, 12000)
+        if exit_code == 0:
+            content = stdout.strip()
+            return self._truncate(content, 12000) if content else None
+        error_source = stderr.strip() or stdout.strip()
+        if not error_source:
+            return None
+        return self._truncate(error_source, 12000)
+
+    def _extract_json_display_text(self, stdout: str) -> str | None:
+        last_text: str | None = None
+        for line in stdout.splitlines():
+            stripped = line.strip()
+            if not stripped or not stripped.startswith("{"):
+                continue
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            candidate = self._extract_text_from_json(payload)
+            if candidate:
+                last_text = candidate
+        return last_text
+
     def _extract_text_from_json(self, payload: dict) -> str | None:
         for key in ("summary", "output_text", "text", "message"):
             value = payload.get(key)
@@ -312,6 +509,45 @@ class CodexRunner:
                 if isinstance(value, str) and value.strip():
                     return value.strip()
         return None
+
+    def _normalize_progress_line(self, channel: str, line: str) -> str | None:
+        stripped = line.strip()
+        if not stripped:
+            return None
+        if self._is_ignorable_progress_line(channel, stripped):
+            return None
+        if stripped.startswith("{"):
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                candidate = self._extract_text_from_json(payload)
+                if candidate:
+                    return candidate
+                event = payload.get("event")
+                msg = payload.get("msg") or payload.get("message")
+                if isinstance(event, str) and isinstance(msg, str) and msg.strip():
+                    return f"{event}: {msg.strip()}"
+        if channel == "stderr":
+            return f"[stderr] {stripped}"
+        return stripped
+
+    def _is_ignorable_progress_line(self, channel: str, line: str) -> bool:
+        lower = line.lower()
+        if channel != "stderr":
+            return False
+        if lower.startswith("mcp: ") and (" ready" in lower or "failed" in lower):
+            return True
+        if lower.startswith("mcp::transport:") or lower.startswith("mcp::transport::"):
+            return True
+        if "mcp client for `" in lower and "failed to start" in lower:
+            return True
+        if "transport channel closed" in lower and "mcp" in lower:
+            return True
+        if "unexpected content type:" in lower and "mcp" in lower:
+            return True
+        return False
 
     def _truncate(self, text: str, limit: int) -> str:
         if len(text) <= limit:
