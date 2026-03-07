@@ -116,6 +116,8 @@ Internal docs:
 - Product design story: [docs/internal/系统设计理念与开发历程.md](docs/internal/系统设计理念与开发历程.md)
 - 5-minute pitch: [docs/internal/5分钟精简路演版.md](docs/internal/5分钟精简路演版.md)
 - GitHub release checklist: [docs/internal/GitHub开源发布清单.md](docs/internal/GitHub开源发布清单.md)
+- v1.0 release readiness checklist: [docs/internal/v1.0发布准备清单.md](docs/internal/v1.0发布准备清单.md)
+- Manual smoke test checklist: [docs/internal/SMOKE_TEST_CHECKLIST.md](docs/internal/SMOKE_TEST_CHECKLIST.md)
 
 ## Repository Layout
 
