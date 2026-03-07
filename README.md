@@ -118,6 +118,7 @@ Internal docs:
 - GitHub release checklist: [docs/internal/GitHub开源发布清单.md](docs/internal/GitHub开源发布清单.md)
 - v1.0 release readiness checklist: [docs/internal/v1.0发布准备清单.md](docs/internal/v1.0发布准备清单.md)
 - Manual smoke test checklist: [docs/internal/SMOKE_TEST_CHECKLIST.md](docs/internal/SMOKE_TEST_CHECKLIST.md)
+- RC observation template: [docs/internal/RC观察记录模板.md](docs/internal/RC观察记录模板.md)
 
 ## Repository Layout
 

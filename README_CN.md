@@ -117,6 +117,7 @@ bash mvp_scaffold/scripts/install_start.sh tg-user-id
 - GitHub 开源发布清单：[docs/internal/GitHub开源发布清单.md](docs/internal/GitHub开源发布清单.md)
 - v1.0 发布准备清单：[docs/internal/v1.0发布准备清单.md](docs/internal/v1.0发布准备清单.md)
 - 人工 Smoke Test 清单：[docs/internal/SMOKE_TEST_CHECKLIST.md](docs/internal/SMOKE_TEST_CHECKLIST.md)
+- RC 观察记录模板：[docs/internal/RC观察记录模板.md](docs/internal/RC观察记录模板.md)
 
 ## 仓库结构
 
