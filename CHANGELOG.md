@@ -8,6 +8,28 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - No unreleased changes yet.
 
+## [1.0.0-rc1] - 2026-03-07
+
+### Added
+
+- Release-candidate publication track for the first stable major version line.
+- `v1.0` readiness documentation:
+  - `docs/internal/v1.0发布准备清单.md`
+  - `docs/internal/SMOKE_TEST_CHECKLIST.md`
+- Dedicated `v1.0.0-rc1` release notes artifact in `docs/releases/v1.0.0-rc1.md`.
+
+### Changed
+
+- Clarified release process and maintenance expectations for the `v1.x` line.
+- Cleaned `CHANGELOG.md` so `Unreleased` is no longer carrying older release content.
+- Updated runtime path resolution so relative values from `.env` are interpreted consistently against the repository/app layout instead of the current shell working directory.
+- Hardened background startup flow in `install_start.sh` by detaching stdin and disowning the child process before recording PID state.
+
+### Fixed
+
+- Runtime startup failures caused by `.env` relative paths resolving to the wrong SQLite/projects/migrations locations.
+- False service-start success followed by immediate background-process exit in some shell launch contexts.
+
 ## [0.9.0] - 2026-03-07
 
 ### Added
