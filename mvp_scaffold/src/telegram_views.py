@@ -207,6 +207,23 @@ class TelegramViewFactory:
             reply_markup=InlineKeyboardMarkup(rows),
         )
 
+    def memory_pagination_markup(
+        self,
+        *,
+        page: int,
+        total_pages: int,
+    ) -> InlineKeyboardMarkup:
+        rows: list[list[InlineKeyboardButton]] = []
+        page_buttons: list[InlineKeyboardButton] = []
+        if page > 1:
+            page_buttons.append(InlineKeyboardButton(text="上一页", callback_data=f"memory:page:{page - 1}"))
+        if page < total_pages:
+            page_buttons.append(InlineKeyboardButton(text="下一页", callback_data=f"memory:page:{page + 1}"))
+        if page_buttons:
+            rows.append(page_buttons)
+        rows.append([InlineKeyboardButton(text="更多操作", callback_data="panel:more")])
+        return InlineKeyboardMarkup(rows)
+
     def mcp_detail_markup(self, *, name: str, enabled: bool) -> InlineKeyboardMarkup:
         toggle_callback = f"mcp:{'disable' if enabled else 'enable'}:{name}"
         toggle_text = "停用 MCP" if enabled else "启用 MCP"

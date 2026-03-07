@@ -171,7 +171,7 @@ class CommandRouter:
         if command == "/note":
             return self._handle_note(ctx, argument)
         if command == "/memory":
-            return self._handle_memory(ctx)
+            return self._handle_memory(ctx, argument)
         if command == "/cancel":
             return self._handle_cancel(ctx)
         if command == "/diff":
@@ -1315,19 +1315,36 @@ class CommandRouter:
         )
         return CommandResult("已保存项目笔记。")
 
-    def _handle_memory(self, ctx: CommandContext) -> CommandResult:
+    def _handle_memory(self, ctx: CommandContext, argument: str) -> CommandResult:
         active = self._resolve_active_project(ctx)
         if isinstance(active, CommandResult):
             return active
 
-        snapshot = self.tasks.get_memory_snapshot(project_id=active.project_id)
+        page_arg = argument.strip()
+        if not page_arg:
+            page = 1
+        else:
+            try:
+                page = int(page_arg)
+            except ValueError:
+                return CommandResult("用法: /memory [page]，page 必须是正整数。")
+            if page < 1:
+                return CommandResult("用法: /memory [page]，page 必须是正整数。")
+
+        snapshot = self.tasks.get_memory_snapshot(project_id=active.project_id, page=page, page_size=5)
         self.audit.log(
             action=audit_events.MEMORY_VIEWED,
             message="已查看项目记忆",
             user_id=active.user.id,
             project_id=active.project_id,
         )
-        return CommandResult(redact_text(format_memory(snapshot)))
+        return CommandResult(
+            redact_text(format_memory(snapshot)),
+            metadata={
+                "memory_page": snapshot.page,
+                "memory_total_pages": snapshot.total_pages,
+            },
+        )
 
     def _handle_cancel(self, ctx: CommandContext) -> CommandResult:
         active = self._resolve_active_project(ctx)

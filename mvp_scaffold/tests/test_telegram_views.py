@@ -77,3 +77,13 @@ def test_mcp_detail_markup_contains_toggle_and_refresh() -> None:
     rows = markup.inline_keyboard
     assert rows[0][0].callback_data == "mcp:disable:playwright"
     assert rows[1][0].callback_data == "cmd:mcp_detail:playwright"
+
+
+def test_memory_pagination_markup_contains_prev_next_buttons() -> None:
+    factory = TelegramViewFactory()
+
+    markup = factory.memory_pagination_markup(page=2, total_pages=3)
+
+    rows = markup.inline_keyboard
+    assert rows[0][0].callback_data == "memory:page:1"
+    assert rows[0][1].callback_data == "memory:page:3"

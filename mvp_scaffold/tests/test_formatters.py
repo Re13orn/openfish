@@ -105,10 +105,15 @@ def test_format_memory_snapshot() -> None:
         notes=["note-1", "note-2"],
         recent_task_summaries=["task-summary"],
         project_summary="project-summary",
+        page=1,
+        page_size=5,
+        total_notes=2,
+        total_task_summaries=1,
     )
     text = format_memory(snapshot)
     assert "【记忆】" in text
     assert "note-1" in text
+    assert "页码: 1/1" in text
 
 
 def test_format_memory_keeps_full_task_summary() -> None:
@@ -117,12 +122,17 @@ def test_format_memory_keeps_full_task_summary() -> None:
         notes=[],
         recent_task_summaries=[long_summary],
         project_summary="project-summary",
+        page=2,
+        page_size=5,
+        total_notes=0,
+        total_task_summaries=8,
     )
 
     text = format_memory(snapshot)
 
     assert long_summary in text
     assert "..." not in text
+    assert "页码: 2/2" in text
 
 
 def test_format_do_result_status_translation() -> None:

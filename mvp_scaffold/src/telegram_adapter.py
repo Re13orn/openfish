@@ -472,6 +472,10 @@ class TelegramBotService:
             if data == "status:more":
                 await self._send_more_panel(query.message)
                 return
+            if data.startswith("memory:page:"):
+                page = data.rsplit(":", 1)[1]
+                await self._execute_command(query.message, base_ctx, f"/memory {page}")
+                return
             if data == "approval:approve":
                 await self._execute_command(query.message, base_ctx, "/approve")
                 await self._clear_inline_keyboard(query.message)
@@ -1060,6 +1064,12 @@ class TelegramBotService:
             send_spec.edit_window_seconds = float(
                 getattr(self.config, "telegram_schedule_edit_window_seconds", 300.0)
             )
+        elif command == "/memory":
+            send_spec.context = "sending memory panel"
+            send_spec.edit_context = "sending memory panel"
+            send_spec.edit_window_seconds = float(
+                getattr(self.config, "telegram_memory_edit_window_seconds", 300.0)
+            )
         elif edit_context is not None:
             send_spec.edit_context = edit_context
             send_spec.edit_window_seconds = edit_window_seconds
@@ -1630,6 +1640,12 @@ class TelegramBotService:
             project_id = self.router.tasks.get_project_id(active_key)
             schedules = self.router.tasks.list_scheduled_tasks(project_id)
             return self.views.schedule_list_markup(schedules)
+        if command == "/memory":
+            metadata = result.metadata or {}
+            page = metadata.get("memory_page")
+            total_pages = metadata.get("memory_total_pages")
+            if isinstance(page, int) and isinstance(total_pages, int):
+                return self.views.memory_pagination_markup(page=page, total_pages=total_pages)
         if command in {"/mcp", "/mcp-enable", "/mcp-disable"}:
             metadata = result.metadata or {}
             name = metadata.get("mcp_name")

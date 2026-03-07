@@ -136,10 +136,41 @@ class ProjectStateStore:
         self,
         *,
         project_id: int,
-        note_limit: int = 5,
-        task_limit: int = 3,
+        page: int = 1,
+        page_size: int = 5,
     ) -> dict[str, Any]:
         connection = self.db.get_connection()
+        requested_page = max(1, int(page))
+        normalized_page_size = max(1, int(page_size))
+        total_notes = int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM project_memory
+                WHERE project_id = ?
+                  AND memory_type = 'owner_note'
+                """,
+                (project_id,),
+            ).fetchone()[0]
+        )
+        total_task_summaries = int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE project_id = ?
+                  AND latest_summary IS NOT NULL
+                """,
+                (project_id,),
+            ).fetchone()[0]
+        )
+        total_note_pages = max(1, (total_notes + normalized_page_size - 1) // normalized_page_size)
+        total_task_pages = max(
+            1,
+            (total_task_summaries + normalized_page_size - 1) // normalized_page_size,
+        )
+        normalized_page = min(requested_page, max(total_note_pages, total_task_pages))
+        offset = (normalized_page - 1) * normalized_page_size
         note_rows = connection.execute(
             """
             SELECT content
@@ -148,8 +179,9 @@ class ProjectStateStore:
               AND memory_type = 'owner_note'
             ORDER BY id DESC
             LIMIT ?
+            OFFSET ?
             """,
-            (project_id, note_limit),
+            (project_id, normalized_page_size, offset),
         ).fetchall()
         task_rows = connection.execute(
             """
@@ -159,8 +191,9 @@ class ProjectStateStore:
               AND latest_summary IS NOT NULL
             ORDER BY id DESC
             LIMIT ?
+            OFFSET ?
             """,
-            (project_id, task_limit),
+            (project_id, normalized_page_size, offset),
         ).fetchall()
         summary_row = connection.execute(
             """
@@ -179,6 +212,10 @@ class ProjectStateStore:
                 str(row["latest_summary"]) for row in task_rows if row["latest_summary"]
             ],
             "project_summary": str(summary_row["content"]) if summary_row else None,
+            "page": normalized_page,
+            "page_size": normalized_page_size,
+            "total_notes": total_notes,
+            "total_task_summaries": total_task_summaries,
         }
 
     def seed_project_memory(

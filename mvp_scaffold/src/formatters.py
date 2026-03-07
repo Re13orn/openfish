@@ -278,17 +278,20 @@ def format_approval_required(*, task_id: int, reason: str) -> str:
 def format_memory(snapshot: MemorySnapshot) -> str:
     """Format concise project memory response."""
 
-    lines: list[str] = [f"摘要: {snapshot.project_summary or '暂无'}"]
+    lines: list[str] = [
+        f"摘要: {snapshot.project_summary or '暂无'}",
+        f"页码: {snapshot.page}/{snapshot.total_pages}",
+    ]
 
     if snapshot.notes:
         lines.append("笔记:")
-        lines.extend(f"- {item}" for item in snapshot.notes[:5])
+        lines.extend(f"- {item}" for item in snapshot.notes)
     else:
         lines.append("笔记: 暂无")
 
     if snapshot.recent_task_summaries:
         lines.append("任务:")
-        lines.extend(f"- {item}" for item in snapshot.recent_task_summaries[:5])
+        lines.extend(f"- {item}" for item in snapshot.recent_task_summaries)
     else:
         lines.append("任务: 暂无")
     return _card("记忆", lines)

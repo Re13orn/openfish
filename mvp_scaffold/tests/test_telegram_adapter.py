@@ -780,6 +780,43 @@ def test_expired_approval_callback_is_rejected(monkeypatch) -> None:
     assert any("已过期" in text for text in sent_texts)
 
 
+def test_memory_page_callback_executes_memory_command(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    message = MessageStub([object()])
+    query = SimpleNamespace(
+        message=message,
+        data="memory:page:2",
+    )
+
+    async def fake_answer(*args, **kwargs):  # noqa: ANN003
+        return None
+
+    query.answer = fake_answer
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_callback_query(update, SimpleNamespace()))
+
+    assert executed == ["/memory 2"]
+
+
 def test_model_set_callback_executes_model_command(monkeypatch) -> None:
     config = SimpleNamespace(
         telegram_bot_token="dummy",

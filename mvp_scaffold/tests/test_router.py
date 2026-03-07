@@ -9,7 +9,7 @@ from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
 from src.repo_inspector import RepoState
 from src.router import CommandRouter
 from src.skills_service import SkillInstallResult, SkillsListResult
-from src.task_store import PendingApprovalRecord, ScheduledTaskRecord, TaskRecord
+from src.task_store import MemorySnapshot, PendingApprovalRecord, ScheduledTaskRecord, TaskRecord
 
 
 def _ctx(text: str) -> CommandContext:
@@ -380,9 +380,17 @@ class TasksStub:
         _ = content
         _ = title
 
-    def get_memory_snapshot(self, *, project_id: int):  # noqa: ANN001
+    def get_memory_snapshot(self, *, project_id: int, page: int = 1, page_size: int = 5):  # noqa: ANN001
         _ = project_id
-        return SimpleNamespace(notes=[], recent_task_summaries=[], project_summary=None)
+        return MemorySnapshot(
+            notes=[f"note-{page}"],
+            recent_task_summaries=[f"task-{page}"],
+            project_summary="summary",
+            page=page,
+            page_size=page_size,
+            total_notes=12,
+            total_task_summaries=12,
+        )
 
     def cancel_latest_active_task(self, project_id: int):  # noqa: ANN001
         _ = project_id
@@ -1277,3 +1285,26 @@ def test_project_root_show_and_set() -> None:
     assert "new_projects_root" in updated.reply_text
     codes = [event[0] for event in audit.events]
     assert audit_events.PROJECT_ROOT_UPDATED in codes
+
+
+def test_memory_supports_pagination_argument() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    result = router.handle(_ctx("/memory 2"))
+
+    assert "页码: 2/3" in result.reply_text
+    assert result.metadata == {"memory_page": 2, "memory_total_pages": 3}
+
+
+def test_memory_rejects_non_numeric_page() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    result = router.handle(_ctx("/memory next"))
+
+    assert "用法: /memory [page]" in result.reply_text

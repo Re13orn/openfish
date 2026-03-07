@@ -41,6 +41,7 @@ def test_memory_card_snapshot() -> None:
     assert format_memory(snapshot) == (
         "【记忆】\n"
         "摘要: 主应用，包含认证与设置模块\n"
+        "页码: 1/1\n"
         "笔记:\n"
         "- 优先最小改动\n"
         "- 先跑认证相关测试\n"

@@ -60,6 +60,16 @@ class MemorySnapshot:
     notes: list[str]
     recent_task_summaries: list[str]
     project_summary: str | None
+    page: int = 1
+    page_size: int = 5
+    total_notes: int = 0
+    total_task_summaries: int = 0
+
+    @property
+    def total_pages(self) -> int:
+        note_pages = max(1, (self.total_notes + self.page_size - 1) // self.page_size)
+        task_pages = max(1, (self.total_task_summaries + self.page_size - 1) // self.page_size)
+        return max(note_pages, task_pages)
 
 
 class TaskStore:
@@ -557,16 +567,26 @@ class TaskStore:
     def add_project_note(self, *, project_id: int, content: str, title: str | None = None) -> None:
         self.project_state.add_project_note(project_id=project_id, content=content, title=title)
 
-    def get_memory_snapshot(self, *, project_id: int, note_limit: int = 5, task_limit: int = 5) -> MemorySnapshot:
+    def get_memory_snapshot(
+        self,
+        *,
+        project_id: int,
+        page: int = 1,
+        page_size: int = 5,
+    ) -> MemorySnapshot:
         payload = self.project_state.get_memory_snapshot_data(
             project_id=project_id,
-            note_limit=note_limit,
-            task_limit=task_limit,
+            page=page,
+            page_size=page_size,
         )
         return MemorySnapshot(
             notes=list(payload["notes"]),
             recent_task_summaries=list(payload["recent_task_summaries"]),
             project_summary=payload["project_summary"],
+            page=int(payload["page"]),
+            page_size=int(payload["page_size"]),
+            total_notes=int(payload["total_notes"]),
+            total_task_summaries=int(payload["total_task_summaries"]),
         )
 
     # Schedule facade.
