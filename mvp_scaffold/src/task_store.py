@@ -557,7 +557,7 @@ class TaskStore:
     def add_project_note(self, *, project_id: int, content: str, title: str | None = None) -> None:
         self.project_state.add_project_note(project_id=project_id, content=content, title=title)
 
-    def get_memory_snapshot(self, *, project_id: int, note_limit: int = 5, task_limit: int = 3) -> MemorySnapshot:
+    def get_memory_snapshot(self, *, project_id: int, note_limit: int = 5, task_limit: int = 5) -> MemorySnapshot:
         payload = self.project_state.get_memory_snapshot_data(
             project_id=project_id,
             note_limit=note_limit,

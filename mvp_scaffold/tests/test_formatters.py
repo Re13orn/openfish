@@ -111,6 +111,20 @@ def test_format_memory_snapshot() -> None:
     assert "note-1" in text
 
 
+def test_format_memory_keeps_full_task_summary() -> None:
+    long_summary = "A" * 140
+    snapshot = MemorySnapshot(
+        notes=[],
+        recent_task_summaries=[long_summary],
+        project_summary="project-summary",
+    )
+
+    text = format_memory(snapshot)
+
+    assert long_summary in text
+    assert "..." not in text
+
+
 def test_format_do_result_status_translation() -> None:
     text = format_do_result(
         project_key="demo",

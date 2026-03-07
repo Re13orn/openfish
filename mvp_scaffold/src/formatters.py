@@ -282,13 +282,13 @@ def format_memory(snapshot: MemorySnapshot) -> str:
 
     if snapshot.notes:
         lines.append("笔记:")
-        lines.extend(f"- {_clip(item, 80)}" for item in snapshot.notes[:3])
+        lines.extend(f"- {item}" for item in snapshot.notes[:5])
     else:
         lines.append("笔记: 暂无")
 
     if snapshot.recent_task_summaries:
         lines.append("任务:")
-        lines.extend(f"- {_clip(item, 80)}" for item in snapshot.recent_task_summaries[:2])
+        lines.extend(f"- {item}" for item in snapshot.recent_task_summaries[:5])
     else:
         lines.append("任务: 暂无")
     return _card("记忆", lines)
