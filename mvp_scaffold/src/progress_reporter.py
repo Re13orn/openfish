@@ -34,3 +34,36 @@ class ProgressReporter:
             return None
         lines = "\n".join(f"- {item}" for item in phases)
         return f"已收到，处理中：\n{lines}"
+
+    def phases(self, command: str) -> list[str]:
+        return list(self._PHASES.get(command, []))
+
+    def stream_started_text(self, command: str) -> str:
+        return f"过程流\n开始执行 {command}"
+
+    def stream_phase_text(self, command: str, *, phase: str, index: int, total: int) -> str:
+        return f"过程流\n{command} · {index}/{total}\n当前阶段: {phase}"
+
+    def stream_heartbeat_text(self, command: str, *, elapsed_seconds: int) -> str:
+        return f"过程流\n{command} 仍在处理中\n已等待: {elapsed_seconds}s"
+
+    def stream_status_text(
+        self,
+        command: str,
+        *,
+        phase: str,
+        index: int,
+        total: int,
+        elapsed_seconds: int,
+        output_lines: list[str],
+    ) -> str:
+        lines = [
+            "过程流",
+            f"{command} · {index}/{total}",
+            f"当前阶段: {phase}",
+            f"已等待: {elapsed_seconds}s",
+        ]
+        if output_lines:
+            lines.append("Codex 输出:")
+            lines.extend(f"- {item}" for item in output_lines[-5:])
+        return "\n".join(lines)

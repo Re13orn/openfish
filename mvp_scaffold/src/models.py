@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass(slots=True)
@@ -32,6 +32,7 @@ class CommandContext:
     text: str
     telegram_username: str | None = None
     telegram_display_name: str | None = None
+    progress_callback: Callable[[str, str], None] | None = None
 
 
 @dataclass(slots=True)

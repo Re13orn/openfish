@@ -36,12 +36,24 @@ class MessageStub:
 class BotStub:
     def __init__(self) -> None:
         self.edits: list[tuple[str, str, str]] = []
+        self.deletes: list[tuple[str, str]] = []
+        self.posts: list[tuple[str, dict]] = []
 
     async def edit_message_text(self, *, chat_id, message_id, text: str, reply_markup=None, **kwargs):  # noqa: ANN003
         _ = reply_markup
         _ = kwargs
         self.edits.append((str(chat_id), str(message_id), text))
         return SimpleNamespace(message_id=message_id)
+
+    async def delete_message(self, *, chat_id, message_id, **kwargs):  # noqa: ANN003
+        _ = kwargs
+        self.deletes.append((str(chat_id), str(message_id)))
+        return True
+
+    async def _post(self, endpoint: str, data: dict, **kwargs):  # noqa: ANN003
+        _ = kwargs
+        self.posts.append((endpoint, dict(data)))
+        return True
 
 
 class DeliveryTrackerStub:
@@ -150,6 +162,32 @@ def test_send_typing_uses_reply_chat_action() -> None:
     assert message.chat_actions == ["typing"]
 
 
+def test_send_message_draft_uses_bot_post() -> None:
+    sink = _sink()
+    message = MessageStub([])
+
+    ok = asyncio.run(
+        sink.send_message_draft(
+            message,
+            draft_id=123,
+            text="processing",
+            context="stream progress",
+        )
+    )
+
+    assert ok is True
+    assert message.bot.posts == [
+        (
+            "sendMessageDraft",
+            {
+                "chat_id": 123,
+                "draft_id": 123,
+                "text": "processing",
+            },
+        )
+    ]
+
+
 def test_send_skips_recent_duplicate_delivery() -> None:
     tracker = DeliveryTrackerStub()
     sink = _sink(tracker=tracker)
@@ -203,3 +241,21 @@ def test_send_edits_recent_message_when_edit_context_matches() -> None:
     assert ok is True
     assert message.sent == []
     assert message.bot.edits == [("123", "66", "new status")]
+
+
+def test_delete_recent_message_by_context() -> None:
+    tracker = DeliveryTrackerStub()
+    tracker.by_context[("123", "stream progress 1")] = "77"
+    sink = _sink(tracker=tracker)
+    message = MessageStub([])
+
+    ok = asyncio.run(
+        sink.delete_recent_message_by_context(
+            message,
+            context="stream progress 1",
+            max_age_seconds=300,
+        )
+    )
+
+    assert ok is True
+    assert message.bot.deletes == [("123", "77")]

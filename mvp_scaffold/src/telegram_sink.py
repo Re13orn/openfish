@@ -64,6 +64,79 @@ class TelegramMessageSink:
             return False
         return False
 
+    async def send_message_draft(
+        self,
+        message,  # noqa: ANN001
+        *,
+        draft_id: int,
+        text: str,
+        context: str,
+    ) -> bool:
+        chat_id = self._extract_chat_id(message)
+        if chat_id is None:
+            return False
+        get_bot = getattr(message, "get_bot", None)
+        if not callable(get_bot):
+            return False
+        message_thread_id = getattr(message, "message_thread_id", None)
+        payload = {
+            "chat_id": int(chat_id),
+            "draft_id": int(draft_id),
+            "text": truncate_for_telegram(
+                redact_text(text),
+                limit=self.config.max_telegram_message_length,
+            ),
+        }
+        if message_thread_id is not None:
+            payload["message_thread_id"] = message_thread_id
+        try:
+            bot = get_bot()
+            await bot._post("sendMessageDraft", payload)  # type: ignore[attr-defined]
+            return True
+        except BadRequest as exc:
+            logger.debug("Telegram draft stream unavailable while %s: %s", context, exc)
+            return False
+        except (TimedOut, NetworkError, TelegramError):
+            logger.debug("Telegram draft stream failed while %s.", context, exc_info=True)
+            return False
+        except Exception:
+            logger.debug("Unexpected Telegram draft stream failure while %s.", context, exc_info=True)
+            return False
+
+    async def delete_recent_message_by_context(
+        self,
+        message,  # noqa: ANN001
+        *,
+        context: str,
+        max_age_seconds: float,
+    ) -> bool:
+        tracker = getattr(self, "_delivery_tracker", None)
+        if tracker is None:
+            return False
+        chat_id = self._extract_chat_id(message)
+        if chat_id is None:
+            return False
+        target_message_id = tracker.get_recent_outbound_message_id_by_context(
+            chat_id=chat_id,
+            context=context,
+            max_age_seconds=max_age_seconds,
+        )
+        if target_message_id is None:
+            return False
+        get_bot = getattr(message, "get_bot", None)
+        if not callable(get_bot):
+            return False
+        try:
+            bot = get_bot()
+            await bot.delete_message(chat_id=chat_id, message_id=target_message_id)
+            return True
+        except BadRequest as exc:
+            logger.debug("Telegram delete skipped while %s: %s", context, exc)
+            return False
+        except (TimedOut, NetworkError, TelegramError):
+            logger.debug("Telegram delete failed while %s.", context, exc_info=True)
+            return False
+
     async def send(self, message, spec: TelegramSendSpec) -> bool:  # noqa: ANN001
         payload = truncate_for_telegram(
             redact_text(spec.text),
@@ -171,6 +244,11 @@ class TelegramMessageSink:
     def build_dedup_key(self, *, text: str, context: str, reply_markup: Any | None) -> str:
         material = f"{context}\n{text}\n{self._serialize_reply_markup(reply_markup)}".encode("utf-8", "ignore")
         return hashlib.sha1(material).hexdigest()
+
+    def build_draft_id(self, *, context: str) -> int:
+        digest = hashlib.sha1(context.encode("utf-8", "ignore")).hexdigest()
+        # Telegram requires a non-zero integer draft_id.
+        return (int(digest[:8], 16) % 2_147_483_646) + 1
 
     def _classify_api_error(self, exc: TelegramError) -> str:
         if isinstance(exc, (BadRequest, Forbidden, InvalidToken, Conflict)):

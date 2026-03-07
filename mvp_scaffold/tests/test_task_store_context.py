@@ -241,6 +241,9 @@ def test_chat_ui_mode_round_trip(tmp_path: Path) -> None:
     store.set_chat_ui_mode(chat_id="chat-default", user_id=user.id, mode="verbose")
     assert store.get_chat_ui_mode(chat_id="chat-default") == "verbose"
 
+    store.set_chat_ui_mode(chat_id="chat-default", user_id=user.id, mode="stream")
+    assert store.get_chat_ui_mode(chat_id="chat-default") == "stream"
+
 
 def test_recover_interrupted_tasks_marks_created_and_running_failed(tmp_path: Path) -> None:
     db, store = _setup_store(tmp_path)
