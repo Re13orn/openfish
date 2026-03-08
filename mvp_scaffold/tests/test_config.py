@@ -40,3 +40,22 @@ def test_load_config_resolves_repo_relative_runtime_paths(monkeypatch) -> None:
     assert config.sqlite_path == repo_root / "mvp_scaffold/data/app.db"
     assert config.migrations_dir == repo_root / "mvp_scaffold/migrations"
     assert config.process_lock_path == repo_root / "mvp_scaffold/data/openfish.lock"
+
+
+def test_load_config_defaults_ui_mode_to_stream(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
+
+    config = load_config()
+
+    assert config.default_ui_mode == "stream"
+
+
+def test_load_config_invalid_ui_mode_falls_back_to_stream(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
+    monkeypatch.setenv("DEFAULT_UI_MODE", "compact")
+
+    config = load_config()
+
+    assert config.default_ui_mode == "stream"

@@ -1030,6 +1030,24 @@ def test_ui_command_sets_stream_mode() -> None:
     assert tasks.ui_mode == "stream"
 
 
+def test_help_command_works_with_default_stream_ui_mode() -> None:
+    tasks = TasksStub()
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/help"))
+
+    assert "/ui [show|summary|verbose|stream]" in result.reply_text
+
+
+def test_ui_show_uses_config_default_mode_when_chat_not_set() -> None:
+    tasks = TasksStub()
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/ui"))
+
+    assert result.reply_text == "当前界面模式: stream"
+
+
 def test_model_command_sets_chat_model() -> None:
     tasks = TasksStub()
     router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))

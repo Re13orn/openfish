@@ -64,6 +64,7 @@ class AppConfig:
     telegram_reconnect_initial_delay_seconds: float
     telegram_reconnect_max_delay_seconds: float
     telegram_reconnect_jitter_seconds: float
+    default_ui_mode: str
     enable_scheduler: bool
     schedule_poll_interval_seconds: int
     schedule_missed_run_policy: str
@@ -93,6 +94,9 @@ def load_config() -> AppConfig:
     schedule_missed_run_policy = os.getenv("SCHEDULE_MISSED_RUN_POLICY", "skip").strip().lower()
     if schedule_missed_run_policy not in {"skip", "catchup_once"}:
         schedule_missed_run_policy = "skip"
+    default_ui_mode = os.getenv("DEFAULT_UI_MODE", "stream").strip().lower()
+    if default_ui_mode not in {"summary", "verbose", "stream"}:
+        default_ui_mode = "stream"
 
     sqlite_path = _resolve_runtime_path(
         os.getenv("SQLITE_PATH", "./data/app.db"),
@@ -161,6 +165,7 @@ def load_config() -> AppConfig:
         telegram_reconnect_jitter_seconds=float(
             os.getenv("TELEGRAM_RECONNECT_JITTER_SECONDS", "1")
         ),
+        default_ui_mode=default_ui_mode,
         enable_scheduler=_parse_bool(os.getenv("ENABLE_SCHEDULER"), default=True),
         schedule_poll_interval_seconds=int(os.getenv("SCHEDULE_POLL_INTERVAL_SECONDS", "20")),
         schedule_missed_run_policy=schedule_missed_run_policy,

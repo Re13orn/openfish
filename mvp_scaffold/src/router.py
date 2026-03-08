@@ -271,7 +271,7 @@ class CommandRouter:
         )
 
     def _chat_ui_mode(self, *, chat_id: str) -> str:
-        return self.tasks.get_chat_ui_mode(chat_id=chat_id) or "summary"
+        return self.tasks.get_chat_ui_mode(chat_id=chat_id) or getattr(self.config, "default_ui_mode", "stream")
 
     def _handle_help(self, ctx: CommandContext, argument: str) -> CommandResult:
         mode_arg = argument.strip().lower()
