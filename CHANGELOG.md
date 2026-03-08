@@ -8,6 +8,48 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - No unreleased changes yet.
 
+## [1.0.0] - 2026-03-08
+
+### Added
+
+- Unified Codex session browser that combines:
+  - OpenFish-tracked task sessions
+  - local native Codex sessions discovered from `~/.codex`
+- Session detail and import flow:
+  - `/sessions [page]`
+  - `/session <id>`
+  - `/session-import <id> [project_key] [name]`
+- Telegram service controls:
+  - `/restart`
+  - `/logs`
+  - `/logs-clear`
+- Self-update controls:
+  - `/version`
+  - `/update-check`
+  - `/update`
+- Telegram “更多” panel entries for:
+  - version
+  - update check
+  - update
+  - restart
+  - logs
+  - log clearing
+
+### Changed
+
+- Default Telegram UI mode is now `stream` for new chats unless overridden by `DEFAULT_UI_MODE`.
+- `/ask` and `/do` in the same active project now automatically continue the most recent Codex session instead of silently starting a fresh context every time.
+- Telegram runtime now uses separate connection-pool settings for:
+  - update polling
+  - outbound message delivery
+- Native Codex sessions can now be adopted into OpenFish by creating or reusing a project and binding the session for future continuation.
+
+### Fixed
+
+- Telegram stalls where the process stayed alive but polling stopped responding because the shared HTTP pool was exhausted.
+- Conversation continuity gaps where a follow-up `/ask`, `/do`, or plain-text message lost the previous Codex context.
+- Missing operational controls in Telegram that previously required local shell access for restart/log/update actions.
+
 ## [1.0.0-rc1] - 2026-03-07
 
 ### Added
