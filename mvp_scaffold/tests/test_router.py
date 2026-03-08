@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from src import audit_events
 from src.approval import ApprovalService
+from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.codex_runner import CodexRunResult
 from src.mcp_service import McpDetailResult, McpListResult, McpServerDetail, McpServerSummary
 from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
@@ -64,7 +65,8 @@ class ProjectsStub:
     def get_any(self, key: str) -> ProjectConfig | None:
         return self.projects.get(key)
 
-    def list_keys(self) -> list[str]:
+    def list_keys(self, include_inactive: bool = False) -> list[str]:
+        _ = include_inactive
         return sorted(self.projects.keys())
 
     def is_path_allowed(self, project: ProjectConfig, candidate_path: Path) -> bool:
@@ -207,6 +209,7 @@ class TasksStub:
         self.scheduled_tasks: list[ScheduledTaskRecord] = []
         self.next_schedule_id = 1
         self.cleared_project_session_ids: list[int] = []
+        self.bound_project_sessions: list[tuple[int, str, str | None]] = []
         self.resolved_approvals: list[tuple[int, str, str | None]] = []
         self.fail_resolve_for: set[int] = set()
 
@@ -318,6 +321,15 @@ class TasksStub:
 
     def clear_project_session_state(self, *, project_id: int) -> None:
         self.cleared_project_session_ids.append(project_id)
+
+    def bind_project_session(
+        self,
+        *,
+        project_id: int,
+        codex_session_id: str,
+        next_step: str | None = None,
+    ) -> None:
+        self.bound_project_sessions.append((project_id, codex_session_id, next_step))
 
     def get_project_last_codex_session_id(self, *, project_id: int) -> str | None:
         _ = project_id
@@ -673,6 +685,50 @@ class UpdateStub:
         )
 
 
+class SessionsStub:
+    def __init__(self) -> None:
+        self.list_result = CodexSessionListResult(
+            sessions=[
+                CodexSessionRecord(
+                    session_id="sess-native-1",
+                    source="native",
+                    title="native session",
+                    updated_at="2026-03-08T10:00:00Z",
+                    cwd="/tmp",
+                    project_key=None,
+                    project_name=None,
+                    project_path=None,
+                    task_id=None,
+                    task_status=None,
+                    task_summary=None,
+                    command_type=None,
+                    session_file_path="/Users/apple/.codex/sessions/native.jsonl",
+                    importable=True,
+                )
+            ],
+            page=1,
+            page_size=10,
+            total_count=1,
+            total_pages=1,
+            openfish_count=0,
+            native_count=1,
+        )
+        self.detail_record = self.list_result.sessions[0]
+        self.requested_pages: list[int] = []
+        self.requested_session_ids: list[str] = []
+
+    def list_sessions(self, *, page: int = 1, page_size: int = 10) -> CodexSessionListResult:
+        _ = page_size
+        self.requested_pages.append(page)
+        return self.list_result
+
+    def get_session(self, session_id: str) -> CodexSessionRecord | None:
+        self.requested_session_ids.append(session_id)
+        if session_id == self.detail_record.session_id:
+            return self.detail_record
+        return None
+
+
 def _build_router(
     tasks: TasksStub,
     audit: AuditStub,
@@ -680,6 +736,7 @@ def _build_router(
     skills: SkillsStub | None = None,
     mcp: McpStub | None = None,
     updates: UpdateStub | None = None,
+    sessions: SessionsStub | None = None,
 ) -> CommandRouter:
     config = SimpleNamespace(
         allowed_telegram_user_ids={"123"},
@@ -700,6 +757,7 @@ def _build_router(
         skills_service=skills,
         mcp_service=mcp,
         update_service=updates,
+        codex_sessions=sessions,
     )
 
 
@@ -1496,3 +1554,70 @@ def test_memory_rejects_non_numeric_page() -> None:
     result = router.handle(_ctx("/memory next"))
 
     assert "用法: /memory [page]" in result.reply_text
+
+
+def test_sessions_command_returns_unified_list() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    sessions = SessionsStub()
+    router = _build_router(tasks, audit, CodexStub(_codex_result("unused")), sessions=sessions)
+
+    result = router.handle(_ctx("/sessions 2"))
+
+    assert "【会话】" in result.reply_text
+    assert result.metadata == {
+        "sessions_page": 1,
+        "sessions_total_pages": 1,
+        "sessions_items": sessions.list_result.sessions,
+    }
+    assert sessions.requested_pages == [2]
+    assert audit.events[-1][0] == audit_events.SESSIONS_VIEWED
+
+
+def test_session_command_returns_detail() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    sessions = SessionsStub()
+    router = _build_router(tasks, audit, CodexStub(_codex_result("unused")), sessions=sessions)
+
+    result = router.handle(_ctx("/session sess-native-1"))
+
+    assert "【会话详情】" in result.reply_text
+    assert result.metadata == {"session_record": sessions.detail_record}
+    assert sessions.requested_session_ids == ["sess-native-1"]
+    assert audit.events[-1][0] == audit_events.SESSION_VIEWED
+
+
+def test_session_import_creates_project_and_binds_session(tmp_path) -> None:
+    tasks = TasksStub()
+    tasks.active_project_key = None
+    audit = AuditStub()
+    sessions = SessionsStub()
+    native_dir = tmp_path / "native-openfish-session"
+    native_dir.mkdir()
+    sessions.detail_record = CodexSessionRecord(
+        session_id="sess-native-1",
+        source="native",
+        title="native session",
+        updated_at="2026-03-08T10:00:00Z",
+        cwd=str(native_dir),
+        project_key=None,
+        project_name=None,
+        project_path=None,
+        task_id=None,
+        task_status=None,
+        task_summary=None,
+        command_type=None,
+        session_file_path="/Users/apple/.codex/sessions/native.jsonl",
+        importable=True,
+    )
+    router = _build_router(tasks, audit, CodexStub(_codex_result("unused")), sessions=sessions)
+
+    result = router.handle(_ctx("/session-import sess-native-1 native-import 本机会话"))
+
+    assert "已导入本机会话并切换项目" in result.reply_text
+    assert tasks.active_project_key == "native-import"
+    assert tasks.bound_project_sessions == [
+        (101, "sess-native-1", "后续 /ask 或 /do 将继续该会话。")
+    ]
+    assert audit.events[-1][0] == audit_events.SESSION_IMPORTED

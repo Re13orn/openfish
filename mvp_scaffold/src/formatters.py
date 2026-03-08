@@ -1,5 +1,6 @@
 """Formatting helpers for concise Telegram-friendly replies."""
 
+from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.task_store import MemorySnapshot, StatusSnapshot, TaskRecord
 
 
@@ -56,6 +57,7 @@ def format_help(mode: str = "verbose") -> str:
             "/resume [task_id] [instruction]\n"
             "/diff\n"
             "/model\n"
+            "/sessions\n"
             "/version\n"
             "/update-check\n"
             "/restart\n"
@@ -74,6 +76,9 @@ def format_help(mode: str = "verbose") -> str:
         "/resume [task_id] [instruction]\n"
         "/diff\n"
         "/model [show|set <name>|reset]\n"
+        "/sessions [page]\n"
+        "/session <id>\n"
+        "/session-import <id> [project_key] [name]\n"
         "\n"
         "项目与模板：\n"
         "/project-root [abs_path]\n"
@@ -271,6 +276,61 @@ def format_projects(
     if others:
         lines.append("其他项目:")
         lines.extend(f"- {key}" for key in others)
+    return "\n".join(lines)
+
+
+def _source_label(source: str) -> str:
+    return "OpenFish" if source == "openfish" else "本机"
+
+
+def format_sessions_list(result: CodexSessionListResult) -> str:
+    lines = [
+        "【会话】",
+        f"页码: {result.page}/{result.total_pages}",
+        f"总数: {result.total_count} (OpenFish {result.openfish_count} / 本机 {result.native_count})",
+    ]
+    if not result.sessions:
+        lines.append("暂无可用会话。")
+        return "\n".join(lines)
+    lines.append("最近会话:")
+    for item in result.sessions:
+        title = item.title or "未命名会话"
+        location = item.project_key or (item.cwd.rsplit("/", 1)[-1] if item.cwd else "未知路径")
+        status = item.task_status or "native"
+        lines.append(f"- [{_source_label(item.source)}] {item.session_id[:8]} · {title}")
+        lines.append(f"  位置: {location} · 状态: {status}")
+    lines.append("可用 /session <id> 查看详情。")
+    return "\n".join(lines)
+
+
+def format_session_detail(record: CodexSessionRecord) -> str:
+    lines = [
+        "【会话详情】",
+        f"来源: {_source_label(record.source)}",
+        f"会话: {record.session_id}",
+    ]
+    if record.title:
+        lines.append(f"标题: {record.title}")
+    if record.updated_at:
+        lines.append(f"更新时间: {record.updated_at}")
+    if record.cwd:
+        lines.append(f"CWD: {record.cwd}")
+    if record.project_key:
+        lines.append(f"项目: {record.project_key}")
+    if record.project_path:
+        lines.append(f"项目路径: {record.project_path}")
+    if record.task_id is not None:
+        lines.append(f"任务: #{record.task_id}")
+    if record.command_type:
+        lines.append(f"类型: /{record.command_type}")
+    if record.task_status:
+        lines.append(f"状态: {record.task_status}")
+    if record.task_summary:
+        lines.append(f"摘要: {record.task_summary}")
+    if record.session_file_path:
+        lines.append(f"文件: {record.session_file_path}")
+    if record.importable:
+        lines.append("可导入到 OpenFish 项目，并继续该会话。")
     return "\n".join(lines)
 
 

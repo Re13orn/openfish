@@ -74,6 +74,26 @@ class ProjectStateStore:
         )
         connection.commit()
 
+    def bind_project_session(
+        self,
+        *,
+        project_id: int,
+        codex_session_id: str,
+        next_step: str | None = None,
+    ) -> None:
+        connection = self.db.get_connection()
+        connection.execute(
+            """
+            UPDATE project_state
+            SET last_codex_session_id = ?,
+                next_step = COALESCE(?, next_step),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE project_id = ?
+            """,
+            (codex_session_id, next_step, project_id),
+        )
+        connection.commit()
+
     def get_project_status_row(self, *, active_project_key: str) -> sqlite3.Row | None:
         return self.db.get_connection().execute(
             """

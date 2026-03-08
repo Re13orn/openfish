@@ -1,9 +1,12 @@
+from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.formatters import (
     format_do_result,
     format_help,
     format_last_task,
     format_memory,
     format_projects,
+    format_session_detail,
+    format_sessions_list,
     format_status,
     truncate_for_telegram,
 )
@@ -206,3 +209,40 @@ def test_format_projects_summary_mode() -> None:
     assert "最近使用: ops" in text
     assert "可选项目:" in text
     assert "其他项目:" not in text
+
+
+def test_format_sessions_list_and_detail() -> None:
+    record = CodexSessionRecord(
+        session_id="sess-native-1",
+        source="native",
+        title="native session",
+        updated_at="2026-03-08T10:00:00Z",
+        cwd="/tmp/demo",
+        project_key=None,
+        project_name=None,
+        project_path=None,
+        task_id=None,
+        task_status=None,
+        task_summary=None,
+        command_type=None,
+        session_file_path="/Users/apple/.codex/sessions/native.jsonl",
+        importable=True,
+    )
+    list_result = CodexSessionListResult(
+        sessions=[record],
+        page=1,
+        page_size=10,
+        total_count=1,
+        total_pages=1,
+        openfish_count=0,
+        native_count=1,
+    )
+
+    list_text = format_sessions_list(list_result)
+    detail_text = format_session_detail(record)
+
+    assert "【会话】" in list_text
+    assert "[本机] sess-nat" in list_text
+    assert "【会话详情】" in detail_text
+    assert "来源: 本机" in detail_text
+    assert "可导入到 OpenFish 项目" in detail_text

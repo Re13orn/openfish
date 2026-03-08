@@ -2,6 +2,7 @@ import pytest
 
 pytest.importorskip("telegram")
 
+from src.codex_session_service import CodexSessionRecord
 from src.task_store import StatusSnapshot
 from src.telegram_views import TelegramViewFactory
 
@@ -87,3 +88,31 @@ def test_memory_pagination_markup_contains_prev_next_buttons() -> None:
     rows = markup.inline_keyboard
     assert rows[0][0].callback_data == "memory:page:1"
     assert rows[0][1].callback_data == "memory:page:3"
+
+
+def test_sessions_list_and_detail_markup() -> None:
+    factory = TelegramViewFactory()
+    record = CodexSessionRecord(
+        session_id="sess-native-1",
+        source="native",
+        title="native session",
+        updated_at="2026-03-08T10:00:00Z",
+        cwd="/tmp/demo",
+        project_key=None,
+        project_name=None,
+        project_path=None,
+        task_id=None,
+        task_status=None,
+        task_summary=None,
+        command_type=None,
+        session_file_path="/Users/apple/.codex/sessions/native.jsonl",
+        importable=True,
+    )
+
+    list_markup = factory.sessions_list_markup(sessions=[record], page=2, total_pages=3)
+    detail_markup = factory.session_detail_markup(record=record)
+
+    assert list_markup.inline_keyboard[0][0].callback_data == "cmd:session_detail:sess-native-1"
+    assert list_markup.inline_keyboard[1][0].callback_data == "sessions:page:1"
+    assert list_markup.inline_keyboard[1][1].callback_data == "sessions:page:3"
+    assert detail_markup.inline_keyboard[0][0].callback_data == "session:import:sess-native-1"

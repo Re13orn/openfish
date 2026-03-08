@@ -10,6 +10,7 @@ from uuid import uuid4
 from src.approval import ApprovalService
 from src import audit_events
 from src.auth import is_allowed_user
+from src.codex_session_service import CodexSessionService
 from src.formatters import (
     format_approval_required,
     format_diff_card,
@@ -21,6 +22,8 @@ from src.formatters import (
     format_mcp_list,
     format_project_busy,
     format_projects,
+    format_session_detail,
+    format_sessions_list,
     format_skill_install_result,
     format_skills_list,
     format_schedule_added,
@@ -85,6 +88,7 @@ class CommandRouter:
         skills_service: SkillsService | None = None,
         mcp_service: McpService | None = None,
         update_service: UpdateService | None = None,
+        codex_sessions: CodexSessionService | None = None,
     ) -> None:
         self.config = config
         self.projects = projects
@@ -96,6 +100,7 @@ class CommandRouter:
         self.skills_service = skills_service
         self.mcp_service = mcp_service
         self.update_service = update_service
+        self.codex_sessions = codex_sessions
         self._project_locks: dict[int, LockType] = {}
         self._project_locks_guard = Lock()
 
@@ -139,6 +144,12 @@ class CommandRouter:
             return self._handle_mcp_toggle(ctx, argument, enabled=True)
         if command == "/mcp-disable":
             return self._handle_mcp_toggle(ctx, argument, enabled=False)
+        if command == "/sessions":
+            return self._handle_sessions(ctx, argument)
+        if command == "/session":
+            return self._handle_session(ctx, argument)
+        if command == "/session-import":
+            return self._handle_session_import(ctx, argument)
         if command == "/model":
             return self._handle_model(ctx, argument)
         if command == "/version":
@@ -987,6 +998,143 @@ class CommandRouter:
         return CommandResult(
             f"{result.summary}{suffix}",
             metadata={"mcp_name": result.name, "mcp_enabled": result.enabled},
+        )
+
+    def _handle_sessions(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.codex_sessions is None:
+            return CommandResult("当前未启用会话查询。")
+        page_arg = argument.strip()
+        if not page_arg:
+            page = 1
+        else:
+            try:
+                page = int(page_arg)
+            except ValueError:
+                return CommandResult("用法: /sessions [page]，page 必须是正整数。")
+            if page < 1:
+                return CommandResult("用法: /sessions [page]，page 必须是正整数。")
+        result = self.codex_sessions.list_sessions(page=page, page_size=10)
+        self.audit.log(
+            action=audit_events.SESSIONS_VIEWED,
+            message="查看 Codex 会话列表",
+            user_id=user.id,
+            details={"page": result.page, "total_count": result.total_count},
+        )
+        return CommandResult(
+            format_sessions_list(result),
+            metadata={
+                "sessions_page": result.page,
+                "sessions_total_pages": result.total_pages,
+                "sessions_items": result.sessions,
+            },
+        )
+
+    def _handle_session(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.codex_sessions is None:
+            return CommandResult("当前未启用会话查询。")
+        session_id = argument.strip()
+        if not session_id:
+            return CommandResult("用法: /session <id>")
+        record = self.codex_sessions.get_session(session_id)
+        if record is None:
+            return CommandResult(f"未找到会话: {session_id}")
+        self.audit.log(
+            action=audit_events.SESSION_VIEWED,
+            message=f"查看会话 {record.session_id}",
+            user_id=user.id,
+            details={"session_id": record.session_id, "source": record.source},
+        )
+        return CommandResult(format_session_detail(record), metadata={"session_record": record})
+
+    def _handle_session_import(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.codex_sessions is None:
+            return CommandResult("当前未启用会话导入。")
+        session_id, project_key, project_name = self._parse_session_import_argument(argument)
+        if not session_id:
+            return CommandResult("用法: /session-import <id> [project_key] [name]")
+        record = self.codex_sessions.get_session(session_id)
+        if record is None:
+            return CommandResult(f"未找到会话: {session_id}")
+
+        if record.source == "openfish" and record.project_key:
+            project = self.projects.get_any(record.project_key)
+            if project is None:
+                return CommandResult(f"会话关联项目不存在: {record.project_key}")
+            if not project.is_active:
+                self.projects.set_project_active(key=record.project_key, is_active=True)
+                self.tasks.sync_projects_from_registry(self.projects)
+            self.tasks.set_active_project(user.id, record.project_key, ctx.telegram_chat_id)
+            project_id = self.tasks.get_project_id(record.project_key)
+            self.tasks.bind_project_session(
+                project_id=project_id,
+                codex_session_id=record.session_id,
+                next_step="后续 /ask 或 /do 将继续该会话。",
+            )
+            self.audit.log(
+                action=audit_events.SESSION_IMPORTED,
+                message=f"绑定 OpenFish 会话 {record.session_id}",
+                user_id=user.id,
+                project_id=project_id,
+                details={"session_id": record.session_id, "project_key": record.project_key, "source": record.source},
+            )
+            return CommandResult(
+                f"已切换到项目: {record.project_key}\n"
+                f"已绑定会话: {record.session_id}\n"
+                "后续 /ask 或 /do 将继续这个会话。"
+            )
+
+        session_cwd = Path(record.cwd or "").expanduser()
+        if not record.cwd or not session_cwd.exists() or not session_cwd.is_dir():
+            return CommandResult("该本机会话没有可用的工作目录，无法导入为项目。")
+
+        existing_key = self._find_project_key_by_path(session_cwd.resolve())
+        chosen_key = project_key or existing_key or self._derive_project_key(session_cwd)
+        chosen_name = project_name or session_cwd.name or chosen_key
+
+        if existing_key is not None:
+            chosen_key = existing_key
+            project = self.projects.get_any(chosen_key)
+            if project is not None and not project.is_active:
+                self.projects.set_project_active(key=chosen_key, is_active=True)
+                self.tasks.sync_projects_from_registry(self.projects)
+        else:
+            existing = self.projects.get_any(chosen_key)
+            if existing is not None:
+                return CommandResult(f"项目 key 已存在且路径不同: {chosen_key}")
+            self.projects.add_project(
+                key=chosen_key,
+                path=session_cwd.resolve(),
+                name=chosen_name,
+                create_if_missing=False,
+            )
+            self.tasks.sync_projects_from_registry(self.projects)
+
+        self.tasks.set_active_project(user.id, chosen_key, ctx.telegram_chat_id)
+        project_id = self.tasks.get_project_id(chosen_key)
+        self.tasks.bind_project_session(
+            project_id=project_id,
+            codex_session_id=record.session_id,
+            next_step="后续 /ask 或 /do 将继续该会话。",
+        )
+        project = self.projects.get_any(chosen_key)
+        if project is not None:
+            self._refresh_repo_state(project_id=project_id, project=project)
+        self.audit.log(
+            action=audit_events.SESSION_IMPORTED,
+            message=f"导入本机会话 {record.session_id}",
+            user_id=user.id,
+            project_id=project_id,
+            details={"session_id": record.session_id, "project_key": chosen_key, "source": record.source},
+        )
+        return CommandResult(
+            f"已导入本机会话并切换项目。\n"
+            f"项目: {chosen_key}\n"
+            f"路径: {session_cwd.resolve()}\n"
+            f"会话: {record.session_id}\n"
+            "后续 /ask 或 /do 将继续这个会话。"
         )
 
     def _handle_schedule_add(self, ctx: CommandContext, argument: str) -> CommandResult:
@@ -1943,3 +2091,28 @@ class CommandRouter:
             if candidate.is_absolute():
                 return candidate.resolve()
         return None
+
+    def _find_project_key_by_path(self, candidate_path: Path) -> str | None:
+        resolved = candidate_path.resolve()
+        for key in self.projects.list_keys(include_inactive=True):
+            project = self.projects.get_any(key)
+            if project is None:
+                continue
+            if project.path.resolve() == resolved:
+                return key
+        return None
+
+    def _derive_project_key(self, path: Path) -> str:
+        raw = path.name.lower()
+        normalized = re.sub(r"[^a-z0-9._-]+", "-", raw).strip("-._")
+        return normalized or "imported-session"
+
+    def _parse_session_import_argument(self, argument: str) -> tuple[str | None, str | None, str | None]:
+        if not argument.strip():
+            return None, None, None
+        session_id, _, tail = argument.strip().partition(" ")
+        tail = tail.strip()
+        if not tail:
+            return session_id, None, None
+        project_key, _, name = tail.partition(" ")
+        return session_id, (project_key.strip() or None), (name.strip() or None)

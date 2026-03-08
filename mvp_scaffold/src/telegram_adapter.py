@@ -74,6 +74,7 @@ class TelegramBotService:
         "templates": "/templates",
         "skills": "/skills",
         "mcp": "/mcp",
+        "sessions": "/sessions",
         "model": "/model",
         "version": "/version",
         "update_check": "/update-check",
@@ -503,6 +504,10 @@ class TelegramBotService:
                 page = data.rsplit(":", 1)[1]
                 await self._execute_command(query.message, base_ctx, f"/memory {page}")
                 return
+            if data.startswith("sessions:page:"):
+                page = data.rsplit(":", 1)[1]
+                await self._execute_command(query.message, base_ctx, f"/sessions {page}")
+                return
             if data == "approval:approve":
                 await self._execute_command(query.message, base_ctx, "/approve")
                 await self._clear_inline_keyboard(query.message)
@@ -571,10 +576,18 @@ class TelegramBotService:
                     name = token.split(":", 1)[1]
                     await self._execute_command(query.message, base_ctx, f"/mcp {name}")
                     return
+                if token.startswith("session_detail:"):
+                    session_id = token.split(":", 1)[1]
+                    await self._execute_command(query.message, base_ctx, f"/session {session_id}")
+                    return
                 command = self._resolve_callback_command(token)
                 if command is not None:
                     await self._execute_command(query.message, base_ctx, command)
                     return
+            if data.startswith("session:import:"):
+                session_id = data.split(":", 2)[2]
+                await self._execute_command(query.message, base_ctx, f"/session-import {session_id}")
+                return
             if data.startswith("mcp:enable:"):
                 name = data.split(":", 2)[2]
                 await self._execute_command(query.message, base_ctx, f"/mcp-enable {name}")
@@ -1096,6 +1109,18 @@ class TelegramBotService:
             send_spec.edit_context = "sending memory panel"
             send_spec.edit_window_seconds = float(
                 getattr(self.config, "telegram_memory_edit_window_seconds", 300.0)
+            )
+        elif command == "/sessions":
+            send_spec.context = "sending sessions panel"
+            send_spec.edit_context = "sending sessions panel"
+            send_spec.edit_window_seconds = float(
+                getattr(self.config, "telegram_sessions_edit_window_seconds", 300.0)
+            )
+        elif command == "/session":
+            send_spec.context = "sending session detail"
+            send_spec.edit_context = "sending session detail"
+            send_spec.edit_window_seconds = float(
+                getattr(self.config, "telegram_session_detail_edit_window_seconds", 300.0)
             )
         elif edit_context is not None:
             send_spec.edit_context = edit_context
@@ -1673,6 +1698,21 @@ class TelegramBotService:
             total_pages = metadata.get("memory_total_pages")
             if isinstance(page, int) and isinstance(total_pages, int):
                 return self.views.memory_pagination_markup(page=page, total_pages=total_pages)
+        if command == "/sessions":
+            metadata = result.metadata or {}
+            sessions = metadata.get("sessions_items")
+            page = metadata.get("sessions_page")
+            total_pages = metadata.get("sessions_total_pages")
+            if isinstance(sessions, list) and isinstance(page, int) and isinstance(total_pages, int):
+                return self.views.sessions_list_markup(
+                    sessions=sessions,
+                    page=page,
+                    total_pages=total_pages,
+                )
+        if command == "/session":
+            record = (result.metadata or {}).get("session_record")
+            if record is not None:
+                return self.views.session_detail_markup(record=record)
         if command in {"/mcp", "/mcp-enable", "/mcp-disable"}:
             metadata = result.metadata or {}
             name = metadata.get("mcp_name")

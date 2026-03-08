@@ -5,6 +5,7 @@ from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
+from src.codex_session_service import CodexSessionRecord
 from src.task_store import ScheduledTaskRecord, StatusSnapshot
 
 
@@ -163,6 +164,7 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="MCP 列表", callback_data="cmd:mcp"),
                         InlineKeyboardButton(text="MCP 详情", callback_data="prompt:mcp"),
                     ],
+                    [InlineKeyboardButton(text="会话", callback_data="cmd:sessions")],
                     [InlineKeyboardButton(text="模型", callback_data="panel:model")],
                     [
                         InlineKeyboardButton(text="版本", callback_data="cmd:version"),
@@ -246,6 +248,46 @@ class TelegramViewFactory:
                 ],
             ]
         )
+
+    def sessions_list_markup(
+        self,
+        *,
+        sessions: list[CodexSessionRecord],
+        page: int,
+        total_pages: int,
+    ) -> InlineKeyboardMarkup:
+        rows: list[list[InlineKeyboardButton]] = []
+        for item in sessions[:6]:
+            source = "OF" if item.source == "openfish" else "本机"
+            label = f"{source} {item.session_id[:8]}"
+            rows.append(
+                [InlineKeyboardButton(text=label, callback_data=f"cmd:session_detail:{item.session_id}")]
+            )
+        nav: list[InlineKeyboardButton] = []
+        if page > 1:
+            nav.append(InlineKeyboardButton(text="上一页", callback_data=f"sessions:page:{page - 1}"))
+        if page < total_pages:
+            nav.append(InlineKeyboardButton(text="下一页", callback_data=f"sessions:page:{page + 1}"))
+        if nav:
+            rows.append(nav)
+        rows.append([InlineKeyboardButton(text="更多操作", callback_data="panel:more")])
+        return InlineKeyboardMarkup(rows)
+
+    def session_detail_markup(self, *, record: CodexSessionRecord) -> InlineKeyboardMarkup:
+        rows: list[list[InlineKeyboardButton]] = []
+        if record.importable:
+            rows.append(
+                [InlineKeyboardButton(text="导入为项目并继续", callback_data=f"session:import:{record.session_id}")]
+            )
+        elif record.project_key:
+            rows.append([InlineKeyboardButton(text="切换到项目", callback_data=f"use:{record.project_key}")])
+        rows.append(
+            [
+                InlineKeyboardButton(text="返回会话列表", callback_data="cmd:sessions"),
+                InlineKeyboardButton(text="更多操作", callback_data="panel:more"),
+            ]
+        )
+        return InlineKeyboardMarkup(rows)
 
     def status_result_markup(
         self,
