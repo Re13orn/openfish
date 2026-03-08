@@ -24,6 +24,10 @@ Usage:
   bash mvp_scaffold/scripts/install_start.sh install
   bash mvp_scaffold/scripts/install_start.sh configure
   bash mvp_scaffold/scripts/install_start.sh check
+  bash mvp_scaffold/scripts/install_start.sh version
+  bash mvp_scaffold/scripts/install_start.sh update-check
+  bash mvp_scaffold/scripts/install_start.sh update
+  bash mvp_scaffold/scripts/install_start.sh logs-clear
   bash mvp_scaffold/scripts/install_start.sh tg-user-id [username]
   bash mvp_scaffold/scripts/install_start.sh start
   bash mvp_scaffold/scripts/install_start.sh run
@@ -37,6 +41,10 @@ Commands:
   install       Create venv, install dependencies, and initialize local files.
   configure     Minimal interactive wizard for .env and the first project.
   check         Validate first-run prerequisites and Telegram connectivity.
+  version       Show current git version and branch.
+  update-check  Fetch upstream and show whether updates are available.
+  update        Fast-forward update from GitHub, refresh deps, and restart if running.
+  logs-clear    Truncate runtime and update logs.
   tg-user-id    Read Telegram getUpdates and print numeric user IDs.
   start         Start service in background (nohup) and write PID file.
   run           Run service in foreground (blocking).
@@ -929,12 +937,155 @@ tail_logs() {
   tail -f "$LOG_FILE"
 }
 
+clear_logs() {
+  prepare_dirs
+  : > "$LOG_FILE"
+  : > "$LOG_DIR/update.log"
+  echo "[logs-clear] cleared:"
+  echo "  $LOG_FILE"
+  echo "  $LOG_DIR/update.log"
+}
+
+ensure_git_repo() {
+  if ! command -v git >/dev/null 2>&1; then
+    echo "[error] git 不可用。" >&2
+    exit 1
+  fi
+  if ! git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "[error] 当前目录不是 Git 仓库: $REPO_ROOT" >&2
+    exit 1
+  fi
+}
+
+git_upstream_ref() {
+  git -C "$REPO_ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null
+}
+
+show_version() {
+  ensure_git_repo
+  local branch
+  local version
+  local head
+  branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+  version="$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
+  head="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  echo "repo: $REPO_ROOT"
+  echo "branch: $branch"
+  echo "version: $version"
+  echo "commit: $head"
+}
+
+update_check() {
+  ensure_git_repo
+  local upstream
+  local current_branch
+  local current_version
+  local current_head
+  local upstream_head
+  local behind
+  local ahead
+
+  upstream="$(git_upstream_ref)"
+  if [[ -z "$upstream" ]]; then
+    echo "[error] 当前分支未配置上游分支。" >&2
+    exit 1
+  fi
+
+  current_branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+  current_version="$(git -C "$REPO_ROOT" describe --tags --always --dirty)"
+  current_head="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+
+  echo "[update-check] fetching $upstream"
+  git -C "$REPO_ROOT" fetch --quiet "${upstream%%/*}" "${upstream#*/}"
+
+  upstream_head="$(git -C "$REPO_ROOT" rev-parse --short "$upstream")"
+  behind="$(git -C "$REPO_ROOT" rev-list --count HEAD.."$upstream")"
+  ahead="$(git -C "$REPO_ROOT" rev-list --count "$upstream"..HEAD)"
+
+  echo "branch: $current_branch"
+  echo "current: $current_version ($current_head)"
+  echo "upstream: $upstream ($upstream_head)"
+  echo "behind: $behind"
+  echo "ahead: $ahead"
+
+  if [[ "$behind" == "0" ]]; then
+    echo "[update-check] already up to date"
+    return 0
+  fi
+
+  echo "[update-check] updates available:"
+  git -C "$REPO_ROOT" log --oneline --no-decorate HEAD.."$upstream" | head -n 5
+}
+
+update_now() {
+  ensure_git_repo
+  validate_runtime_config
+
+  local upstream
+  local remote_name
+  local remote_branch
+  local old_head
+  local new_head
+  local behind
+  local running_before=0
+
+  upstream="$(git_upstream_ref)"
+  if [[ -z "$upstream" ]]; then
+    echo "[error] 当前分支未配置上游分支，无法自动更新。" >&2
+    exit 1
+  fi
+  remote_name="${upstream%%/*}"
+  remote_branch="${upstream#*/}"
+
+  if [[ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]]; then
+    echo "[error] 工作区存在未提交改动，拒绝自动更新。请先提交或清理后重试。" >&2
+    exit 1
+  fi
+
+  if is_running; then
+    running_before=1
+  fi
+
+  echo "[update] fetching $upstream"
+  git -C "$REPO_ROOT" fetch --quiet "$remote_name" "$remote_branch"
+
+  behind="$(git -C "$REPO_ROOT" rev-list --count "HEAD..$upstream")"
+  if [[ "$behind" == "0" ]]; then
+    echo "[update] already up to date"
+    return 0
+  fi
+
+  old_head="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+  echo "[update] pulling latest changes"
+  git -C "$REPO_ROOT" pull --ff-only "$remote_name" "$remote_branch"
+  new_head="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+
+  if git -C "$REPO_ROOT" diff --name-only "$old_head" "$new_head" | grep -Eq '(^|/)requirements\.txt$'; then
+    echo "[update] requirements changed, refreshing dependencies"
+    "$VENV_DIR/bin/pip" install -r "$APP_DIR/requirements.txt"
+  fi
+
+  if [[ "$running_before" == "1" ]]; then
+    echo "[update] restarting service"
+    stop_bg
+    start_bg
+  else
+    echo "[update] service not running, skip restart"
+  fi
+
+  echo "[update] updated: $(git -C "$REPO_ROOT" describe --tags --always --dirty)"
+}
+
 main() {
   local cmd="${1:-help}"
   case "$cmd" in
     install) install_deps ;;
     configure) configure_wizard ;;
     check) check_runtime ;;
+    version) show_version ;;
+    update-check) update_check ;;
+    update) update_now ;;
+    logs-clear) clear_logs ;;
     tg-user-id) get_telegram_user_id "${2:-}" ;;
     start) start_bg ;;
     run) run_fg ;;

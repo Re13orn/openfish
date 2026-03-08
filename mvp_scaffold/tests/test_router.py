@@ -10,6 +10,7 @@ from src.repo_inspector import RepoState
 from src.router import CommandRouter
 from src.skills_service import SkillInstallResult, SkillsListResult
 from src.task_store import MemorySnapshot, PendingApprovalRecord, ScheduledTaskRecord, TaskRecord
+from src.update_service import LogsResult, UpdateCheckResult, UpdateTriggerResult, VersionInfo
 
 
 def _ctx(text: str) -> CommandContext:
@@ -138,6 +139,23 @@ class CodexStub:
         self.calls.append("ask")
         return self.run_result
 
+    def ask_in_session(
+        self,
+        project: ProjectConfig,
+        session_id: str,
+        question: str,
+        *,
+        model=None,
+        progress_callback=None,
+    ) -> CodexRunResult:
+        _ = project
+        _ = session_id
+        _ = progress_callback
+        self.prompts.append(question)
+        self.models.append(model)
+        self.calls.append("ask_in_session")
+        return self.resume_result
+
     def resume_last(self, project: ProjectConfig, instruction: str, *, model=None, progress_callback=None) -> CodexRunResult:
         _ = project
         _ = instruction
@@ -172,6 +190,7 @@ class TasksStub:
         self.ui_mode = None
         self.codex_model = None
         self.project_id = 101
+        self.last_project_session_id: str | None = None
         self.next_task_id = 1
         self.pending: PendingApprovalRecord | None = None
         self.waiting_marked = False
@@ -299,6 +318,10 @@ class TasksStub:
 
     def clear_project_session_state(self, *, project_id: int) -> None:
         self.cleared_project_session_ids.append(project_id)
+
+    def get_project_last_codex_session_id(self, *, project_id: int) -> str | None:
+        _ = project_id
+        return self.last_project_session_id
 
     def get_latest_resumable_task(self, project_id: int) -> TaskRecord | None:
         _ = project_id
@@ -592,12 +615,71 @@ class McpStub:
         )
 
 
+class UpdateStub:
+    def __init__(self) -> None:
+        self.triggered = False
+        self.restart_triggered = False
+        self.logs_cleared = False
+        self.version = VersionInfo(branch="main", version="v1.0.0-rc1", commit="abc1234")
+        self.check = UpdateCheckResult(
+            ok=True,
+            current=self.version,
+            upstream_ref="origin/main",
+            upstream_commit="def5678",
+            behind_count=2,
+            ahead_count=0,
+            commits=["def5678 fix: one", "fff9999 feat: two"],
+            summary="发现 2 个上游更新。",
+        )
+        self.logs = LogsResult(
+            ok=True,
+            text="运行日志 (app.out.log):\nline-1\nline-2",
+            app_log_path=Path("/tmp/app.out.log"),
+            update_log_path=Path("/tmp/update.log"),
+        )
+
+    def get_current_version(self) -> VersionInfo:
+        return self.version
+
+    def check_for_updates(self) -> UpdateCheckResult:
+        return self.check
+
+    def trigger_update(self) -> UpdateTriggerResult:
+        self.triggered = True
+        return UpdateTriggerResult(
+            ok=True,
+            summary="已开始自更新。过程日志: /tmp/update.log",
+            script_path=Path("/tmp/install_start.sh"),
+        )
+
+    def trigger_restart(self) -> UpdateTriggerResult:
+        self.restart_triggered = True
+        return UpdateTriggerResult(
+            ok=True,
+            summary="已开始重启。过程日志: /tmp/update.log",
+            script_path=Path("/tmp/install_start.sh"),
+        )
+
+    def read_logs(self) -> LogsResult:
+        return self.logs
+
+    def clear_logs(self) -> LogsResult:
+        self.logs_cleared = True
+        return LogsResult(
+            ok=True,
+            text="已清空日志：\n- /tmp/app.out.log\n- /tmp/update.log",
+            app_log_path=Path("/tmp/app.out.log"),
+            update_log_path=Path("/tmp/update.log"),
+        )
+
+
 def _build_router(
     tasks: TasksStub,
     audit: AuditStub,
     codex: CodexStub,
     skills: SkillsStub | None = None,
     mcp: McpStub | None = None,
+    updates: UpdateStub | None = None,
 ) -> CommandRouter:
     config = SimpleNamespace(
         allowed_telegram_user_ids={"123"},
@@ -617,6 +699,7 @@ def _build_router(
         approvals=ApprovalService(),
         skills_service=skills,
         mcp_service=mcp,
+        update_service=updates,
     )
 
 
@@ -1114,6 +1197,85 @@ def test_mcp_disable_command_updates_config() -> None:
     assert audit_events.MCP_UPDATED in codes
 
 
+def test_version_command_returns_current_version() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    updates = UpdateStub()
+    router = _build_router(tasks, audit, codex, updates=updates)
+
+    result = router.handle(_ctx("/version"))
+
+    assert "OpenFish 版本" in result.reply_text
+    assert "v1.0.0-rc1" in result.reply_text
+
+
+def test_update_check_command_returns_pending_commits() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    updates = UpdateStub()
+    router = _build_router(tasks, audit, codex, updates=updates)
+
+    result = router.handle(_ctx("/update-check"))
+
+    assert "更新检查" in result.reply_text
+    assert "落后: 2" in result.reply_text
+    assert "def5678 fix: one" in result.reply_text
+
+
+def test_update_command_triggers_self_update() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    updates = UpdateStub()
+    router = _build_router(tasks, audit, codex, updates=updates)
+
+    result = router.handle(_ctx("/update"))
+
+    assert updates.triggered is True
+    assert "已开始自更新" in result.reply_text
+
+
+def test_restart_command_triggers_service_restart() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    updates = UpdateStub()
+    router = _build_router(tasks, audit, codex, updates=updates)
+
+    result = router.handle(_ctx("/restart"))
+
+    assert updates.restart_triggered is True
+    assert "已开始重启服务" in result.reply_text
+
+
+def test_logs_command_returns_log_excerpt() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    updates = UpdateStub()
+    router = _build_router(tasks, audit, codex, updates=updates)
+
+    result = router.handle(_ctx("/logs"))
+
+    assert "运行日志" in result.reply_text
+    assert "line-1" in result.reply_text
+
+
+def test_logs_clear_command_truncates_logs() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    updates = UpdateStub()
+    router = _build_router(tasks, audit, codex, updates=updates)
+
+    result = router.handle(_ctx("/logs-clear"))
+
+    assert updates.logs_cleared is True
+    assert "已清空日志" in result.reply_text
+
+
 def test_schedule_add_list_delete() -> None:
     tasks = TasksStub()
     audit = AuditStub()
@@ -1209,6 +1371,32 @@ def test_resume_with_task_id_uses_resume_session() -> None:
 
     assert "任务 #1: 已完成" in result.reply_text
     assert "resume_session" in codex.calls
+
+
+def test_ask_reuses_last_project_session_for_interactive_chat() -> None:
+    tasks = TasksStub()
+    tasks.last_project_session_id = "sess-prev"
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("done"), resume_result=_codex_result("continued"))
+    router = _build_router(tasks, audit, codex)
+
+    result = router.handle(_ctx("/ask 继续分析这个仓库"))
+
+    assert "ask_in_session" in codex.calls
+    assert "任务 #1: 已完成" in result.reply_text
+
+
+def test_do_reuses_last_project_session_for_interactive_chat() -> None:
+    tasks = TasksStub()
+    tasks.last_project_session_id = "sess-prev"
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("done"), resume_result=_codex_result("continued"))
+    router = _build_router(tasks, audit, codex)
+
+    result = router.handle(_ctx("/do 继续整理接入方案"))
+
+    assert "resume_session" in codex.calls
+    assert "任务 #1: 已完成" in result.reply_text
 
 
 def test_project_add_disable_archive_commands() -> None:

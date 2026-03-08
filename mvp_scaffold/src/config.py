@@ -57,6 +57,10 @@ class AppConfig:
     skill_install_timeout_seconds: int
     poll_interval_seconds: int
     max_telegram_message_length: int
+    telegram_connection_pool_size: int
+    telegram_pool_timeout_seconds: float
+    telegram_get_updates_connection_pool_size: int
+    telegram_get_updates_pool_timeout_seconds: float
     telegram_reconnect_initial_delay_seconds: float
     telegram_reconnect_max_delay_seconds: float
     telegram_reconnect_jitter_seconds: float
@@ -140,6 +144,14 @@ def load_config() -> AppConfig:
         skill_install_timeout_seconds=int(os.getenv("SKILL_INSTALL_TIMEOUT_SECONDS", "600")),
         poll_interval_seconds=int(os.getenv("TELEGRAM_POLL_INTERVAL_SECONDS", "2")),
         max_telegram_message_length=int(os.getenv("MAX_TELEGRAM_MESSAGE_LENGTH", "3500")),
+        telegram_connection_pool_size=int(os.getenv("TELEGRAM_CONNECTION_POOL_SIZE", "64")),
+        telegram_pool_timeout_seconds=float(os.getenv("TELEGRAM_POOL_TIMEOUT_SECONDS", "15")),
+        telegram_get_updates_connection_pool_size=int(
+            os.getenv("TELEGRAM_GET_UPDATES_CONNECTION_POOL_SIZE", "8")
+        ),
+        telegram_get_updates_pool_timeout_seconds=float(
+            os.getenv("TELEGRAM_GET_UPDATES_POOL_TIMEOUT_SECONDS", "30")
+        ),
         telegram_reconnect_initial_delay_seconds=float(
             os.getenv("TELEGRAM_RECONNECT_INITIAL_DELAY_SECONDS", "2")
         ),

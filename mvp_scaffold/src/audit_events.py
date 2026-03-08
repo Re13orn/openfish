@@ -37,6 +37,12 @@ SKILL_INSTALLED = "skill.installed"
 SKILL_INSTALL_FAILED = "skill.install_failed"
 MCP_VIEWED = "mcp.viewed"
 MCP_UPDATED = "mcp.updated"
+SYSTEM_VERSION_VIEWED = "system.version_viewed"
+SYSTEM_UPDATE_CHECKED = "system.update_checked"
+SYSTEM_UPDATE_TRIGGERED = "system.update_triggered"
+SYSTEM_RESTART_TRIGGERED = "system.restart_triggered"
+SYSTEM_LOGS_VIEWED = "system.logs_viewed"
+SYSTEM_LOGS_CLEARED = "system.logs_cleared"
 SCHEDULE_CREATED = "schedule.created"
 SCHEDULE_VIEWED = "schedule.viewed"
 SCHEDULE_DELETED = "schedule.deleted"
@@ -84,6 +90,12 @@ ALL_EVENTS = {
     SKILL_INSTALL_FAILED,
     MCP_VIEWED,
     MCP_UPDATED,
+    SYSTEM_VERSION_VIEWED,
+    SYSTEM_UPDATE_CHECKED,
+    SYSTEM_UPDATE_TRIGGERED,
+    SYSTEM_RESTART_TRIGGERED,
+    SYSTEM_LOGS_VIEWED,
+    SYSTEM_LOGS_CLEARED,
     SCHEDULE_CREATED,
     SCHEDULE_VIEWED,
     SCHEDULE_DELETED,

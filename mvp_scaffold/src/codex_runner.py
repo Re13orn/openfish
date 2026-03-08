@@ -69,11 +69,7 @@ class CodexRunner:
     ) -> CodexRunResult:
         """Execute a conservative read-oriented Codex request."""
 
-        prompt = (
-            "Read-only analysis only. Do not modify files. "
-            "Answer concisely for a mobile Telegram summary.\n\n"
-            f"Question: {question}"
-        )
+        prompt = self._build_ask_prompt(question)
         command = self._build_command(
             project.path,
             prompt,
@@ -86,6 +82,25 @@ class CodexRunner:
             progress_callback=progress_callback,
         )
         return self._build_result(proc, used_json, resolved_command)
+
+    def ask_in_session(
+        self,
+        project: ProjectConfig,
+        session_id: str,
+        question: str,
+        *,
+        model: str | None = None,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> CodexRunResult:
+        """Continue an existing session with a read-only analysis request."""
+
+        return self.resume_session(
+            project,
+            session_id,
+            self._build_ask_prompt(question),
+            model=model,
+            progress_callback=progress_callback,
+        )
 
     def resume_last(
         self,
@@ -209,6 +224,13 @@ class CodexRunner:
             command.extend(["--ask-for-approval", approval_mode])
         command.append(prompt)
         return command
+
+    def _build_ask_prompt(self, question: str) -> str:
+        return (
+            "Read-only analysis only. Do not modify files. "
+            "Answer concisely for a mobile Telegram summary.\n\n"
+            f"Question: {question}"
+        )
 
     def _execute_with_optional_fallback(
         self,

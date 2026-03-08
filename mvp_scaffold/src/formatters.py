@@ -56,6 +56,9 @@ def format_help(mode: str = "verbose") -> str:
             "/resume [task_id] [instruction]\n"
             "/diff\n"
             "/model\n"
+            "/version\n"
+            "/update-check\n"
+            "/restart\n"
             "/ui summary|verbose|stream\n"
             "\n"
             "更多命令可用 /help verbose 查看。"
@@ -100,6 +103,12 @@ def format_help(mode: str = "verbose") -> str:
         "/mcp [name]\n"
         "/mcp-enable <name>\n"
         "/mcp-disable <name>\n"
+        "/version\n"
+        "/update-check\n"
+        "/update\n"
+        "/restart\n"
+        "/logs\n"
+        "/logs-clear\n"
         "/ui [show|summary|verbose|stream]\n"
         "/upload_policy\n"
         "/cancel\n"
@@ -484,6 +493,43 @@ def format_mcp_detail(
     if disabled_tools:
         lines.append(f"禁用工具限制: {', '.join(disabled_tools)}")
     lines.append(f"控制: /mcp-{'disable' if enabled else 'enable'} {name}")
+    return "\n".join(lines)
+
+
+def format_version_info(*, branch: str, version: str, commit: str) -> str:
+    return (
+        "OpenFish 版本：\n"
+        f"分支: {branch}\n"
+        f"版本: {version}\n"
+        f"提交: {commit}"
+    )
+
+
+def format_update_check(
+    *,
+    branch: str,
+    current_version: str,
+    current_commit: str,
+    upstream_ref: str,
+    upstream_commit: str,
+    behind_count: int,
+    ahead_count: int,
+    commits: list[str],
+) -> str:
+    lines = [
+        "更新检查：",
+        f"当前: {current_version} ({current_commit})",
+        f"分支: {branch}",
+        f"上游: {upstream_ref} ({upstream_commit})",
+        f"落后: {behind_count}",
+        f"领先: {ahead_count}",
+    ]
+    if behind_count > 0:
+        lines.append("待更新提交：")
+        lines.extend(f"- {item}" for item in commits[:5])
+        lines.append("可执行: /update")
+    else:
+        lines.append("当前已是最新版本。")
     return "\n".join(lines)
 
 

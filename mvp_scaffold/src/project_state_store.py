@@ -95,6 +95,19 @@ class ProjectStateStore:
             (active_project_key,),
         ).fetchone()
 
+    def get_last_codex_session_id(self, *, project_id: int) -> str | None:
+        row = self.db.get_connection().execute(
+            """
+            SELECT last_codex_session_id
+            FROM project_state
+            WHERE project_id = ?
+            """,
+            (project_id,),
+        ).fetchone()
+        if row is None or not row["last_codex_session_id"]:
+            return None
+        return str(row["last_codex_session_id"])
+
     def get_next_schedule_row(self, *, project_id: int) -> sqlite3.Row | None:
         return self.db.get_connection().execute(
             """

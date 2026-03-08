@@ -7,6 +7,7 @@ import pytest
 
 pytest.importorskip("telegram")
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
+from telegram.request import HTTPXRequest
 
 from src.models import CommandResult
 from src.telegram_adapter import TelegramBotService
@@ -262,6 +263,36 @@ def test_run_polling_retries_on_network_error(monkeypatch) -> None:
     assert second_app.run_polling_kwargs["bootstrap_retries"] == -1
 
 
+def test_build_application_uses_dedicated_requests(monkeypatch) -> None:
+    service = _service()
+    captured: dict[str, object] = {}
+
+    class FakeBuilder:
+        def token(self, value):  # noqa: ANN001, ANN201
+            captured["token"] = value
+            return self
+
+        def request(self, value):  # noqa: ANN001, ANN201
+            captured["request"] = value
+            return self
+
+        def get_updates_request(self, value):  # noqa: ANN001, ANN201
+            captured["get_updates_request"] = value
+            return self
+
+        def build(self):  # noqa: ANN201
+            return "app"
+
+    monkeypatch.setattr("src.telegram_adapter.ApplicationBuilder", lambda: FakeBuilder())
+
+    app = service._build_application()
+
+    assert app == "app"
+    assert captured["token"] == "dummy"
+    assert isinstance(captured["request"], HTTPXRequest)
+    assert isinstance(captured["get_updates_request"], HTTPXRequest)
+
+
 def test_menu_text_maps_to_status_command() -> None:
     service = _service()
     assert service._map_menu_to_command("状态") == "/status"
@@ -276,6 +307,12 @@ def test_callback_token_maps_to_command() -> None:
     assert service._resolve_callback_command("status") == "/status"
     assert service._resolve_callback_command("mcp") == "/mcp"
     assert service._resolve_callback_command("model") == "/model"
+    assert service._resolve_callback_command("version") == "/version"
+    assert service._resolve_callback_command("update_check") == "/update-check"
+    assert service._resolve_callback_command("update") == "/update"
+    assert service._resolve_callback_command("restart") == "/restart"
+    assert service._resolve_callback_command("logs") == "/logs"
+    assert service._resolve_callback_command("logs_clear") == "/logs-clear"
     assert service._resolve_callback_command("project_disable_current") == "/project-disable"
     assert service._resolve_callback_command("ui_summary") == "/ui summary"
     assert service._resolve_callback_command("ui_stream") == "/ui stream"
@@ -653,6 +690,9 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
     markup = captured["markup"]
     rows = markup.inline_keyboard
     assert any(button.callback_data == "panel:model" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:restart" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:logs" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:logs_clear" for row in rows for button in row)
     assert any(button.callback_data == "cmd:ui_summary" for row in rows for button in row)
     assert any(button.callback_data == "cmd:ui_stream" for row in rows for button in row)
     assert any(button.callback_data == "cmd:ui_verbose" for row in rows for button in row)

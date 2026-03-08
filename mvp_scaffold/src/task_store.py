@@ -363,6 +363,9 @@ class TaskStore:
 
         self.project_state.clear_project_session_state(project_id=project_id)
 
+    def get_project_last_codex_session_id(self, *, project_id: int) -> str | None:
+        return self.project_state.get_last_codex_session_id(project_id=project_id)
+
     def get_status_snapshot(self, user_id: int, chat_id: str | None = None) -> StatusSnapshot:
         active_project_key = self.get_active_project_key(user_id=user_id, chat_id=chat_id)
         if active_project_key is None:

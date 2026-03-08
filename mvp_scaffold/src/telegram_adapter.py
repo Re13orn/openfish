@@ -12,6 +12,7 @@ import time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.request import HTTPXRequest
 
 from src import telegram_messages
 from src.formatters import format_upload_received
@@ -74,6 +75,12 @@ class TelegramBotService:
         "skills": "/skills",
         "mcp": "/mcp",
         "model": "/model",
+        "version": "/version",
+        "update_check": "/update-check",
+        "update": "/update",
+        "restart": "/restart",
+        "logs": "/logs",
+        "logs_clear": "/logs-clear",
         "schedule_list": "/schedule-list",
         "last": "/last",
         "memory": "/memory",
@@ -141,6 +148,10 @@ class TelegramBotService:
         "/run",
         "/schedule-run",
         "/skill-install",
+        "/logs",
+        "/update",
+        "/update-check",
+        "/restart",
     }
 
     def __init__(self, config, router) -> None:
@@ -199,13 +210,29 @@ class TelegramBotService:
             retry_delay = min(retry_delay * 2, max_retry_delay)
 
     def _build_application(self) -> Application:
+        request = HTTPXRequest(
+            connection_pool_size=int(getattr(self.config, "telegram_connection_pool_size", 64)),
+            connect_timeout=20.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=float(getattr(self.config, "telegram_pool_timeout_seconds", 15.0)),
+        )
+        get_updates_request = HTTPXRequest(
+            connection_pool_size=int(
+                getattr(self.config, "telegram_get_updates_connection_pool_size", 8)
+            ),
+            connect_timeout=20.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=float(
+                getattr(self.config, "telegram_get_updates_pool_timeout_seconds", 30.0)
+            ),
+        )
         return (
             ApplicationBuilder()
             .token(self.config.telegram_bot_token)
-            .connect_timeout(20.0)
-            .read_timeout(30.0)
-            .write_timeout(30.0)
-            .pool_timeout(30.0)
+            .request(request)
+            .get_updates_request(get_updates_request)
             .build()
         )
 

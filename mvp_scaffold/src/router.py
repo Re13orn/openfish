@@ -31,9 +31,11 @@ from src.formatters import (
     format_start,
     format_status,
     format_templates,
+    format_update_check,
     format_upload_policy,
     format_upload_rejected,
     format_use_confirmation,
+    format_version_info,
 )
 from src.mcp_service import McpService
 from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
@@ -44,6 +46,7 @@ from src.security_guard import has_symlink_in_path, is_sensitive_file_name
 from src.skills_service import SkillsService
 from src.task_templates import BUILTIN_TEMPLATES
 from src.task_store import ScheduledTaskRecord, TaskStore
+from src.update_service import UpdateService
 
 
 PROJECT_ADD_KEY_PATTERN = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
@@ -81,6 +84,7 @@ class CommandRouter:
         approvals: ApprovalService,
         skills_service: SkillsService | None = None,
         mcp_service: McpService | None = None,
+        update_service: UpdateService | None = None,
     ) -> None:
         self.config = config
         self.projects = projects
@@ -91,6 +95,7 @@ class CommandRouter:
         self.approvals = approvals
         self.skills_service = skills_service
         self.mcp_service = mcp_service
+        self.update_service = update_service
         self._project_locks: dict[int, LockType] = {}
         self._project_locks_guard = Lock()
 
@@ -136,6 +141,18 @@ class CommandRouter:
             return self._handle_mcp_toggle(ctx, argument, enabled=False)
         if command == "/model":
             return self._handle_model(ctx, argument)
+        if command == "/version":
+            return self._handle_version(ctx)
+        if command == "/update-check":
+            return self._handle_update_check(ctx)
+        if command == "/update":
+            return self._handle_update(ctx)
+        if command == "/restart":
+            return self._handle_restart(ctx)
+        if command == "/logs":
+            return self._handle_logs(ctx)
+        if command == "/logs-clear":
+            return self._handle_logs_clear(ctx)
         if command == "/ui":
             return self._handle_ui(ctx, argument)
         if command == "/schedule-add":
@@ -294,6 +311,118 @@ class CommandRouter:
             model=normalized,
         )
         return CommandResult(f"当前会话模型已切换为: {normalized}")
+
+    def _handle_version(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.update_service is None:
+            return CommandResult("当前未启用版本管理。")
+        info = self.update_service.get_current_version()
+        self.audit.log(
+            action=audit_events.SYSTEM_VERSION_VIEWED,
+            message="查看当前版本",
+            user_id=user.id,
+        )
+        return CommandResult(
+            format_version_info(branch=info.branch, version=info.version, commit=info.commit)
+        )
+
+    def _handle_update_check(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.update_service is None:
+            return CommandResult("当前未启用自更新。")
+        try:
+            checked = self.update_service.check_for_updates()
+        except RuntimeError as exc:
+            return CommandResult(f"更新检查失败: {exc}")
+        self.audit.log(
+            action=audit_events.SYSTEM_UPDATE_CHECKED,
+            message="检查更新",
+            user_id=user.id,
+            details={"behind_count": checked.behind_count, "ahead_count": checked.ahead_count},
+        )
+        current = checked.current
+        if current is None or checked.upstream_ref is None or checked.upstream_commit is None:
+            return CommandResult(checked.summary)
+        return CommandResult(
+            format_update_check(
+                branch=current.branch,
+                current_version=current.version,
+                current_commit=current.commit,
+                upstream_ref=checked.upstream_ref,
+                upstream_commit=checked.upstream_commit,
+                behind_count=checked.behind_count,
+                ahead_count=checked.ahead_count,
+                commits=checked.commits,
+            )
+        )
+
+    def _handle_update(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.update_service is None:
+            return CommandResult("当前未启用自更新。")
+        try:
+            triggered = self.update_service.trigger_update()
+        except RuntimeError as exc:
+            return CommandResult(f"启动更新失败: {exc}")
+        self.audit.log(
+            action=audit_events.SYSTEM_UPDATE_TRIGGERED,
+            message="触发自更新",
+            user_id=user.id,
+        )
+        return CommandResult(
+            "已开始自更新。\n"
+            "OpenFish 会拉取 GitHub 最新代码、刷新依赖，并在需要时自动重启。\n"
+            f"{triggered.summary}"
+        )
+
+    def _handle_restart(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.update_service is None:
+            return CommandResult("当前未启用服务控制。")
+        try:
+            triggered = self.update_service.trigger_restart()
+        except RuntimeError as exc:
+            return CommandResult(f"启动重启失败: {exc}")
+        self.audit.log(
+            action=audit_events.SYSTEM_RESTART_TRIGGERED,
+            message="触发服务重启",
+            user_id=user.id,
+        )
+        return CommandResult(
+            "已开始重启服务。\n"
+            "OpenFish 会在几秒内重启，随后恢复 Telegram 响应。\n"
+            f"{triggered.summary}"
+        )
+
+    def _handle_logs(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.update_service is None:
+            return CommandResult("当前未启用日志查看。")
+        try:
+            logs = self.update_service.read_logs()
+        except RuntimeError as exc:
+            return CommandResult(f"读取日志失败: {exc}")
+        self.audit.log(
+            action=audit_events.SYSTEM_LOGS_VIEWED,
+            message="查看运行日志",
+            user_id=user.id,
+        )
+        return CommandResult(logs.text)
+
+    def _handle_logs_clear(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.update_service is None:
+            return CommandResult("当前未启用日志控制。")
+        try:
+            logs = self.update_service.clear_logs()
+        except RuntimeError as exc:
+            return CommandResult(f"清空日志失败: {exc}")
+        self.audit.log(
+            action=audit_events.SYSTEM_LOGS_CLEARED,
+            message="清空运行日志",
+            user_id=user.id,
+        )
+        return CommandResult(logs.text)
 
     def _handle_projects(self, ctx: CommandContext) -> CommandResult:
         user = self.tasks.ensure_user(ctx)
@@ -1430,13 +1559,28 @@ class CommandRouter:
 
         try:
             model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+            continuation_session_id = self._resolve_continuation_session_id(
+                active=active,
+                run_mode=run_mode,
+                ctx=ctx,
+                explicit_resume_session_id=resume_session_id,
+            )
             if run_mode == "ask":
-                codex_result = self.codex.ask(
-                    active.project,
-                    request_text,
-                    model=model,
-                    progress_callback=ctx.progress_callback,
-                )
+                if continuation_session_id:
+                    codex_result = self.codex.ask_in_session(
+                        active.project,
+                        continuation_session_id,
+                        request_text,
+                        model=model,
+                        progress_callback=ctx.progress_callback,
+                    )
+                else:
+                    codex_result = self.codex.ask(
+                        active.project,
+                        request_text,
+                        model=model,
+                        progress_callback=ctx.progress_callback,
+                    )
             elif run_mode == "resume":
                 if resume_session_id:
                     codex_result = self.codex.resume_session(
@@ -1454,12 +1598,21 @@ class CommandRouter:
                         progress_callback=ctx.progress_callback,
                     )
             else:
-                codex_result = self.codex.run(
-                    active.project,
-                    request_text,
-                    model=model,
-                    progress_callback=ctx.progress_callback,
-                )
+                if continuation_session_id:
+                    codex_result = self.codex.resume_session(
+                        active.project,
+                        continuation_session_id,
+                        request_text,
+                        model=model,
+                        progress_callback=ctx.progress_callback,
+                    )
+                else:
+                    codex_result = self.codex.run(
+                        active.project,
+                        request_text,
+                        model=model,
+                        progress_callback=ctx.progress_callback,
+                    )
 
             assessment = self.approvals.assess(codex_result)
             if assessment.requires_approval:
@@ -1636,6 +1789,22 @@ class CommandRouter:
             project=project,
             project_id=self.tasks.get_project_id(project_key),
         )
+
+    def _resolve_continuation_session_id(
+        self,
+        *,
+        active: ActiveProjectContext,
+        run_mode: str,
+        ctx: CommandContext,
+        explicit_resume_session_id: str | None,
+    ) -> str | None:
+        if explicit_resume_session_id:
+            return None
+        if run_mode not in {"ask", "do"}:
+            return None
+        if ctx.telegram_message_id is None:
+            return None
+        return self.tasks.get_project_last_codex_session_id(project_id=active.project_id)
 
     def _refresh_repo_state(self, *, project_id: int, project: ProjectConfig) -> None:
         repo_state = self.repo.inspect(project.path)

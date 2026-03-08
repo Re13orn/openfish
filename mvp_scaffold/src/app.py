@@ -17,6 +17,7 @@ from src.skills_service import SkillsService
 from src.mcp_service import McpService
 from src.task_store import TaskStore
 from src.telegram_adapter import TelegramBotService
+from src.update_service import UpdateService
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,10 @@ class Application:
             timeout_seconds=config.codex_command_timeout_seconds,
             config_path=config.codex_home / "config.toml",
         )
+        self.updates = UpdateService(
+            repo_root=Path(__file__).resolve().parents[2],
+            script_path=Path(__file__).resolve().parents[1] / "scripts" / "install_start.sh",
+        )
         self.repo = RepoInspector()
         self.router = CommandRouter(
             config=config,
@@ -56,6 +61,7 @@ class Application:
             approvals=self.approvals,
             skills_service=self.skills,
             mcp_service=self.mcp,
+            update_service=self.updates,
         )
         self.scheduler = ScheduledTaskService(
             tasks=self.tasks,

@@ -165,6 +165,16 @@ class TelegramViewFactory:
                     ],
                     [InlineKeyboardButton(text="模型", callback_data="panel:model")],
                     [
+                        InlineKeyboardButton(text="版本", callback_data="cmd:version"),
+                        InlineKeyboardButton(text="检查更新", callback_data="cmd:update_check"),
+                        InlineKeyboardButton(text="立即更新", callback_data="cmd:update"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="重启服务", callback_data="cmd:restart"),
+                        InlineKeyboardButton(text="查看日志", callback_data="cmd:logs"),
+                        InlineKeyboardButton(text="清空日志", callback_data="cmd:logs_clear"),
+                    ],
+                    [
                         InlineKeyboardButton(text="精简模式", callback_data="cmd:ui_summary"),
                         InlineKeyboardButton(text="详细模式", callback_data="cmd:ui_verbose"),
                         InlineKeyboardButton(text="过程流模式", callback_data="cmd:ui_stream"),
