@@ -1763,7 +1763,7 @@ class CommandRouter:
             message="删除历史任务",
             user_id=active.user.id,
             project_id=active.project_id,
-            task_id=deleted.id,
+            details={"deleted_task_id": deleted.id},
         )
         return CommandResult(f"已删除任务 #{deleted.id}。")
 
