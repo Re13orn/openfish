@@ -83,6 +83,7 @@ class TelegramBotService:
         "logs": "/logs",
         "logs_clear": "/logs-clear",
         "tasks": "/tasks",
+        "tasks_clear": "/tasks-clear",
         "schedule_list": "/schedule-list",
         "last": "/last",
         "memory": "/memory",

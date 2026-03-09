@@ -149,3 +149,4 @@ def test_tasks_list_markup_contains_cancel_delete_and_pagination() -> None:
     assert rows[1][0].callback_data == "task:delete:8"
     assert rows[2][0].callback_data == "tasks:page:1"
     assert rows[2][1].callback_data == "tasks:page:3"
+    assert rows[3][0].callback_data == "cmd:tasks_clear"

@@ -543,6 +543,13 @@ class TaskStore:
             return None
         return task
 
+    def clear_tasks(self, *, project_id: int) -> int:
+        if self.get_latest_active_task(project_id) is None:
+            self.project_state.clear_task_references(project_id=project_id)
+        deleted_count = self.runtime.delete_terminal_tasks(project_id=project_id)
+        self.project_state.clear_missing_task_references(project_id=project_id)
+        return deleted_count
+
     def get_task(self, task_id: int) -> TaskRecord | None:
         row = self.runtime.get_task_row(task_id)
         return self._row_to_task(row)

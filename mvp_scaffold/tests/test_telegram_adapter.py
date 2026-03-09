@@ -308,6 +308,7 @@ def test_callback_token_maps_to_command() -> None:
     assert service._resolve_callback_command("mcp") == "/mcp"
     assert service._resolve_callback_command("sessions") == "/sessions"
     assert service._resolve_callback_command("tasks") == "/tasks"
+    assert service._resolve_callback_command("tasks_clear") == "/tasks-clear"
     assert service._resolve_callback_command("model") == "/model"
     assert service._resolve_callback_command("version") == "/version"
     assert service._resolve_callback_command("update_check") == "/update-check"
@@ -693,6 +694,7 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
     rows = markup.inline_keyboard
     assert any(button.callback_data == "cmd:sessions" for row in rows for button in row)
     assert any(button.callback_data == "cmd:tasks" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:tasks_clear" for row in rows for button in row)
     assert any(button.callback_data == "panel:model" for row in rows for button in row)
     assert any(button.callback_data == "cmd:restart" for row in rows for button in row)
     assert any(button.callback_data == "cmd:logs" for row in rows for button in row)

@@ -575,6 +575,18 @@ class TasksStub:
             self.latest_task = max(self.tasks_by_id.values(), key=lambda item: item.id, default=None)
         return deleted
 
+    def clear_tasks(self, *, project_id: int) -> int:
+        _ = project_id
+        deletable_ids = [
+            task_id
+            for task_id, task in self.tasks_by_id.items()
+            if task.status not in {"created", "running", "waiting_approval"}
+        ]
+        for task_id in deletable_ids:
+            self.tasks_by_id.pop(task_id, None)
+        self.latest_task = max(self.tasks_by_id.values(), key=lambda item: item.id, default=None)
+        return len(deletable_ids)
+
     def get_status_snapshot(self, user_id: int, chat_id: str | None = None):  # noqa: ANN001
         _ = user_id
         _ = chat_id
@@ -991,6 +1003,55 @@ def test_task_delete_removes_finished_task() -> None:
 
     assert "已删除任务 #7" in result.reply_text
     assert 7 not in tasks.tasks_by_id
+
+
+def test_tasks_clear_removes_all_terminal_tasks() -> None:
+    tasks = TasksStub()
+    tasks.tasks_by_id = {
+        9: TaskRecord(
+            id=9,
+            command_type="do",
+            original_request="running task",
+            status="running",
+            codex_session_id="sess-9",
+            latest_summary="处理中",
+        ),
+        8: TaskRecord(
+            id=8,
+            command_type="do",
+            original_request="done task",
+            status="completed",
+            codex_session_id="sess-8",
+            latest_summary="done",
+        ),
+        7: TaskRecord(
+            id=7,
+            command_type="ask",
+            original_request="failed task",
+            status="failed",
+            codex_session_id="sess-7",
+            latest_summary="failed",
+        ),
+    }
+    tasks.latest_task = tasks.tasks_by_id[9]
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    blocked = router.handle(_ctx("/tasks-clear"))
+    assert "当前仍有活动任务 #9" in blocked.reply_text
+
+    tasks.tasks_by_id[9] = TaskRecord(
+        id=9,
+        command_type="do",
+        original_request="running task",
+        status="cancelled",
+        codex_session_id="sess-9",
+        latest_summary="已取消",
+    )
+    tasks.latest_task = tasks.tasks_by_id[9]
+
+    cleared = router.handle(_ctx("/tasks-clear"))
+    assert "已清空 3 条历史任务" in cleared.reply_text
+    assert tasks.tasks_by_id == {}
 
 
 def test_do_enters_waiting_approval_branch() -> None:

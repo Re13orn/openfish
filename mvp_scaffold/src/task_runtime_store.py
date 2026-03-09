@@ -252,6 +252,19 @@ class TaskRuntimeStore:
         connection.commit()
         return cursor.rowcount > 0
 
+    def delete_terminal_tasks(self, *, project_id: int) -> int:
+        connection = self.db.get_connection()
+        cursor = connection.execute(
+            """
+            DELETE FROM tasks
+            WHERE project_id = ?
+              AND status NOT IN ('created', 'running', 'waiting_approval')
+            """,
+            (project_id,),
+        )
+        connection.commit()
+        return int(cursor.rowcount)
+
     def mark_task_resumed_after_approval(self, task_id: int) -> None:
         connection = self.db.get_connection()
         connection.execute(

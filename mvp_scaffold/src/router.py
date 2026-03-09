@@ -222,6 +222,8 @@ class CommandRouter:
             return self._handle_task_cancel(ctx, argument)
         if command == "/task-delete":
             return self._handle_task_delete(ctx, argument)
+        if command == "/tasks-clear":
+            return self._handle_tasks_clear(ctx)
         if command == "/diff":
             return self._handle_diff(ctx)
         if command == "/upload_policy":
@@ -1766,6 +1768,30 @@ class CommandRouter:
             details={"deleted_task_id": deleted.id},
         )
         return CommandResult(f"已删除任务 #{deleted.id}。")
+
+    def _handle_tasks_clear(self, ctx: CommandContext) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+
+        active_task = self.tasks.get_latest_active_task(active.project_id)
+        if active_task is not None:
+            return CommandResult(
+                f"当前仍有活动任务 #{active_task.id}（{active_task.status}）。\n"
+                "请先用 /task-cancel [id] 取消，再执行 /tasks-clear。"
+            )
+
+        deleted_count = self.tasks.clear_tasks(project_id=active.project_id)
+        self.audit.log(
+            action=audit_events.TASK_CANCELLED,
+            message="清空历史任务",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"deleted_count": deleted_count},
+        )
+        if deleted_count == 0:
+            return CommandResult("当前没有可清空的历史任务。")
+        return CommandResult(f"已清空 {deleted_count} 条历史任务。")
 
     def _handle_diff(self, ctx: CommandContext) -> CommandResult:
         active = self._resolve_active_project(ctx)

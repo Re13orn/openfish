@@ -168,6 +168,7 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
                         InlineKeyboardButton(text="任务", callback_data="cmd:tasks"),
                     ],
+                    [InlineKeyboardButton(text="清空历史任务", callback_data="cmd:tasks_clear")],
                     [InlineKeyboardButton(text="模型", callback_data="panel:model")],
                     [
                         InlineKeyboardButton(text="版本", callback_data="cmd:version"),
@@ -273,6 +274,7 @@ class TelegramViewFactory:
             nav.append(InlineKeyboardButton(text="下一页", callback_data=f"sessions:page:{page + 1}"))
         if nav:
             rows.append(nav)
+        rows.append([InlineKeyboardButton(text="清空历史任务", callback_data="cmd:tasks_clear")])
         rows.append([InlineKeyboardButton(text="更多操作", callback_data="panel:more")])
         return InlineKeyboardMarkup(rows)
 
@@ -393,6 +395,7 @@ class TelegramViewFactory:
             nav.append(InlineKeyboardButton(text="下一页", callback_data=f"tasks:page:{page + 1}"))
         if nav:
             rows.append(nav)
+        rows.append([InlineKeyboardButton(text="清空历史任务", callback_data="cmd:tasks_clear")])
         rows.append([InlineKeyboardButton(text="更多操作", callback_data="panel:more")])
         return InlineKeyboardMarkup(rows)
 

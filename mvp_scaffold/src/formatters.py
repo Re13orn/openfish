@@ -80,6 +80,7 @@ def format_help(mode: str = "verbose") -> str:
         "/tasks [page]\n"
         "/task-cancel [id]\n"
         "/task-delete <id>\n"
+        "/tasks-clear\n"
         "/sessions [page]\n"
         "/session <id>\n"
         "/session-import <id> [project_key] [name]\n"
@@ -262,7 +263,7 @@ def format_tasks_list(result: TaskPage) -> str:
         lines.append(f"  请求: {_clip(item.original_request, 80)}")
         if item.latest_summary:
             lines.append(f"  摘要: {_clip(item.latest_summary, 100)}")
-    lines.append("可用 /task-cancel [id] 或 /task-delete <id> 管理任务。")
+    lines.append("可用 /task-cancel [id]、/task-delete <id> 或 /tasks-clear 管理任务。")
     return "\n".join(lines)
 
 

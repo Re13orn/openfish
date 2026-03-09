@@ -198,6 +198,7 @@ def test_format_tasks_list() -> None:
     assert "处理中" in text
     assert "/task-cancel [id]" in text
     assert "/task-delete <id>" in text
+    assert "/tasks-clear" in text
 
 
 def test_help_contains_last_and_retry() -> None:
@@ -214,6 +215,7 @@ def test_help_contains_last_and_retry() -> None:
     assert "/project-add <key> [abs_path] [name]" in text
     assert "/schedule-add <HH:MM> <ask|do> <text>" in text
     assert "/schedule-run <id>" in text
+    assert "/tasks-clear" in text
 
 
 def test_help_summary_mode_is_shorter() -> None:

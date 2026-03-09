@@ -393,3 +393,68 @@ def test_list_cancel_and_delete_tasks(tmp_path: Path) -> None:
     assert row is not None
     assert row["last_task_id"] is None
     assert row["last_task_summary"] is None
+
+
+def test_clear_tasks_removes_terminal_tasks_and_clears_references(tmp_path: Path) -> None:
+    db, store = _setup_store(tmp_path)
+    user = store.ensure_user(
+        CommandContext(
+            telegram_user_id="123",
+            telegram_chat_id="chat-default",
+            telegram_message_id="1",
+            text="/do something",
+        )
+    )
+    project_id = store.get_project_id("p1")
+
+    first_task_id = store.create_task(
+        user_id=user.id,
+        project_id=project_id,
+        chat_id="chat-default",
+        message_id="2",
+        command_type="do",
+        original_request="done task",
+    )
+    second_task_id = store.create_task(
+        user_id=user.id,
+        project_id=project_id,
+        chat_id="chat-default",
+        message_id="3",
+        command_type="ask",
+        original_request="failed task",
+    )
+    store.finalize_task(
+        task_id=first_task_id,
+        status="completed",
+        summary="done",
+        error=None,
+        codex_session_id="sess-done",
+    )
+    store.finalize_task(
+        task_id=second_task_id,
+        status="failed",
+        summary="failed",
+        error="boom",
+        codex_session_id="sess-failed",
+    )
+    store.update_project_state_after_task(
+        project_id=project_id,
+        task_id=second_task_id,
+        summary="failed",
+        codex_session_id="sess-failed",
+        pending_approval_task_id=None,
+        next_step="next",
+    )
+
+    deleted_count = store.clear_tasks(project_id=project_id)
+    assert deleted_count == 2
+    assert store.get_task(first_task_id) is None
+    assert store.get_task(second_task_id) is None
+
+    row = db.get_connection().execute(
+        "SELECT last_task_id, last_task_summary FROM project_state WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["last_task_id"] is None
+    assert row["last_task_summary"] is None

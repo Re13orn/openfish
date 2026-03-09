@@ -129,6 +129,53 @@ class ProjectStateStore:
         )
         connection.commit()
 
+    def clear_missing_task_references(self, *, project_id: int) -> None:
+        connection = self.db.get_connection()
+        connection.execute(
+            """
+            UPDATE project_state
+            SET last_task_id = CASE
+                    WHEN last_task_id IS NOT NULL
+                     AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = project_state.last_task_id)
+                    THEN NULL
+                    ELSE last_task_id
+                END,
+                last_task_summary = CASE
+                    WHEN last_task_id IS NOT NULL
+                     AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = project_state.last_task_id)
+                    THEN NULL
+                    ELSE last_task_summary
+                END,
+                pending_approval_task_id = CASE
+                    WHEN pending_approval_task_id IS NOT NULL
+                     AND NOT EXISTS (
+                        SELECT 1 FROM tasks t WHERE t.id = project_state.pending_approval_task_id
+                     )
+                    THEN NULL
+                    ELSE pending_approval_task_id
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE project_id = ?
+            """,
+            (project_id,),
+        )
+        connection.commit()
+
+    def clear_task_references(self, *, project_id: int) -> None:
+        connection = self.db.get_connection()
+        connection.execute(
+            """
+            UPDATE project_state
+            SET last_task_id = NULL,
+                last_task_summary = NULL,
+                pending_approval_task_id = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE project_id = ?
+            """,
+            (project_id,),
+        )
+        connection.commit()
+
     def get_project_status_row(self, *, active_project_key: str) -> sqlite3.Row | None:
         return self.db.get_connection().execute(
             """
