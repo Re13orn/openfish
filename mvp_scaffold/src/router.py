@@ -1,8 +1,11 @@
 """Command parsing and routing."""
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import re
+import signal
+import subprocess
 from threading import Lock
 from _thread import LockType
 from uuid import uuid4
@@ -24,6 +27,7 @@ from src.formatters import (
     format_projects,
     format_session_detail,
     format_sessions_list,
+    format_tasks_list,
     format_skill_install_result,
     format_skills_list,
     format_schedule_added,
@@ -73,6 +77,14 @@ class DocumentUploadPlan:
     local_path: Path
 
 
+@dataclass(slots=True)
+class ActiveTaskExecution:
+    task_id: int
+    project_id: int
+    process: subprocess.Popen[str] | None = None
+    cancel_requested: bool = False
+
+
 class CommandRouter:
     """Routes supported commands to storage and Codex layers."""
 
@@ -103,6 +115,8 @@ class CommandRouter:
         self.codex_sessions = codex_sessions
         self._project_locks: dict[int, LockType] = {}
         self._project_locks_guard = Lock()
+        self._active_task_executions: dict[int, ActiveTaskExecution] = {}
+        self._active_task_guard = Lock()
 
     def handle(self, ctx: CommandContext) -> CommandResult:
         if not is_allowed_user(self.config, ctx.telegram_user_id):
@@ -202,6 +216,12 @@ class CommandRouter:
             return self._handle_memory(ctx, argument)
         if command == "/cancel":
             return self._handle_cancel(ctx)
+        if command == "/tasks":
+            return self._handle_tasks(ctx, argument)
+        if command == "/task-cancel":
+            return self._handle_task_cancel(ctx, argument)
+        if command == "/task-delete":
+            return self._handle_task_delete(ctx, argument)
         if command == "/diff":
             return self._handle_diff(ctx)
         if command == "/upload_policy":
@@ -1471,6 +1491,7 @@ class CommandRouter:
         if isinstance(lock_or_result, CommandResult):
             return lock_or_result
         project_lock = lock_or_result
+        active_execution_task_id: int | None = None
         try:
             approval_id_arg, approval_note = self._parse_approval_argument(note)
             pending = self.tasks.get_pending_approval(active.project_id, approval_id=approval_id_arg)
@@ -1502,11 +1523,26 @@ class CommandRouter:
                 pending.requested_action,
                 user_note=approval_note or None,
             )
+            self._register_active_task_execution(task_id=pending.task_id, project_id=active.project_id)
+            active_execution_task_id = pending.task_id
             codex_result = self.codex.resume_last(
                 active.project,
                 resume_instruction,
                 progress_callback=ctx.progress_callback,
+                process_callback=lambda proc, tid=pending.task_id: self._set_active_task_process(tid, proc),
             )
+            if self._is_cancel_requested(pending.task_id):
+                cancelled = self.tasks.cancel_task(task_id=pending.task_id, project_id=active.project_id)
+                if cancelled is not None:
+                    self.tasks.update_project_state_after_task(
+                        project_id=active.project_id,
+                        task_id=cancelled.id,
+                        summary=cancelled.latest_summary or "任务已取消。",
+                        codex_session_id=cancelled.codex_session_id,
+                        pending_approval_task_id=None,
+                        next_step="可用 /do 新建任务，或用 /status 查看状态。",
+                    )
+                    return CommandResult(f"任务 #{cancelled.id}: 已取消")
             reassessment = self.approvals.assess(codex_result)
             if reassessment.requires_approval:
                 return self._handle_waiting_approval(
@@ -1524,6 +1560,8 @@ class CommandRouter:
                 next_step="可用 /status 查看当前状态。",
             )
         finally:
+            if active_execution_task_id is not None:
+                self._clear_active_task_execution(active_execution_task_id)
             project_lock.release()
 
     def _handle_reject(self, ctx: CommandContext, reason: str) -> CommandResult:
@@ -1624,13 +1662,71 @@ class CommandRouter:
         )
 
     def _handle_cancel(self, ctx: CommandContext) -> CommandResult:
+        return self._handle_task_cancel(ctx, "")
+
+    def _handle_tasks(self, ctx: CommandContext, argument: str) -> CommandResult:
         active = self._resolve_active_project(ctx)
         if isinstance(active, CommandResult):
             return active
 
-        cancelled = self.tasks.cancel_latest_active_task(active.project_id)
-        if cancelled is None:
+        page_arg = argument.strip()
+        if not page_arg:
+            page = 1
+        else:
+            try:
+                page = int(page_arg)
+            except ValueError:
+                return CommandResult("用法: /tasks [page]，page 必须是正整数。")
+            if page < 1:
+                return CommandResult("用法: /tasks [page]，page 必须是正整数。")
+
+        result = self.tasks.list_tasks(project_id=active.project_id, page=page, page_size=8)
+        self.audit.log(
+            action=audit_events.TASK_LAST_VIEWED,
+            message="查看任务列表",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"page": result.page, "count": result.total_count},
+        )
+        return CommandResult(
+            redact_text(format_tasks_list(result)),
+            metadata={
+                "tasks_page": result.page,
+                "tasks_total_pages": result.total_pages,
+                "tasks_items": result.items,
+            },
+        )
+
+    def _handle_task_cancel(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+
+        task_id = self._parse_task_id(argument)
+        if task_id is None and argument.strip():
+            return CommandResult("用法: /task-cancel [id]")
+
+        task = (
+            self.tasks.get_task_for_project(task_id=task_id, project_id=active.project_id)
+            if task_id is not None
+            else self.tasks.get_latest_active_task(active.project_id)
+        )
+        if task is None or task.status not in {"created", "running", "waiting_approval"}:
             return CommandResult("当前没有可取消的任务。")
+
+        if self._request_active_task_cancel(task.id):
+            self.audit.log(
+                action=audit_events.TASK_CANCELLED,
+                message="请求终止运行中任务",
+                user_id=active.user.id,
+                project_id=active.project_id,
+                task_id=task.id,
+            )
+            return CommandResult(f"已发送取消信号给任务 #{task.id}，等待执行进程退出。")
+
+        cancelled = self.tasks.cancel_task(task_id=task.id, project_id=active.project_id)
+        if cancelled is None:
+            return CommandResult(f"任务 #{task.id} 当前不可取消。")
 
         self.tasks.update_project_state_after_task(
             project_id=active.project_id,
@@ -1648,6 +1744,28 @@ class CommandRouter:
             task_id=cancelled.id,
         )
         return CommandResult(f"已取消任务 #{cancelled.id}。")
+
+    def _handle_task_delete(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+
+        task_id = self._parse_task_id(argument)
+        if task_id is None:
+            return CommandResult("用法: /task-delete <id>")
+
+        deleted = self.tasks.delete_task(task_id=task_id, project_id=active.project_id)
+        if deleted is None:
+            return CommandResult(f"任务 #{task_id} 不存在，或仍在运行中不可删除。")
+
+        self.audit.log(
+            action=audit_events.TASK_CANCELLED,
+            message="删除历史任务",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            task_id=deleted.id,
+        )
+        return CommandResult(f"已删除任务 #{deleted.id}。")
 
     def _handle_diff(self, ctx: CommandContext) -> CommandResult:
         active = self._resolve_active_project(ctx)
@@ -1704,6 +1822,7 @@ class CommandRouter:
             project_id=active.project_id,
             task_id=task_id,
         )
+        self._register_active_task_execution(task_id=task_id, project_id=active.project_id)
 
         try:
             model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
@@ -1721,6 +1840,7 @@ class CommandRouter:
                         request_text,
                         model=model,
                         progress_callback=ctx.progress_callback,
+                        process_callback=lambda proc, tid=task_id: self._set_active_task_process(tid, proc),
                     )
                 else:
                     codex_result = self.codex.ask(
@@ -1728,6 +1848,7 @@ class CommandRouter:
                         request_text,
                         model=model,
                         progress_callback=ctx.progress_callback,
+                        process_callback=lambda proc, tid=task_id: self._set_active_task_process(tid, proc),
                     )
             elif run_mode == "resume":
                 if resume_session_id:
@@ -1737,6 +1858,7 @@ class CommandRouter:
                         request_text,
                         model=model,
                         progress_callback=ctx.progress_callback,
+                        process_callback=lambda proc, tid=task_id: self._set_active_task_process(tid, proc),
                     )
                 else:
                     codex_result = self.codex.resume_last(
@@ -1744,6 +1866,7 @@ class CommandRouter:
                         request_text,
                         model=model,
                         progress_callback=ctx.progress_callback,
+                        process_callback=lambda proc, tid=task_id: self._set_active_task_process(tid, proc),
                     )
             else:
                 if continuation_session_id:
@@ -1753,6 +1876,7 @@ class CommandRouter:
                         request_text,
                         model=model,
                         progress_callback=ctx.progress_callback,
+                        process_callback=lambda proc, tid=task_id: self._set_active_task_process(tid, proc),
                     )
                 else:
                     codex_result = self.codex.run(
@@ -1760,7 +1884,21 @@ class CommandRouter:
                         request_text,
                         model=model,
                         progress_callback=ctx.progress_callback,
+                        process_callback=lambda proc, tid=task_id: self._set_active_task_process(tid, proc),
                     )
+
+            if self._is_cancel_requested(task_id):
+                cancelled = self.tasks.cancel_task(task_id=task_id, project_id=active.project_id)
+                if cancelled is not None:
+                    self.tasks.update_project_state_after_task(
+                        project_id=active.project_id,
+                        task_id=cancelled.id,
+                        summary=cancelled.latest_summary or "任务已取消。",
+                        codex_session_id=cancelled.codex_session_id,
+                        pending_approval_task_id=None,
+                        next_step="可用 /do 新建任务，或用 /status 查看状态。",
+                    )
+                    return CommandResult(f"任务 #{cancelled.id}: 已取消")
 
             assessment = self.approvals.assess(codex_result)
             if assessment.requires_approval:
@@ -1779,6 +1917,7 @@ class CommandRouter:
                 next_step=next_step,
             )
         finally:
+            self._clear_active_task_execution(task_id)
             project_lock.release()
 
     def _handle_waiting_approval(
@@ -1962,6 +2101,48 @@ class CommandRouter:
             repo_dirty=repo_state.dirty if repo_state.is_git_repo else None,
         )
 
+    def _register_active_task_execution(self, *, task_id: int, project_id: int) -> None:
+        with self._active_task_guard:
+            self._active_task_executions[task_id] = ActiveTaskExecution(
+                task_id=task_id,
+                project_id=project_id,
+            )
+
+    def _set_active_task_process(self, task_id: int, process: subprocess.Popen[str] | None) -> None:
+        with self._active_task_guard:
+            state = self._active_task_executions.get(task_id)
+            if state is not None:
+                state.process = process
+
+    def _clear_active_task_execution(self, task_id: int) -> None:
+        with self._active_task_guard:
+            self._active_task_executions.pop(task_id, None)
+
+    def _is_cancel_requested(self, task_id: int) -> bool:
+        with self._active_task_guard:
+            state = self._active_task_executions.get(task_id)
+            return bool(state and state.cancel_requested)
+
+    def _request_active_task_cancel(self, task_id: int) -> bool:
+        with self._active_task_guard:
+            state = self._active_task_executions.get(task_id)
+            if state is None:
+                return False
+            state.cancel_requested = True
+            process = state.process
+        if process is None:
+            return True
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return True
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                return False
+        return True
+
     def _try_acquire_project_lock(
         self, *, active: ActiveProjectContext, operation: str
     ) -> LockType | CommandResult:
@@ -2018,6 +2199,14 @@ class CommandRouter:
         return f"{hour:02d}:{minute:02d}"
 
     def _parse_schedule_id(self, argument: str) -> int | None:
+        if not argument:
+            return None
+        try:
+            return int(argument.strip())
+        except ValueError:
+            return None
+
+    def _parse_task_id(self, argument: str) -> int | None:
         if not argument:
             return None
         try:

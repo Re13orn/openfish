@@ -10,7 +10,7 @@ from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
 from src.repo_inspector import RepoState
 from src.router import CommandRouter
 from src.skills_service import SkillInstallResult, SkillsListResult
-from src.task_store import MemorySnapshot, PendingApprovalRecord, ScheduledTaskRecord, TaskRecord
+from src.task_store import MemorySnapshot, PendingApprovalRecord, ScheduledTaskRecord, TaskPage, TaskRecord
 from src.update_service import LogsResult, UpdateCheckResult, UpdateTriggerResult, VersionInfo
 
 
@@ -125,17 +125,35 @@ class CodexStub:
         self.prompts: list[str] = []
         self.models: list[str | None] = []
 
-    def run(self, project: ProjectConfig, prompt: str, *, model=None, progress_callback=None) -> CodexRunResult:
+    def run(
+        self,
+        project: ProjectConfig,
+        prompt: str,
+        *,
+        model=None,
+        progress_callback=None,
+        process_callback=None,
+    ) -> CodexRunResult:
         _ = project
         _ = progress_callback
+        _ = process_callback
         self.prompts.append(prompt)
         self.models.append(model)
         self.calls.append("run")
         return self.run_result
 
-    def ask(self, project: ProjectConfig, question: str, *, model=None, progress_callback=None) -> CodexRunResult:
+    def ask(
+        self,
+        project: ProjectConfig,
+        question: str,
+        *,
+        model=None,
+        progress_callback=None,
+        process_callback=None,
+    ) -> CodexRunResult:
         _ = project
         _ = progress_callback
+        _ = process_callback
         self.prompts.append(question)
         self.models.append(model)
         self.calls.append("ask")
@@ -149,19 +167,30 @@ class CodexStub:
         *,
         model=None,
         progress_callback=None,
+        process_callback=None,
     ) -> CodexRunResult:
         _ = project
         _ = session_id
         _ = progress_callback
+        _ = process_callback
         self.prompts.append(question)
         self.models.append(model)
         self.calls.append("ask_in_session")
         return self.resume_result
 
-    def resume_last(self, project: ProjectConfig, instruction: str, *, model=None, progress_callback=None) -> CodexRunResult:
+    def resume_last(
+        self,
+        project: ProjectConfig,
+        instruction: str,
+        *,
+        model=None,
+        progress_callback=None,
+        process_callback=None,
+    ) -> CodexRunResult:
         _ = project
         _ = instruction
         _ = progress_callback
+        _ = process_callback
         self.models.append(model)
         self.calls.append("resume_last")
         return self.resume_result
@@ -174,11 +203,13 @@ class CodexStub:
         *,
         model=None,
         progress_callback=None,
+        process_callback=None,
     ) -> CodexRunResult:
         _ = project
         _ = session_id
         _ = instruction
         _ = progress_callback
+        _ = process_callback
         self.models.append(model)
         self.calls.append("resume_session")
         return self.resume_result
@@ -212,6 +243,9 @@ class TasksStub:
         self.bound_project_sessions: list[tuple[int, str, str | None]] = []
         self.resolved_approvals: list[tuple[int, str, str | None]] = []
         self.fail_resolve_for: set[int] = set()
+        self.tasks_by_id: dict[int, TaskRecord] = {
+            self.latest_task.id: self.latest_task,
+        }
 
     def ensure_user(self, ctx: CommandContext) -> UserRecord:
         _ = ctx
@@ -286,10 +320,30 @@ class TasksStub:
         self.last_command_type = command_type
         task_id = self.next_task_id
         self.next_task_id += 1
+        self.latest_task = TaskRecord(
+            id=task_id,
+            command_type=command_type,
+            original_request=original_request,
+            status="created",
+            codex_session_id=None,
+            latest_summary=None,
+        )
+        self.tasks_by_id[task_id] = self.latest_task
         return task_id
 
     def mark_task_running(self, task_id: int) -> None:
-        _ = task_id
+        task = self.tasks_by_id.get(task_id)
+        if task is not None:
+            updated = TaskRecord(
+                id=task.id,
+                command_type=task.command_type,
+                original_request=task.original_request,
+                status="running",
+                codex_session_id=task.codex_session_id,
+                latest_summary=task.latest_summary,
+            )
+            self.tasks_by_id[task_id] = updated
+            self.latest_task = updated
 
     def add_task_artifact(self, task_id: int, artifact_type: str, **kwargs) -> None:  # noqa: ANN003
         _ = task_id
@@ -308,10 +362,21 @@ class TasksStub:
         pending_approval_action: str | None = None,
     ) -> None:
         _ = error
-        _ = codex_session_id
         _ = requires_approval
         _ = pending_approval_action
         self.finalized.append((task_id, status, summary))
+        task = self.tasks_by_id.get(task_id)
+        if task is not None:
+            updated = TaskRecord(
+                id=task.id,
+                command_type=task.command_type,
+                original_request=task.original_request,
+                status=status,
+                codex_session_id=codex_session_id,
+                latest_summary=summary,
+            )
+            self.tasks_by_id[task_id] = updated
+            self.latest_task = updated
 
     def update_project_state_after_task(self, **kwargs) -> None:  # noqa: ANN003
         _ = kwargs
@@ -371,7 +436,16 @@ class TasksStub:
         return True
 
     def mark_task_resumed_after_approval(self, task_id: int) -> None:
-        _ = task_id
+        task = self.tasks_by_id.get(task_id)
+        if task is not None:
+            self.tasks_by_id[task_id] = TaskRecord(
+                id=task.id,
+                command_type=task.command_type,
+                original_request=task.original_request,
+                status="running",
+                codex_session_id=task.codex_session_id,
+                latest_summary=task.latest_summary,
+            )
 
     def mark_task_waiting_approval(
         self,
@@ -386,6 +460,18 @@ class TasksStub:
         _ = pending_action
         _ = codex_session_id
         self.waiting_marked = True
+        task = self.tasks_by_id.get(task_id)
+        if task is not None:
+            updated = TaskRecord(
+                id=task.id,
+                command_type=task.command_type,
+                original_request=task.original_request,
+                status="waiting_approval",
+                codex_session_id=codex_session_id,
+                latest_summary=summary,
+            )
+            self.tasks_by_id[task_id] = updated
+            self.latest_task = updated
 
     def create_approval_request(
         self,
@@ -407,8 +493,18 @@ class TasksStub:
         return 1
 
     def reject_task(self, *, task_id: int, summary: str) -> None:
-        _ = task_id
-        _ = summary
+        task = self.tasks_by_id.get(task_id)
+        if task is not None:
+            updated = TaskRecord(
+                id=task.id,
+                command_type=task.command_type,
+                original_request=task.original_request,
+                status="rejected",
+                codex_session_id=task.codex_session_id,
+                latest_summary=summary,
+            )
+            self.tasks_by_id[task_id] = updated
+            self.latest_task = updated
 
     def add_project_note(self, *, project_id: int, content: str, title: str | None = None) -> None:
         _ = project_id
@@ -430,6 +526,54 @@ class TasksStub:
     def cancel_latest_active_task(self, project_id: int):  # noqa: ANN001
         _ = project_id
         return None
+
+    def get_latest_active_task(self, project_id: int) -> TaskRecord | None:
+        _ = project_id
+        if self.latest_task and self.latest_task.status in {"created", "running", "waiting_approval"}:
+            return self.latest_task
+        return None
+
+    def cancel_task(self, *, task_id: int, project_id: int) -> TaskRecord | None:
+        _ = project_id
+        task = self.tasks_by_id.get(task_id)
+        if task is None or task.status not in {"created", "running", "waiting_approval"}:
+            return None
+        cancelled = TaskRecord(
+            id=task.id,
+            command_type=task.command_type,
+            original_request=task.original_request,
+            status="cancelled",
+            codex_session_id=task.codex_session_id,
+            latest_summary="任务已取消。",
+        )
+        self.tasks_by_id[task_id] = cancelled
+        self.latest_task = cancelled
+        return cancelled
+
+    def list_tasks(self, *, project_id: int, page: int = 1, page_size: int = 10) -> TaskPage:
+        _ = project_id
+        items = sorted(self.tasks_by_id.values(), key=lambda item: item.id, reverse=True)
+        total_count = len(items)
+        total_pages = max(1, (total_count + page_size - 1) // page_size)
+        normalized_page = min(max(1, page), total_pages)
+        offset = (normalized_page - 1) * page_size
+        return TaskPage(
+            items=items[offset : offset + page_size],
+            page=normalized_page,
+            page_size=page_size,
+            total_count=total_count,
+            total_pages=total_pages,
+        )
+
+    def delete_task(self, *, task_id: int, project_id: int) -> TaskRecord | None:
+        _ = project_id
+        task = self.tasks_by_id.get(task_id)
+        if task is None or task.status in {"created", "running", "waiting_approval"}:
+            return None
+        deleted = self.tasks_by_id.pop(task_id)
+        if self.latest_task and self.latest_task.id == task_id:
+            self.latest_task = max(self.tasks_by_id.values(), key=lambda item: item.id, default=None)
+        return deleted
 
     def get_status_snapshot(self, user_id: int, chat_id: str | None = None):  # noqa: ANN001
         _ = user_id
@@ -534,6 +678,9 @@ class TasksStub:
 
     def get_task_for_project(self, *, task_id: int, project_id: int) -> TaskRecord | None:
         _ = project_id
+        task = self.tasks_by_id.get(task_id)
+        if task is not None:
+            return task
         if self.latest_task and self.latest_task.id == task_id:
             return self.latest_task
         return None
@@ -774,6 +921,76 @@ def test_do_success_end_to_end_with_stubs() -> None:
     assert audit_events.TASK_CREATED in codes
     assert audit_events.TASK_STARTED in codes
     assert audit_events.TASK_COMPLETED in codes
+
+
+def test_tasks_lists_project_tasks() -> None:
+    tasks = TasksStub()
+    tasks.tasks_by_id = {
+        8: TaskRecord(
+            id=8,
+            command_type="do",
+            original_request="实现任务管理",
+            status="running",
+            codex_session_id="sess-8",
+            latest_summary="处理中",
+        ),
+        7: TaskRecord(
+            id=7,
+            command_type="ask",
+            original_request="分析阻塞原因",
+            status="completed",
+            codex_session_id="sess-7",
+            latest_summary="ok",
+        ),
+    }
+    tasks.latest_task = tasks.tasks_by_id[8]
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/tasks"))
+
+    assert "【任务】" in result.reply_text
+    assert result.metadata["tasks_page"] == 1
+    assert len(result.metadata["tasks_items"]) == 2
+
+
+def test_task_cancel_cancels_specific_task() -> None:
+    tasks = TasksStub()
+    task = TaskRecord(
+        id=8,
+        command_type="do",
+        original_request="实现任务管理",
+        status="running",
+        codex_session_id="sess-8",
+        latest_summary="处理中",
+    )
+    tasks.tasks_by_id = {8: task}
+    tasks.latest_task = task
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/task-cancel 8"))
+
+    assert "已取消任务 #8" in result.reply_text
+    assert tasks.tasks_by_id[8].status == "cancelled"
+
+
+def test_task_delete_removes_finished_task() -> None:
+    tasks = TasksStub()
+    task = TaskRecord(
+        id=7,
+        command_type="ask",
+        original_request="分析阻塞原因",
+        status="completed",
+        codex_session_id="sess-7",
+        latest_summary="ok",
+    )
+    tasks.tasks_by_id = {7: task}
+    tasks.latest_task = task
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/task-delete 7"))
+
+    assert "已删除任务 #7" in result.reply_text
+    assert 7 not in tasks.tasks_by_id
 
 
 def test_do_enters_waiting_approval_branch() -> None:

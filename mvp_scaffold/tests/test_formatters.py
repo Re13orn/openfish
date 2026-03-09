@@ -8,9 +8,10 @@ from src.formatters import (
     format_session_detail,
     format_sessions_list,
     format_status,
+    format_tasks_list,
     truncate_for_telegram,
 )
-from src.task_store import MemorySnapshot, StatusSnapshot, TaskRecord
+from src.task_store import MemorySnapshot, StatusSnapshot, TaskPage, TaskRecord
 
 
 def test_truncate_for_telegram_short() -> None:
@@ -162,6 +163,41 @@ def test_format_last_task_with_record() -> None:
     assert "最近任务: #3" in text
     assert "类型: /ask" in text
     assert "状态: 失败" in text
+
+
+def test_format_tasks_list() -> None:
+    page = TaskPage(
+        items=[
+            TaskRecord(
+                id=8,
+                command_type="do",
+                original_request="实现任务管理能力",
+                status="running",
+                codex_session_id="sess-8",
+                latest_summary="处理中",
+            ),
+            TaskRecord(
+                id=7,
+                command_type="ask",
+                original_request="分析 stuck task 原因",
+                status="failed",
+                codex_session_id="sess-7",
+                latest_summary="执行失败",
+            ),
+        ],
+        page=1,
+        page_size=8,
+        total_count=2,
+        total_pages=1,
+    )
+
+    text = format_tasks_list(page)
+
+    assert "【任务】" in text
+    assert "- #8 /do · 运行中" in text
+    assert "处理中" in text
+    assert "/task-cancel [id]" in text
+    assert "/task-delete <id>" in text
 
 
 def test_help_contains_last_and_retry() -> None:

@@ -1,7 +1,7 @@
 """Formatting helpers for concise Telegram-friendly replies."""
 
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
-from src.task_store import MemorySnapshot, StatusSnapshot, TaskRecord
+from src.task_store import MemorySnapshot, StatusSnapshot, TaskPage, TaskRecord
 
 
 STATUS_LABELS = {
@@ -57,6 +57,7 @@ def format_help(mode: str = "verbose") -> str:
             "/resume [task_id] [instruction]\n"
             "/diff\n"
             "/model\n"
+            "/tasks\n"
             "/sessions\n"
             "/version\n"
             "/update-check\n"
@@ -76,6 +77,9 @@ def format_help(mode: str = "verbose") -> str:
         "/resume [task_id] [instruction]\n"
         "/diff\n"
         "/model [show|set <name>|reset]\n"
+        "/tasks [page]\n"
+        "/task-cancel [id]\n"
+        "/task-delete <id>\n"
         "/sessions [page]\n"
         "/session <id>\n"
         "/session-import <id> [project_key] [name]\n"
@@ -239,6 +243,27 @@ def format_last_task(*, project_key: str, task: TaskRecord | None) -> str:
         f"请求: {_clip(task.original_request, 120)}\n"
         f"摘要: {_clip(task.latest_summary, 160) if task.latest_summary else '暂无'}"
     )
+
+
+def format_tasks_list(result: TaskPage) -> str:
+    lines = [
+        "【任务】",
+        f"页码: {result.page}/{result.total_pages}",
+        f"总数: {result.total_count}",
+    ]
+    if not result.items:
+        lines.append("暂无任务。")
+        return "\n".join(lines)
+    lines.append("最近任务:")
+    for item in result.items:
+        lines.append(
+            f"- #{item.id} /{item.command_type} · {STATUS_LABELS.get(item.status, item.status)}"
+        )
+        lines.append(f"  请求: {_clip(item.original_request, 80)}")
+        if item.latest_summary:
+            lines.append(f"  摘要: {_clip(item.latest_summary, 100)}")
+    lines.append("可用 /task-cancel [id] 或 /task-delete <id> 管理任务。")
+    return "\n".join(lines)
 
 
 def format_projects(

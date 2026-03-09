@@ -6,7 +6,7 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from src.codex_session_service import CodexSessionRecord
-from src.task_store import ScheduledTaskRecord, StatusSnapshot
+from src.task_store import ScheduledTaskRecord, StatusSnapshot, TaskRecord
 
 
 @dataclass(slots=True)
@@ -164,7 +164,10 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="MCP 列表", callback_data="cmd:mcp"),
                         InlineKeyboardButton(text="MCP 详情", callback_data="prompt:mcp"),
                     ],
-                    [InlineKeyboardButton(text="会话", callback_data="cmd:sessions")],
+                    [
+                        InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
+                        InlineKeyboardButton(text="任务", callback_data="cmd:tasks"),
+                    ],
                     [InlineKeyboardButton(text="模型", callback_data="panel:model")],
                     [
                         InlineKeyboardButton(text="版本", callback_data="cmd:version"),
@@ -372,6 +375,25 @@ class TelegramViewFactory:
                 ]
             )
         rows.append([InlineKeyboardButton(text="刷新", callback_data="schedule:refresh")])
+        return InlineKeyboardMarkup(rows)
+
+    def tasks_list_markup(self, tasks: list[TaskRecord], *, page: int, total_pages: int) -> InlineKeyboardMarkup:
+        rows: list[list[InlineKeyboardButton]] = []
+        for item in tasks[:8]:
+            action = (
+                InlineKeyboardButton(text=f"取消 #{item.id}", callback_data=f"task:cancel:{item.id}")
+                if item.status in {"created", "running", "waiting_approval"}
+                else InlineKeyboardButton(text=f"删除 #{item.id}", callback_data=f"task:delete:{item.id}")
+            )
+            rows.append([action])
+        nav: list[InlineKeyboardButton] = []
+        if page > 1:
+            nav.append(InlineKeyboardButton(text="上一页", callback_data=f"tasks:page:{page - 1}"))
+        if page < total_pages:
+            nav.append(InlineKeyboardButton(text="下一页", callback_data=f"tasks:page:{page + 1}"))
+        if nav:
+            rows.append(nav)
+        rows.append([InlineKeyboardButton(text="更多操作", callback_data="panel:more")])
         return InlineKeyboardMarkup(rows)
 
     def default_result_markup(

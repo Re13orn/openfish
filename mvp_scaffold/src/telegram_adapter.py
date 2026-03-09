@@ -82,6 +82,7 @@ class TelegramBotService:
         "restart": "/restart",
         "logs": "/logs",
         "logs_clear": "/logs-clear",
+        "tasks": "/tasks",
         "schedule_list": "/schedule-list",
         "last": "/last",
         "memory": "/memory",
@@ -508,6 +509,10 @@ class TelegramBotService:
                 page = data.rsplit(":", 1)[1]
                 await self._execute_command(query.message, base_ctx, f"/sessions {page}")
                 return
+            if data.startswith("tasks:page:"):
+                page = data.rsplit(":", 1)[1]
+                await self._execute_command(query.message, base_ctx, f"/tasks {page}")
+                return
             if data == "approval:approve":
                 await self._execute_command(query.message, base_ctx, "/approve")
                 await self._clear_inline_keyboard(query.message)
@@ -565,6 +570,14 @@ class TelegramBotService:
             if data.startswith("schedule:del:"):
                 schedule_id = data.rsplit(":", 1)[1]
                 await self._execute_command(query.message, base_ctx, f"/schedule-del {schedule_id}")
+                return
+            if data.startswith("task:cancel:"):
+                task_id = data.rsplit(":", 1)[1]
+                await self._execute_command(query.message, base_ctx, f"/task-cancel {task_id}")
+                return
+            if data.startswith("task:delete:"):
+                task_id = data.rsplit(":", 1)[1]
+                await self._execute_command(query.message, base_ctx, f"/task-delete {task_id}")
                 return
             if data in {"taskmode:ask", "taskmode:do"}:
                 token = "ask" if data.endswith(":ask") else "do"
@@ -1103,6 +1116,12 @@ class TelegramBotService:
             send_spec.edit_context = "sending schedule panel"
             send_spec.edit_window_seconds = float(
                 getattr(self.config, "telegram_schedule_edit_window_seconds", 300.0)
+            )
+        elif command == "/tasks":
+            send_spec.context = "sending tasks panel"
+            send_spec.edit_context = "sending tasks panel"
+            send_spec.edit_window_seconds = float(
+                getattr(self.config, "telegram_tasks_edit_window_seconds", 300.0)
             )
         elif command == "/memory":
             send_spec.context = "sending memory panel"
@@ -1692,6 +1711,13 @@ class TelegramBotService:
             project_id = self.router.tasks.get_project_id(active_key)
             schedules = self.router.tasks.list_scheduled_tasks(project_id)
             return self.views.schedule_list_markup(schedules)
+        if command == "/tasks":
+            metadata = result.metadata or {}
+            items = metadata.get("tasks_items")
+            page = metadata.get("tasks_page")
+            total_pages = metadata.get("tasks_total_pages")
+            if isinstance(items, list) and isinstance(page, int) and isinstance(total_pages, int):
+                return self.views.tasks_list_markup(items, page=page, total_pages=total_pages)
         if command == "/memory":
             metadata = result.metadata or {}
             page = metadata.get("memory_page")

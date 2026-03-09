@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip("telegram")
 
 from src.codex_session_service import CodexSessionRecord
-from src.task_store import StatusSnapshot
+from src.task_store import StatusSnapshot, TaskRecord
 from src.telegram_views import TelegramViewFactory
 
 
@@ -116,3 +116,36 @@ def test_sessions_list_and_detail_markup() -> None:
     assert list_markup.inline_keyboard[1][0].callback_data == "sessions:page:1"
     assert list_markup.inline_keyboard[1][1].callback_data == "sessions:page:3"
     assert detail_markup.inline_keyboard[0][0].callback_data == "session:import:sess-native-1"
+
+
+def test_tasks_list_markup_contains_cancel_delete_and_pagination() -> None:
+    factory = TelegramViewFactory()
+
+    markup = factory.tasks_list_markup(
+        [
+            TaskRecord(
+                id=9,
+                command_type="do",
+                original_request="run task",
+                status="running",
+                codex_session_id="sess-9",
+                latest_summary="处理中",
+            ),
+            TaskRecord(
+                id=8,
+                command_type="ask",
+                original_request="question",
+                status="completed",
+                codex_session_id="sess-8",
+                latest_summary="ok",
+            ),
+        ],
+        page=2,
+        total_pages=3,
+    )
+
+    rows = markup.inline_keyboard
+    assert rows[0][0].callback_data == "task:cancel:9"
+    assert rows[1][0].callback_data == "task:delete:8"
+    assert rows[2][0].callback_data == "tasks:page:1"
+    assert rows[2][1].callback_data == "tasks:page:3"

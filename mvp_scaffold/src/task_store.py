@@ -47,6 +47,15 @@ class TaskRecord:
 
 
 @dataclass(slots=True)
+class TaskPage:
+    items: list[TaskRecord]
+    page: int
+    page_size: int
+    total_count: int
+    total_pages: int
+
+
+@dataclass(slots=True)
 class PendingApprovalRecord:
     task_id: int
     approval_id: int
@@ -466,14 +475,43 @@ class TaskStore:
         row = self.runtime.get_latest_task_row(project_id)
         return self._row_to_task(row)
 
+    def list_tasks(self, *, project_id: int, page: int = 1, page_size: int = 10) -> TaskPage:
+        normalized_page_size = max(1, int(page_size))
+        total_count = self.runtime.count_tasks(project_id)
+        total_pages = max(1, (total_count + normalized_page_size - 1) // normalized_page_size)
+        normalized_page = min(max(1, int(page)), total_pages)
+        offset = (normalized_page - 1) * normalized_page_size
+        rows = self.runtime.list_task_rows(
+            project_id=project_id,
+            limit=normalized_page_size,
+            offset=offset,
+        )
+        return TaskPage(
+            items=[item for item in (self._row_to_task(row) for row in rows) if item is not None],
+            page=normalized_page,
+            page_size=normalized_page_size,
+            total_count=total_count,
+            total_pages=total_pages,
+        )
+
     def get_latest_resumable_task(self, project_id: int) -> TaskRecord | None:
         row = self.runtime.get_latest_resumable_task_row(project_id)
+        return self._row_to_task(row)
+
+    def get_latest_active_task(self, project_id: int) -> TaskRecord | None:
+        row = self.runtime.get_latest_active_task_row(project_id)
         return self._row_to_task(row)
 
     def cancel_latest_active_task(self, project_id: int) -> TaskRecord | None:
         row = self.runtime.get_latest_active_task_row(project_id)
         task = self._row_to_task(row)
         if task is None:
+            return None
+        return self.cancel_task(task_id=task.id, project_id=project_id)
+
+    def cancel_task(self, *, task_id: int, project_id: int) -> TaskRecord | None:
+        task = self.get_task_for_project(task_id=task_id, project_id=project_id)
+        if task is None or task.status not in {"created", "running", "waiting_approval"}:
             return None
 
         if task.status == "waiting_approval":
@@ -495,6 +533,15 @@ class TaskStore:
             codex_session_id=task.codex_session_id,
             latest_summary=cancel_summary,
         )
+
+    def delete_task(self, *, task_id: int, project_id: int) -> TaskRecord | None:
+        task = self.get_task_for_project(task_id=task_id, project_id=project_id)
+        if task is None or task.status in {"created", "running", "waiting_approval"}:
+            return None
+        self.project_state.clear_deleted_task_references(project_id=project_id, task_id=task_id)
+        if not self.runtime.delete_task(task_id=task_id, project_id=project_id):
+            return None
+        return task
 
     def get_task(self, task_id: int) -> TaskRecord | None:
         row = self.runtime.get_task_row(task_id)

@@ -322,3 +322,74 @@ def test_recover_interrupted_tasks_marks_created_and_running_failed(tmp_path: Pa
     assert (running_task_id, "task.failed") in {
         (int(row["task_id"]), str(row["event_type"])) for row in event_rows
     }
+
+
+def test_list_cancel_and_delete_tasks(tmp_path: Path) -> None:
+    db, store = _setup_store(tmp_path)
+    user = store.ensure_user(
+        CommandContext(
+            telegram_user_id="123",
+            telegram_chat_id="chat-default",
+            telegram_message_id="1",
+            text="/do something",
+        )
+    )
+    project_id = store.get_project_id("p1")
+
+    running_task_id = store.create_task(
+        user_id=user.id,
+        project_id=project_id,
+        chat_id="chat-default",
+        message_id="2",
+        command_type="do",
+        original_request="running task",
+    )
+    finished_task_id = store.create_task(
+        user_id=user.id,
+        project_id=project_id,
+        chat_id="chat-default",
+        message_id="3",
+        command_type="ask",
+        original_request="finished task",
+    )
+
+    store.mark_task_running(running_task_id)
+    store.finalize_task(
+        task_id=finished_task_id,
+        status="completed",
+        summary="done",
+        error=None,
+        codex_session_id="sess-finished",
+    )
+    store.update_project_state_after_task(
+        project_id=project_id,
+        task_id=finished_task_id,
+        summary="done",
+        codex_session_id="sess-finished",
+        pending_approval_task_id=None,
+        next_step="next",
+    )
+
+    page = store.list_tasks(project_id=project_id, page=1, page_size=10)
+    assert [item.id for item in page.items] == [finished_task_id, running_task_id]
+
+    cancelled = store.cancel_task(task_id=running_task_id, project_id=project_id)
+    assert cancelled is not None
+    assert cancelled.status == "cancelled"
+
+    deleted = store.delete_task(task_id=finished_task_id, project_id=project_id)
+    assert deleted is not None
+    assert deleted.id == finished_task_id
+    assert store.get_task(finished_task_id) is None
+
+    row = db.get_connection().execute(
+        """
+        SELECT last_task_id, last_task_summary
+        FROM project_state
+        WHERE project_id = ?
+        """,
+        (project_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["last_task_id"] is None
+    assert row["last_task_summary"] is None

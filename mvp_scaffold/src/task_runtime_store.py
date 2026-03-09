@@ -167,6 +167,30 @@ class TaskRuntimeStore:
             (project_id,),
         ).fetchone()
 
+    def count_tasks(self, project_id: int) -> int:
+        row = self.db.get_connection().execute(
+            """
+            SELECT COUNT(*)
+            FROM tasks
+            WHERE project_id = ?
+            """,
+            (project_id,),
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def list_task_rows(self, *, project_id: int, limit: int, offset: int) -> list[sqlite3.Row]:
+        return self.db.get_connection().execute(
+            """
+            SELECT id, command_type, original_request, status, codex_session_id, latest_summary
+            FROM tasks
+            WHERE project_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            OFFSET ?
+            """,
+            (project_id, limit, offset),
+        ).fetchall()
+
     def get_latest_resumable_task_row(self, project_id: int) -> sqlite3.Row | None:
         return self.db.get_connection().execute(
             """
@@ -214,6 +238,19 @@ class TaskRuntimeStore:
             """,
             (task_id, project_id),
         ).fetchone()
+
+    def delete_task(self, *, task_id: int, project_id: int) -> bool:
+        connection = self.db.get_connection()
+        cursor = connection.execute(
+            """
+            DELETE FROM tasks
+            WHERE id = ?
+              AND project_id = ?
+            """,
+            (task_id, project_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
 
     def mark_task_resumed_after_approval(self, task_id: int) -> None:
         connection = self.db.get_connection()

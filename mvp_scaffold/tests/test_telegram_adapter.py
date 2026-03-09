@@ -307,6 +307,7 @@ def test_callback_token_maps_to_command() -> None:
     assert service._resolve_callback_command("status") == "/status"
     assert service._resolve_callback_command("mcp") == "/mcp"
     assert service._resolve_callback_command("sessions") == "/sessions"
+    assert service._resolve_callback_command("tasks") == "/tasks"
     assert service._resolve_callback_command("model") == "/model"
     assert service._resolve_callback_command("version") == "/version"
     assert service._resolve_callback_command("update_check") == "/update-check"
@@ -691,6 +692,7 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
     markup = captured["markup"]
     rows = markup.inline_keyboard
     assert any(button.callback_data == "cmd:sessions" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:tasks" for row in rows for button in row)
     assert any(button.callback_data == "panel:model" for row in rows for button in row)
     assert any(button.callback_data == "cmd:restart" for row in rows for button in row)
     assert any(button.callback_data == "cmd:logs" for row in rows for button in row)
@@ -893,6 +895,114 @@ def test_sessions_page_callback_executes_sessions_command(monkeypatch) -> None:
     asyncio.run(service._on_callback_query(update, SimpleNamespace()))
 
     assert executed == ["/sessions 2"]
+
+
+def test_tasks_page_callback_executes_tasks_command(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    message = MessageStub([object()])
+    query = SimpleNamespace(message=message, data="tasks:page:2")
+
+    async def fake_answer(*args, **kwargs):  # noqa: ANN003
+        _ = args
+        _ = kwargs
+        return None
+
+    query.answer = fake_answer
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_callback_query(update, SimpleNamespace()))
+
+    assert executed == ["/tasks 2"]
+
+
+def test_task_cancel_callback_executes_cancel_command(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    message = MessageStub([object()])
+    query = SimpleNamespace(message=message, data="task:cancel:12")
+
+    async def fake_answer(*args, **kwargs):  # noqa: ANN003
+        _ = args
+        _ = kwargs
+        return None
+
+    query.answer = fake_answer
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_callback_query(update, SimpleNamespace()))
+
+    assert executed == ["/task-cancel 12"]
+
+
+def test_task_delete_callback_executes_delete_command(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    message = MessageStub([object()])
+    query = SimpleNamespace(message=message, data="task:delete:12")
+
+    async def fake_answer(*args, **kwargs):  # noqa: ANN003
+        _ = args
+        _ = kwargs
+        return None
+
+    query.answer = fake_answer
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_callback_query(update, SimpleNamespace()))
+
+    assert executed == ["/task-delete 12"]
 
 
 def test_session_detail_callback_executes_session_command(monkeypatch) -> None:

@@ -94,6 +94,41 @@ class ProjectStateStore:
         )
         connection.commit()
 
+    def clear_deleted_task_references(self, *, project_id: int, task_id: int) -> None:
+        connection = self.db.get_connection()
+        row = connection.execute(
+            """
+            SELECT last_task_id, last_task_summary, pending_approval_task_id
+            FROM project_state
+            WHERE project_id = ?
+            """,
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            return
+        clear_last_task = row["last_task_id"] is not None and int(row["last_task_id"]) == task_id
+        clear_pending = (
+            row["pending_approval_task_id"] is not None
+            and int(row["pending_approval_task_id"]) == task_id
+        )
+        connection.execute(
+            """
+            UPDATE project_state
+            SET last_task_id = ?,
+                last_task_summary = ?,
+                pending_approval_task_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE project_id = ?
+            """,
+            (
+                None if clear_last_task else row["last_task_id"],
+                None if clear_last_task else row["last_task_summary"],
+                None if clear_pending else row["pending_approval_task_id"],
+                project_id,
+            ),
+        )
+        connection.commit()
+
     def get_project_status_row(self, *, active_project_key: str) -> sqlite3.Row | None:
         return self.db.get_connection().execute(
             """

@@ -2,8 +2,10 @@
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 from threading import Thread
 from typing import Callable
@@ -43,6 +45,7 @@ class CodexRunner:
         *,
         model: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
+        process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
         """Execute a standard write-oriented Codex task."""
 
@@ -56,6 +59,7 @@ class CodexRunner:
             command,
             project.path,
             progress_callback=progress_callback,
+            process_callback=process_callback,
         )
         return self._build_result(proc, used_json, resolved_command)
 
@@ -66,6 +70,7 @@ class CodexRunner:
         *,
         model: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
+        process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
         """Execute a conservative read-oriented Codex request."""
 
@@ -80,6 +85,7 @@ class CodexRunner:
             command,
             project.path,
             progress_callback=progress_callback,
+            process_callback=process_callback,
         )
         return self._build_result(proc, used_json, resolved_command)
 
@@ -91,6 +97,7 @@ class CodexRunner:
         *,
         model: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
+        process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
         """Continue an existing session with a read-only analysis request."""
 
@@ -100,6 +107,7 @@ class CodexRunner:
             self._build_ask_prompt(question),
             model=model,
             progress_callback=progress_callback,
+            process_callback=process_callback,
         )
 
     def resume_last(
@@ -109,6 +117,7 @@ class CodexRunner:
         *,
         model: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
+        process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
         """Resume the previous Codex session if supported by the CLI."""
 
@@ -125,6 +134,7 @@ class CodexRunner:
             instruction=instruction,
             model=model,
             progress_callback=progress_callback,
+            process_callback=process_callback,
         )
 
     def resume_session(
@@ -135,6 +145,7 @@ class CodexRunner:
         *,
         model: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
+        process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
         """Resume a specific Codex session if CLI supports explicit session target."""
 
@@ -155,6 +166,7 @@ class CodexRunner:
                 fallback_to_exec=False,
                 model=model,
                 progress_callback=progress_callback,
+                process_callback=process_callback,
             )
             if result.ok:
                 return result
@@ -170,6 +182,7 @@ class CodexRunner:
             fallback_instruction,
             model=model,
             progress_callback=progress_callback,
+            process_callback=process_callback,
         )
 
     def _build_result(
@@ -238,13 +251,19 @@ class CodexRunner:
         project_path: Path,
         *,
         progress_callback: Callable[[str, str], None] | None = None,
+        process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], bool, list[str]]:
         current_command = list(command)
         last_proc: subprocess.CompletedProcess[str] | None = None
         max_attempts = 8
 
         for _ in range(max_attempts):
-            proc = self._run_subprocess(current_command, cwd=project_path, progress_callback=progress_callback)
+            proc = self._run_subprocess(
+                current_command,
+                cwd=project_path,
+                progress_callback=progress_callback,
+                process_callback=process_callback,
+            )
             last_proc = proc
             if proc.returncode == 0:
                 return proc, "--json" in current_command, current_command
@@ -268,7 +287,12 @@ class CodexRunner:
             current_command = next_command
 
         if last_proc is None:
-            last_proc = self._run_subprocess(current_command, cwd=project_path, progress_callback=progress_callback)
+            last_proc = self._run_subprocess(
+                current_command,
+                cwd=project_path,
+                progress_callback=progress_callback,
+                process_callback=process_callback,
+            )
         return last_proc, "--json" in current_command, current_command
 
     def _run_subprocess(
@@ -277,19 +301,53 @@ class CodexRunner:
         *,
         cwd: Path,
         progress_callback: Callable[[str, str], None] | None = None,
+        process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if progress_callback is None:
-            return self._run_subprocess_blocking(command, cwd=cwd)
-        return self._run_subprocess_streaming(command, cwd=cwd, progress_callback=progress_callback)
+            return self._run_subprocess_blocking(command, cwd=cwd, process_callback=process_callback)
+        return self._run_subprocess_streaming(
+            command,
+            cwd=cwd,
+            progress_callback=progress_callback,
+            process_callback=process_callback,
+        )
 
-    def _run_subprocess_blocking(self, command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    def _run_subprocess_blocking(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         try:
-            return subprocess.run(
+            proc = subprocess.Popen(
                 command,
                 cwd=str(cwd),
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=self.config.codex_command_timeout_seconds,
+                start_new_session=True,
+            )
+            if process_callback is not None:
+                process_callback(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=self.config.codex_command_timeout_seconds)
+            except subprocess.TimeoutExpired:
+                self._kill_process_tree(proc)
+                stdout, stderr = proc.communicate()
+                timeout_message = f"Codex command timed out after {self.config.codex_command_timeout_seconds}s"
+                stderr = f"{stderr.rstrip()}\n{timeout_message}".strip() if stderr else timeout_message
+                return subprocess.CompletedProcess(
+                    args=command,
+                    returncode=124,
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=proc.returncode,
+                stdout=stdout,
+                stderr=stderr,
             )
         except FileNotFoundError:
             return subprocess.CompletedProcess(
@@ -298,13 +356,9 @@ class CodexRunner:
                 stdout="",
                 stderr=f"Codex binary not found: {self.config.codex_bin}",
             )
-        except subprocess.TimeoutExpired:
-            return subprocess.CompletedProcess(
-                args=command,
-                returncode=124,
-                stdout="",
-                stderr=f"Codex command timed out after {self.config.codex_command_timeout_seconds}s",
-            )
+        finally:
+            if process_callback is not None:
+                process_callback(None)
 
     def _run_subprocess_streaming(
         self,
@@ -312,6 +366,7 @@ class CodexRunner:
         *,
         cwd: Path,
         progress_callback: Callable[[str, str], None],
+        process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         try:
             proc = subprocess.Popen(
@@ -321,7 +376,10 @@ class CodexRunner:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                start_new_session=True,
             )
+            if process_callback is not None:
+                process_callback(proc)
         except FileNotFoundError:
             return subprocess.CompletedProcess(
                 args=command,
@@ -349,33 +407,38 @@ class CodexRunner:
         stderr_thread.start()
 
         try:
-            returncode = proc.wait(timeout=self.config.codex_command_timeout_seconds)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            try:
+                returncode = proc.wait(timeout=self.config.codex_command_timeout_seconds)
+            except subprocess.TimeoutExpired:
+                self._kill_process_tree(proc)
+                proc.wait()
+                stdout_thread.join(timeout=1.0)
+                stderr_thread.join(timeout=1.0)
+                stderr_text = "".join(stderr_parts)
+                timeout_message = f"Codex command timed out after {self.config.codex_command_timeout_seconds}s"
+                if stderr_text:
+                    stderr_text = f"{stderr_text.rstrip()}\n{timeout_message}"
+                else:
+                    stderr_text = timeout_message
+                return subprocess.CompletedProcess(
+                    args=command,
+                    returncode=124,
+                    stdout="".join(stdout_parts),
+                    stderr=stderr_text,
+                )
+
             stdout_thread.join(timeout=1.0)
             stderr_thread.join(timeout=1.0)
-            stderr_text = "".join(stderr_parts)
-            timeout_message = f"Codex command timed out after {self.config.codex_command_timeout_seconds}s"
-            if stderr_text:
-                stderr_text = f"{stderr_text.rstrip()}\n{timeout_message}"
-            else:
-                stderr_text = timeout_message
             return subprocess.CompletedProcess(
                 args=command,
-                returncode=124,
+                returncode=returncode,
                 stdout="".join(stdout_parts),
-                stderr=stderr_text,
+                stderr="".join(stderr_parts),
             )
+        finally:
+            if process_callback is not None:
+                process_callback(None)
 
-        stdout_thread.join(timeout=1.0)
-        stderr_thread.join(timeout=1.0)
-        return subprocess.CompletedProcess(
-            args=command,
-            returncode=returncode,
-            stdout="".join(stdout_parts),
-            stderr="".join(stderr_parts),
-        )
 
     def _looks_like_json_flag_error(self, stderr: str) -> bool:
         lower = stderr.lower()
@@ -418,8 +481,14 @@ class CodexRunner:
         fallback_to_exec: bool = True,
         model: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
+        process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
-        proc = self._run_subprocess(command, cwd=project.path, progress_callback=progress_callback)
+        proc = self._run_subprocess(
+            command,
+            cwd=project.path,
+            progress_callback=progress_callback,
+            process_callback=process_callback,
+        )
         used_json = self.config.codex_json_output
         if proc.returncode != 0 and fallback_to_exec and self._looks_like_resume_command_error(proc.stderr):
             fallback_prompt = (
@@ -436,10 +505,19 @@ class CodexRunner:
                 fallback_command,
                 project.path,
                 progress_callback=progress_callback,
+                process_callback=process_callback,
             )
             return self._build_result(fallback_proc, used_json, resolved_command)
 
         return self._build_result(proc, used_json, command)
+
+    def _kill_process_tree(self, proc: subprocess.Popen[str]) -> None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except Exception:
+            proc.kill()
 
     def _effective_approval_mode(self) -> str | None:
         mode = (self.config.codex_default_approval_mode or "").strip()

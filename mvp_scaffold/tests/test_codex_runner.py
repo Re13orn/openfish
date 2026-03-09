@@ -26,9 +26,11 @@ class StubCodexRunner(CodexRunner):
         *,
         cwd: Path,
         progress_callback=None,
+        process_callback=None,
     ) -> subprocess.CompletedProcess[str]:
         _ = cwd
         _ = progress_callback
+        _ = process_callback
         self.commands.append(list(command))
         if not self._responses:
             raise RuntimeError("No stub response left.")
