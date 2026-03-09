@@ -101,20 +101,6 @@ def schedule_add_prompt(step: str, data: dict) -> str:
     )
 
 
-def run_template_prompt(step: str, data: dict, template_keys: str) -> str:
-    if step == "template":
-        return f"模板执行向导 1/3\n请输入模板 key。\n可用模板: {template_keys}"
-    if step == "extra":
-        return "模板执行向导 2/3\n请输入附加说明。\n如果不需要，请回复“跳过”。"
-    extra_text = data.get("extra") or "无"
-    return (
-        "模板执行向导 3/3\n"
-        f"模板: {data.get('template')}\n"
-        f"附加说明: {extra_text}\n"
-        "回复“确认”执行，回复“取消”放弃。"
-    )
-
-
 def approval_note_prompt(step: str, data: dict, *, action: str) -> str:
     label = "批准" if action == "approve" else "拒绝"
     subject = "审批备注" if action == "approve" else "拒绝原因"

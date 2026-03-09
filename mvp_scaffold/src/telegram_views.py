@@ -150,10 +150,6 @@ class TelegramViewFactory:
                     ],
                     [InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current")],
                     [
-                        InlineKeyboardButton(text="模板列表", callback_data="cmd:templates"),
-                        InlineKeyboardButton(text="执行模板", callback_data="prompt:run"),
-                    ],
-                    [
                         InlineKeyboardButton(text="审批面板", callback_data="panel:approval"),
                         InlineKeyboardButton(text="上传策略", callback_data="cmd:upload_policy"),
                     ],

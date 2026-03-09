@@ -20,7 +20,6 @@ from src.models import CommandContext, CommandResult
 from src.progress_reporter import ProgressReporter
 from src.telegram_sink import TelegramMessageSink, TelegramSendSpec
 from src.task_store import TaskRecord
-from src.task_templates import BUILTIN_TEMPLATES
 from src.telegram_views import TelegramReplySpec, TelegramViewFactory
 
 
@@ -72,7 +71,6 @@ class TelegramBotService:
         "help": "/help",
         "status": "/status",
         "projects": "/projects",
-        "templates": "/templates",
         "skills": "/skills",
         "mcp": "/mcp",
         "sessions": "/sessions",
@@ -104,7 +102,7 @@ class TelegramBotService:
         "ui_verbose": "/ui verbose",
     }
 
-    _WIZARD_TOKENS = {"project_add", "schedule_add", "run", "approve_note", "reject_note"}
+    _WIZARD_TOKENS = {"project_add", "schedule_add", "approve_note", "reject_note"}
     _WIZARD_CANCEL_TOKENS = {"取消", "cancel", "/cancel", "退出", "exit"}
     _WIZARD_SKIP_TOKENS = {"跳过", "skip", "-", "无"}
     _WIZARD_CONFIRM_TOKENS = {"确认", "确认执行", "confirm", "ok", "yes"}
@@ -150,7 +148,6 @@ class TelegramBotService:
         "/reject",
         "/resume",
         "/retry",
-        "/run",
         "/schedule-run",
         "/skill-install",
         "/logs",
@@ -1289,10 +1286,6 @@ class TelegramBotService:
             await self._handle_wizard_input(message, ctx, state, data.rsplit(":", 1)[1])
             await self._clear_inline_keyboard(message)
             return
-        if data.startswith("wizard:template:"):
-            await self._handle_wizard_input(message, ctx, state, data.split(":", 2)[2])
-            await self._clear_inline_keyboard(message)
-            return
         if data.startswith("wizard:preset:"):
             await self._handle_wizard_input(message, ctx, state, data.split(":", 2)[2])
             await self._clear_inline_keyboard(message)
@@ -1328,7 +1321,7 @@ class TelegramBotService:
         preface: str | None = None,
     ) -> None:  # noqa: ANN001
         user = self.router.tasks.ensure_user(ctx)
-        if token in {"run", "schedule_add"}:
+        if token == "schedule_add":
             active_key = self.router.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
             if not active_key:
                 await self._send_text(
@@ -1367,7 +1360,7 @@ class TelegramBotService:
                 },
             }
         else:
-            state = {"kind": token, "step": "template", "data": {}}
+            state = {"kind": token, "step": "key", "data": {}}
         self.router.tasks.set_chat_wizard_state(
             chat_id=ctx.telegram_chat_id,
             user_id=user.id,
@@ -1399,8 +1392,7 @@ class TelegramBotService:
         if kind == "reject_note":
             return telegram_messages.approval_note_prompt(step=step, data=data, action="reject")
 
-        template_keys = ", ".join(sorted(BUILTIN_TEMPLATES.keys()))
-        return telegram_messages.run_template_prompt(step=step, data=data, template_keys=template_keys)
+        return "未知向导。"
 
     def _wizard_markup(self, state: dict) -> InlineKeyboardMarkup:
         kind = str(state.get("kind") or "")
@@ -1444,36 +1436,6 @@ class TelegramBotService:
                 return InlineKeyboardMarkup(
                     [[
                         InlineKeyboardButton(text="确认创建", callback_data="wizard:confirm"),
-                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
-                    ]]
-                )
-
-        if kind == "run":
-            if step == "template":
-                rows: list[list[InlineKeyboardButton]] = []
-                current_row: list[InlineKeyboardButton] = []
-                for key in sorted(BUILTIN_TEMPLATES.keys()):
-                    current_row.append(
-                        InlineKeyboardButton(text=key, callback_data=f"wizard:template:{key}")
-                    )
-                    if len(current_row) == 2:
-                        rows.append(current_row)
-                        current_row = []
-                if current_row:
-                    rows.append(current_row)
-                rows.append([InlineKeyboardButton(text="取消", callback_data="wizard:cancel")])
-                return InlineKeyboardMarkup(rows)
-            if step == "extra":
-                return InlineKeyboardMarkup(
-                    [[
-                        InlineKeyboardButton(text="跳过附加说明", callback_data="wizard:skip"),
-                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
-                    ]]
-                )
-            if step == "confirm":
-                return InlineKeyboardMarkup(
-                    [[
-                        InlineKeyboardButton(text="确认执行", callback_data="wizard:confirm"),
                         InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
                     ]]
                 )
@@ -1658,15 +1620,6 @@ class TelegramBotService:
                 return {"kind": kind, "step": "confirm", "data": data}
             return None
 
-        if step == "template":
-            template_key = text.strip()
-            if template_key not in BUILTIN_TEMPLATES:
-                return None
-            data["template"] = template_key
-            return {"kind": kind, "step": "extra", "data": data}
-        if step == "extra":
-            data["extra"] = "" if lowered in {item.lower() for item in self._WIZARD_SKIP_TOKENS} else text
-            return {"kind": kind, "step": "confirm", "data": data}
         return None
 
     def _wizard_command(self, state: dict) -> str:
@@ -1689,10 +1642,7 @@ class TelegramBotService:
         if kind == "reject_note":
             note = str(data.get("note") or "用户拒绝").strip() or "用户拒绝"
             return f"/reject {data['approval_id']} {note}"
-        extra = str(data.get("extra") or "").strip()
-        if extra:
-            return f"/run {data['template']} {extra}"
-        return f"/run {data['template']}"
+        return ""
 
     def _project_shortcuts_markup(self, recent_projects: list[str] | None) -> InlineKeyboardMarkup | ReplyKeyboardMarkup:
         return self.views.project_shortcuts_markup(recent_projects)

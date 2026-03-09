@@ -1466,24 +1466,6 @@ def test_retry_rejects_non_retryable_latest_task() -> None:
     assert "仅支持重试 /ask 或 /do" in result.reply_text
 
 
-def test_templates_and_run_template_commands() -> None:
-    tasks = TasksStub()
-    audit = AuditStub()
-    codex = CodexStub(_codex_result("模板执行完成", ok=True))
-    router = _build_router(tasks, audit, codex)
-
-    templates_result = router.handle(_ctx("/templates"))
-    run_result = router.handle(_ctx("/run quick-audit 重点看认证模块"))
-
-    assert "可用模板" in templates_result.reply_text
-    assert "任务 #1: 已完成" in run_result.reply_text
-    assert codex.calls == ["ask"]
-    assert any(".codex_telegram_uploads" in prompt for prompt in codex.prompts)
-    codes = [event[0] for event in audit.events]
-    assert audit_events.TEMPLATES_VIEWED in codes
-    assert audit_events.TEMPLATE_RUN in codes
-
-
 def test_queue_busy_returns_hint() -> None:
     tasks = TasksStub()
     audit = AuditStub()

@@ -91,7 +91,7 @@ Extended commands:
 
 - `/project-root [abs_path]`
 - `/project-add`, `/project-disable`, `/project-archive`
-- `/templates`, `/run`, `/skills`, `/skill-install`
+- `/skills`, `/skill-install`
 - `/schedule-add`, `/schedule-list`, `/schedule-run`, `/schedule-pause`, `/schedule-enable`, `/schedule-del`
 - `/start`, `/last`, `/retry`, `/upload_policy`
 

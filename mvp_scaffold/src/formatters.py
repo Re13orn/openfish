@@ -87,13 +87,11 @@ def format_help(mode: str = "verbose") -> str:
         "/session <id>\n"
         "/session-import <id> [project_key] [name]\n"
         "\n"
-        "项目与模板：\n"
+        "项目：\n"
         "/project-root [abs_path]\n"
         "/project-add <key> [abs_path] [name]\n"
         "/project-disable <key>\n"
         "/project-archive <key>\n"
-        "/templates\n"
-        "/run <template> [附加说明]\n"
         "\n"
         "定时与审批：\n"
         "/schedule-add <HH:MM> <ask|do> <text>\n"
@@ -488,16 +486,6 @@ def format_upload_policy(*, enabled: bool, max_size_bytes: int, allowed_extensio
         f"- 大小上限: {max_size_bytes} bytes\n"
         f"- 允许后缀: {ext_text}"
     )
-
-
-def format_templates(templates: list[tuple[str, str, str]]) -> str:
-    if not templates:
-        return "暂无内置模板。"
-    lines = ["可用模板："]
-    for key, title, mode in templates:
-        lines.append(f"- {key} [{mode}] {title}")
-    lines.append("用法: /run <template> [附加说明]")
-    return "\n".join(lines)
 
 
 def format_project_busy() -> str:

@@ -38,7 +38,6 @@ from src.formatters import (
     format_schedule_toggled,
     format_start,
     format_status,
-    format_templates,
     format_update_check,
     format_upload_policy,
     format_upload_rejected,
@@ -52,7 +51,6 @@ from src.redaction import redact_text
 from src.repo_inspector import RepoInspector
 from src.security_guard import has_symlink_in_path, is_sensitive_file_name
 from src.skills_service import SkillsService
-from src.task_templates import BUILTIN_TEMPLATES
 from src.task_store import ScheduledTaskRecord, TaskStore
 from src.update_service import UpdateService
 
@@ -145,10 +143,6 @@ class CommandRouter:
             return self._handle_project_disable(ctx, argument)
         if command == "/project-archive":
             return self._handle_project_archive(ctx, argument)
-        if command == "/templates":
-            return self._handle_templates(ctx)
-        if command == "/run":
-            return self._handle_run_template(ctx, argument)
         if command == "/skills":
             return self._handle_skills(ctx)
         if command == "/skill-install":
@@ -835,55 +829,6 @@ class CommandRouter:
             )
         finally:
             project_lock.release()
-
-    def _handle_templates(self, ctx: CommandContext) -> CommandResult:
-        user = self.tasks.ensure_user(ctx)
-        self.audit.log(
-            action=audit_events.TEMPLATES_VIEWED,
-            message="用户查看任务模板",
-            user_id=user.id,
-        )
-        templates = [
-            (item.key, item.title, item.mode)
-            for item in BUILTIN_TEMPLATES.values()
-        ]
-        return CommandResult(format_templates(templates))
-
-    def _handle_run_template(self, ctx: CommandContext, argument: str) -> CommandResult:
-        if not argument:
-            return CommandResult(
-                "用法: /run <template> [附加说明]\n可用 /templates 查看模板，或直接按引导选择模板。",
-                metadata={"wizard": "run"},
-            )
-        template_key, _, extra = argument.partition(" ")
-        template = BUILTIN_TEMPLATES.get(template_key.strip())
-        if template is None:
-            known = ", ".join(sorted(BUILTIN_TEMPLATES.keys()))
-            return CommandResult(f"未知模板: {template_key}\n可用模板: {known}")
-        active = self._resolve_active_project(ctx)
-        if isinstance(active, CommandResult):
-            return active
-        request_text = template.instruction
-        if extra.strip():
-            request_text += f"\n附加说明: {extra.strip()}"
-        self.audit.log(
-            action=audit_events.TEMPLATE_RUN,
-            message=f"执行模板: {template.key}",
-            user_id=active.user.id,
-            project_id=active.project_id,
-            details={"template_key": template.key},
-        )
-        run_mode = "do" if template.mode == "do" else "ask"
-        command_type = "do" if template.mode == "do" else "ask"
-        next_step = "可用 /status 查看状态，或 /run 继续使用模板。"
-        return self._run_codex_task(
-            ctx=ctx,
-            active=active,
-            command_type=command_type,
-            request_text=request_text,
-            run_mode=run_mode,
-            next_step=next_step,
-        )
 
     def _handle_skills(self, ctx: CommandContext) -> CommandResult:
         user = self.tasks.ensure_user(ctx)
