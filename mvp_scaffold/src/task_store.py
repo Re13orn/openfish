@@ -20,6 +20,16 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
+class TaskRecord:
+    id: int
+    command_type: str
+    original_request: str
+    status: str
+    codex_session_id: str | None
+    latest_summary: str | None
+
+
+@dataclass(slots=True)
 class StatusSnapshot:
     active_project_key: str | None
     active_project_name: str | None
@@ -34,16 +44,7 @@ class StatusSnapshot:
     next_schedule_hhmm: str | None
     next_step: str | None
     pending_approval_id: int | None = None
-
-
-@dataclass(slots=True)
-class TaskRecord:
-    id: int
-    command_type: str
-    original_request: str
-    status: str
-    codex_session_id: str | None
-    latest_summary: str | None
+    active_task: TaskRecord | None = None
 
 
 @dataclass(slots=True)
@@ -449,6 +450,7 @@ class TaskStore:
                 else (str(failed_row["latest_summary"]) if failed_row["latest_summary"] else None)
             )
         pending_approval = self.get_pending_approval(project_id)
+        active_task = self.get_latest_active_task(project_id)
 
         return StatusSnapshot(
             active_project_key=active_project_key,
@@ -468,6 +470,7 @@ class TaskStore:
             next_schedule_id=next_schedule_id,
             next_schedule_hhmm=next_schedule_hhmm,
             next_step=str(row["next_step"]) if row["next_step"] else None,
+            active_task=active_task,
         )
 
     # Task lookup and approval orchestration facade.

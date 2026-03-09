@@ -600,9 +600,11 @@ class TasksStub:
             most_recent_task_summary=None,
             recent_failed_summary=None,
             pending_approval=False,
+            pending_approval_id=None,
             next_schedule_id=None,
             next_schedule_hhmm=None,
             next_step=None,
+            active_task=self.get_latest_active_task(self.project_id),
         )
 
     def create_scheduled_task(
@@ -963,6 +965,27 @@ def test_tasks_lists_project_tasks() -> None:
     assert "【任务】" in result.reply_text
     assert result.metadata["tasks_page"] == 1
     assert len(result.metadata["tasks_items"]) == 2
+
+
+def test_task_current_prefers_active_task() -> None:
+    tasks = TasksStub()
+    active_task = TaskRecord(
+        id=8,
+        command_type="do",
+        original_request="实现任务管理",
+        status="running",
+        codex_session_id="sess-8",
+        latest_summary="处理中",
+    )
+    tasks.tasks_by_id = {8: active_task}
+    tasks.latest_task = active_task
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/task-current"))
+
+    assert "【当前任务】" in result.reply_text
+    assert "任务: #8" in result.reply_text
+    assert result.metadata["current_task"].id == 8
 
 
 def test_task_cancel_cancels_specific_task() -> None:

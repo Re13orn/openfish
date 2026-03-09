@@ -150,3 +150,53 @@ def test_tasks_list_markup_contains_cancel_delete_and_pagination() -> None:
     assert rows[2][0].callback_data == "tasks:page:1"
     assert rows[2][1].callback_data == "tasks:page:3"
     assert rows[3][0].callback_data == "cmd:tasks_clear"
+
+
+def test_current_task_markup_contains_cancel_for_active_task() -> None:
+    factory = TelegramViewFactory()
+    task = TaskRecord(
+        id=9,
+        command_type="do",
+        original_request="run task",
+        status="running",
+        codex_session_id="sess-9",
+        latest_summary="处理中",
+    )
+
+    markup = factory.current_task_markup(task)
+
+    rows = markup.inline_keyboard
+    assert rows[0][0].callback_data == "task:cancel:9"
+    assert rows[1][0].callback_data == "cmd:status"
+
+
+def test_status_result_markup_prefers_current_task_button_for_active_task() -> None:
+    factory = TelegramViewFactory()
+    snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id="sess-1",
+        most_recent_task_summary="fix auth",
+        recent_failed_summary=None,
+        pending_approval=False,
+        next_schedule_id=None,
+        next_schedule_hhmm=None,
+        next_step=None,
+        active_task=TaskRecord(
+            id=12,
+            command_type="do",
+            original_request="run task",
+            status="running",
+            codex_session_id="sess-12",
+            latest_summary="处理中",
+        ),
+    )
+
+    markup = factory.status_result_markup(snapshot=snapshot, recent_projects=None)
+
+    rows = markup.inline_keyboard
+    assert rows[0][0].callback_data == "cmd:task_current"
+    assert rows[0][1].callback_data == "task:cancel:12"

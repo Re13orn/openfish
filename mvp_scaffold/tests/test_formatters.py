@@ -1,5 +1,6 @@
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.formatters import (
+    format_current_task,
     format_do_result,
     format_help,
     format_last_task,
@@ -201,8 +202,27 @@ def test_format_tasks_list() -> None:
     assert "/tasks-clear" in text
 
 
+def test_format_current_task_card() -> None:
+    task = TaskRecord(
+        id=8,
+        command_type="do",
+        original_request="实现任务管理能力",
+        status="running",
+        codex_session_id="sess-8",
+        latest_summary="处理中",
+    )
+
+    text = format_current_task(project_key="demo", task=task)
+
+    assert "【当前任务】" in text
+    assert "任务: #8" in text
+    assert "状态: 运行中" in text
+    assert "请求: 实现任务管理能力" in text
+
+
 def test_help_contains_last_and_retry() -> None:
     text = format_help()
+    assert "/task-current" in text
     assert "/last" in text
     assert "/retry [附加说明]" in text
     assert "/project-root [abs_path]" in text
@@ -222,6 +242,7 @@ def test_help_summary_mode_is_shorter() -> None:
     text = format_help("summary")
     assert "/ui summary|verbose|stream" in text
     assert "/model" in text
+    assert "/task-current" in text
     assert "/project-add <key> [abs_path] [name]" not in text
 
 

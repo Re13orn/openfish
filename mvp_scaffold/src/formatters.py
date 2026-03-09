@@ -54,6 +54,7 @@ def format_help(mode: str = "verbose") -> str:
             "/ask <question>\n"
             "/do <task>\n"
             "/status\n"
+            "/task-current\n"
             "/resume [task_id] [instruction]\n"
             "/diff\n"
             "/model\n"
@@ -74,6 +75,7 @@ def format_help(mode: str = "verbose") -> str:
         "/ask <question>\n"
         "/do <task>\n"
         "/status\n"
+        "/task-current\n"
         "/resume [task_id] [instruction]\n"
         "/diff\n"
         "/model [show|set <name>|reset]\n"
@@ -265,6 +267,30 @@ def format_tasks_list(result: TaskPage) -> str:
             lines.append(f"  摘要: {_clip(item.latest_summary, 100)}")
     lines.append("可用 /task-cancel [id]、/task-delete <id> 或 /tasks-clear 管理任务。")
     return "\n".join(lines)
+
+
+def format_current_task(*, project_key: str, task: TaskRecord | None) -> str:
+    lines = [f"项目: {project_key}"]
+    if task is None:
+        lines.append("当前任务: 暂无")
+        lines.append("下一步: 直接 /ask、/do，或打开 /tasks 查看历史任务。")
+        return _card("当前任务", lines)
+
+    lines.extend(
+        [
+            f"任务: #{task.id}",
+            f"类型: /{task.command_type}",
+            f"状态: {STATUS_LABELS.get(task.status, task.status)}",
+            f"会话: {task.codex_session_id or '暂无'}",
+            f"请求: {_clip(task.original_request, 160)}",
+            f"摘要: {_clip(task.latest_summary, 180) if task.latest_summary else '暂无'}",
+        ]
+    )
+    if task.status in {"created", "running", "waiting_approval"}:
+        lines.append("操作: 可直接取消当前任务，或回到状态页继续观察。")
+    else:
+        lines.append("操作: 可继续该上下文、查看任务列表，或直接发起新任务。")
+    return _card("当前任务", lines)
 
 
 def format_projects(

@@ -305,6 +305,7 @@ def test_menu_text_maps_to_status_command() -> None:
 def test_callback_token_maps_to_command() -> None:
     service = _service()
     assert service._resolve_callback_command("status") == "/status"
+    assert service._resolve_callback_command("task_current") == "/task-current"
     assert service._resolve_callback_command("mcp") == "/mcp"
     assert service._resolve_callback_command("sessions") == "/sessions"
     assert service._resolve_callback_command("tasks") == "/tasks"
@@ -694,6 +695,7 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
     rows = markup.inline_keyboard
     assert any(button.callback_data == "cmd:sessions" for row in rows for button in row)
     assert any(button.callback_data == "cmd:tasks" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:task_current" for row in rows for button in row)
     assert any(button.callback_data == "cmd:tasks_clear" for row in rows for button in row)
     assert any(button.callback_data == "panel:model" for row in rows for button in row)
     assert any(button.callback_data == "cmd:restart" for row in rows for button in row)

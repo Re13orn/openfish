@@ -148,6 +148,7 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
                         InlineKeyboardButton(text="项目记忆", callback_data="cmd:memory"),
                     ],
+                    [InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current")],
                     [
                         InlineKeyboardButton(text="模板列表", callback_data="cmd:templates"),
                         InlineKeyboardButton(text="执行模板", callback_data="prompt:run"),
@@ -316,6 +317,24 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="拒绝", callback_data=reject_callback),
                     ],
                     [
+                        InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
+                        InlineKeyboardButton(text="看变更", callback_data="status:diff"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="定时", callback_data="status:schedule"),
+                        InlineKeyboardButton(text="项目", callback_data="status:projects"),
+                    ],
+                    [InlineKeyboardButton(text="更多", callback_data="status:more")],
+                ]
+            )
+        if snapshot.active_task is not None:
+            return InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
+                        InlineKeyboardButton(text=f"取消 #{snapshot.active_task.id}", callback_data=f"task:cancel:{snapshot.active_task.id}"),
+                    ],
+                    [
                         InlineKeyboardButton(text="看变更", callback_data="status:diff"),
                         InlineKeyboardButton(text="定时", callback_data="status:schedule"),
                     ],
@@ -330,10 +349,10 @@ class TelegramViewFactory:
                 [
                     [
                         InlineKeyboardButton(text="继续", callback_data="status:resume"),
-                        InlineKeyboardButton(text="看变更", callback_data="status:diff"),
+                        InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
                     ],
                     [
-                        InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
+                        InlineKeyboardButton(text="看变更", callback_data="status:diff"),
                         InlineKeyboardButton(text="定时", callback_data="status:schedule"),
                     ],
                     [
@@ -349,15 +368,41 @@ class TelegramViewFactory:
                     InlineKeyboardButton(text="执行", callback_data="status:do"),
                 ],
                 [
+                    InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
                     InlineKeyboardButton(text="项目", callback_data="status:projects"),
-                    InlineKeyboardButton(text="定时", callback_data="status:schedule"),
                 ],
                 [
-                    InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
+                    InlineKeyboardButton(text="定时", callback_data="status:schedule"),
                     InlineKeyboardButton(text="更多", callback_data="status:more"),
                 ],
             ]
         )
+
+    def current_task_markup(self, task: TaskRecord | None) -> InlineKeyboardMarkup:
+        rows: list[list[InlineKeyboardButton]] = []
+        if task is not None and task.status in {"created", "running", "waiting_approval"}:
+            rows.append([InlineKeyboardButton(text=f"取消 #{task.id}", callback_data=f"task:cancel:{task.id}")])
+        elif task is not None:
+            rows.append(
+                [
+                    InlineKeyboardButton(text="继续", callback_data="status:resume"),
+                    InlineKeyboardButton(text="查看任务列表", callback_data="cmd:tasks"),
+                ]
+            )
+        else:
+            rows.append(
+                [
+                    InlineKeyboardButton(text="提问", callback_data="status:ask"),
+                    InlineKeyboardButton(text="执行", callback_data="status:do"),
+                ]
+            )
+        rows.append(
+            [
+                InlineKeyboardButton(text="查看状态", callback_data="cmd:status"),
+                InlineKeyboardButton(text="更多操作", callback_data="panel:more"),
+            ]
+        )
+        return InlineKeyboardMarkup(rows)
 
     def schedule_list_markup(
         self, schedules: list[ScheduledTaskRecord]

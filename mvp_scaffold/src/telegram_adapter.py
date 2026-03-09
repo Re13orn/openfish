@@ -19,6 +19,7 @@ from src.formatters import format_upload_received
 from src.models import CommandContext, CommandResult
 from src.progress_reporter import ProgressReporter
 from src.telegram_sink import TelegramMessageSink, TelegramSendSpec
+from src.task_store import TaskRecord
 from src.task_templates import BUILTIN_TEMPLATES
 from src.telegram_views import TelegramReplySpec, TelegramViewFactory
 
@@ -82,6 +83,7 @@ class TelegramBotService:
         "restart": "/restart",
         "logs": "/logs",
         "logs_clear": "/logs-clear",
+        "task_current": "/task-current",
         "tasks": "/tasks",
         "tasks_clear": "/tasks-clear",
         "schedule_list": "/schedule-list",
@@ -1124,6 +1126,12 @@ class TelegramBotService:
             send_spec.edit_window_seconds = float(
                 getattr(self.config, "telegram_tasks_edit_window_seconds", 300.0)
             )
+        elif command == "/task-current":
+            send_spec.context = "sending current task card"
+            send_spec.edit_context = "sending current task card"
+            send_spec.edit_window_seconds = float(
+                getattr(self.config, "telegram_current_task_edit_window_seconds", 300.0)
+            )
         elif command == "/memory":
             send_spec.context = "sending memory panel"
             send_spec.edit_context = "sending memory panel"
@@ -1719,6 +1727,9 @@ class TelegramBotService:
             total_pages = metadata.get("tasks_total_pages")
             if isinstance(items, list) and isinstance(page, int) and isinstance(total_pages, int):
                 return self.views.tasks_list_markup(items, page=page, total_pages=total_pages)
+        if command == "/task-current":
+            task = (result.metadata or {}).get("current_task")
+            return self.views.current_task_markup(task if isinstance(task, TaskRecord) else None)
         if command == "/memory":
             metadata = result.metadata or {}
             page = metadata.get("memory_page")

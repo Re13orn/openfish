@@ -16,6 +16,7 @@ from src.auth import is_allowed_user
 from src.codex_session_service import CodexSessionService
 from src.formatters import (
     format_approval_required,
+    format_current_task,
     format_diff_card,
     format_do_result,
     format_help,
@@ -200,6 +201,8 @@ class CommandRouter:
             return self._handle_retry(ctx, argument)
         if command == "/status":
             return self._handle_status(ctx)
+        if command == "/task-current":
+            return self._handle_task_current(ctx)
         if command == "/do":
             return self._handle_do(ctx, argument)
         if command == "/ask":
@@ -1363,6 +1366,24 @@ class CommandRouter:
         return CommandResult(
             redact_text(format_status(snapshot, mode=mode)),
             metadata={"recent_projects": self.tasks.list_recent_project_keys(user_id=user.id)},
+        )
+
+    def _handle_task_current(self, ctx: CommandContext) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+
+        task = self.tasks.get_latest_active_task(active.project_id) or self.tasks.get_latest_task(active.project_id)
+        self.audit.log(
+            action=audit_events.TASK_LAST_VIEWED,
+            message="查看当前任务卡片",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            task_id=task.id if task else None,
+        )
+        return CommandResult(
+            redact_text(format_current_task(project_key=active.project_key, task=task)),
+            metadata={"current_task": task},
         )
 
     def _handle_last(self, ctx: CommandContext) -> CommandResult:
