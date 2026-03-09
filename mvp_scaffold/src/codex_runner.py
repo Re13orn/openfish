@@ -7,7 +7,8 @@ from pathlib import Path
 import re
 import signal
 import subprocess
-from threading import Thread
+from threading import Lock, Thread
+import time
 from typing import Callable
 
 from src.config import AppConfig
@@ -390,11 +391,21 @@ class CodexRunner:
 
         stdout_parts: list[str] = []
         stderr_parts: list[str] = []
+        state_lock = Lock()
+        background_wait_started_at: list[float | None] = [None]
 
         def _reader(stream, sink: list[str], channel: str) -> None:  # noqa: ANN001
             try:
                 for line in iter(stream.readline, ""):
                     sink.append(line)
+                    if line.strip():
+                        now = time.monotonic()
+                        with state_lock:
+                            if self._looks_like_background_terminal_wait(line):
+                                if background_wait_started_at[0] is None:
+                                    background_wait_started_at[0] = now
+                            else:
+                                background_wait_started_at[0] = None
                     normalized = self._normalize_progress_line(channel, line)
                     if normalized:
                         progress_callback(channel, normalized)
@@ -407,15 +418,31 @@ class CodexRunner:
         stderr_thread.start()
 
         try:
-            try:
-                returncode = proc.wait(timeout=self.config.codex_command_timeout_seconds)
-            except subprocess.TimeoutExpired:
-                self._kill_process_tree(proc)
-                proc.wait()
+            deadline = time.monotonic() + self.config.codex_command_timeout_seconds
+            returncode: int | None = None
+            timeout_message: str | None = None
+            while True:
+                returncode = proc.poll()
+                if returncode is not None:
+                    break
+                now = time.monotonic()
+                with state_lock:
+                    background_wait_started = background_wait_started_at[0]
+                timeout_message = self._stream_timeout_message(
+                    now=now,
+                    deadline=deadline,
+                    background_wait_started_at=background_wait_started,
+                )
+                if timeout_message is not None:
+                    self._kill_process_tree(proc)
+                    proc.wait()
+                    break
+                time.sleep(0.2)
+
+            if timeout_message is not None:
                 stdout_thread.join(timeout=1.0)
                 stderr_thread.join(timeout=1.0)
                 stderr_text = "".join(stderr_parts)
-                timeout_message = f"Codex command timed out after {self.config.codex_command_timeout_seconds}s"
                 if stderr_text:
                     stderr_text = f"{stderr_text.rstrip()}\n{timeout_message}"
                 else:
@@ -438,6 +465,27 @@ class CodexRunner:
         finally:
             if process_callback is not None:
                 process_callback(None)
+
+    def _stream_timeout_message(
+        self,
+        *,
+        now: float,
+        deadline: float,
+        background_wait_started_at: float | None,
+    ) -> str | None:
+        if now >= deadline:
+            return f"Codex command timed out after {self.config.codex_command_timeout_seconds}s"
+        if background_wait_started_at is None:
+            return None
+        if (
+            now - background_wait_started_at
+            >= self.config.codex_background_terminal_wait_timeout_seconds
+        ):
+            return (
+                "Codex command aborted after waiting too long for a background terminal "
+                f"({self.config.codex_background_terminal_wait_timeout_seconds}s)."
+            )
+        return None
 
 
     def _looks_like_json_flag_error(self, stderr: str) -> bool:
@@ -471,6 +519,9 @@ class CodexRunner:
         return "resume" in lower and (
             "unknown" in lower or "unexpected argument" in lower or "invalid value" in lower
         )
+
+    def _looks_like_background_terminal_wait(self, text: str) -> bool:
+        return "waited for background terminal" in text.strip().lower()
 
     def _run_resume_with_fallback(
         self,

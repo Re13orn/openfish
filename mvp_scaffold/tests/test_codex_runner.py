@@ -14,6 +14,7 @@ class StubCodexRunner(CodexRunner):
             codex_default_sandbox_mode="workspace-write",
             codex_default_approval_mode="on-request",
             codex_command_timeout_seconds=30,
+            codex_background_terminal_wait_timeout_seconds=120,
             codex_model_choices=("gpt-5.4", "gpt-5", "o3"),
         )
         super().__init__(config)
@@ -304,3 +305,30 @@ def test_normalize_progress_line_keeps_non_mcp_stderr() -> None:
     normalized = runner._normalize_progress_line("stderr", "pytest failed: 2 tests failed")
 
     assert normalized == "[stderr] pytest failed: 2 tests failed"
+
+
+def test_detects_background_terminal_wait_line() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    assert runner._looks_like_background_terminal_wait("Waited for background terminal") is True
+    assert runner._looks_like_background_terminal_wait("other output") is False
+
+
+def test_stream_timeout_message_uses_background_terminal_timeout() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    message = runner._stream_timeout_message(
+        now=121.0,
+        deadline=500.0,
+        background_wait_started_at=0.0,
+    )
+
+    assert message == "Codex command aborted after waiting too long for a background terminal (120s)."

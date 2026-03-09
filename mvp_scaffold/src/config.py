@@ -51,6 +51,7 @@ class AppConfig:
     codex_default_sandbox_mode: str
     codex_default_approval_mode: str
     codex_command_timeout_seconds: int
+    codex_background_terminal_wait_timeout_seconds: int
     codex_home: Path
     codex_model_choices: tuple[str, ...]
     enable_skill_install: bool
@@ -140,6 +141,9 @@ def load_config() -> AppConfig:
         codex_default_sandbox_mode=os.getenv("CODEX_DEFAULT_SANDBOX_MODE", "workspace-write"),
         codex_default_approval_mode=os.getenv("CODEX_DEFAULT_APPROVAL_MODE", "never"),
         codex_command_timeout_seconds=int(os.getenv("CODEX_COMMAND_TIMEOUT_SECONDS", "1800")),
+        codex_background_terminal_wait_timeout_seconds=int(
+            os.getenv("CODEX_BACKGROUND_TERMINAL_WAIT_TIMEOUT_SECONDS", "120")
+        ),
         codex_home=Path(os.path.expanduser(os.getenv("CODEX_HOME", "~/.codex"))).resolve(),
         codex_model_choices=_split_csv_list(
             os.getenv("CODEX_MODEL_CHOICES", "gpt-5.4,gpt-5,o3")

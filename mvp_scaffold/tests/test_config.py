@@ -19,6 +19,7 @@ def test_load_config_always_includes_zip_in_allowed_upload_extensions(monkeypatc
     assert config.telegram_pool_timeout_seconds == 15.0
     assert config.telegram_get_updates_connection_pool_size == 8
     assert config.telegram_get_updates_pool_timeout_seconds == 30.0
+    assert config.codex_background_terminal_wait_timeout_seconds == 120
 
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ALLOWED_TELEGRAM_USER_IDS", raising=False)
