@@ -516,6 +516,10 @@ class CommandRouter:
             triggered = self.update_service.trigger_update()
         except RuntimeError as exc:
             return CommandResult(f"启动更新失败: {exc}")
+        self.tasks.queue_system_notification(
+            chat_id=ctx.telegram_chat_id,
+            kind="update_completed",
+        )
         self.audit.log(
             action=audit_events.SYSTEM_UPDATE_TRIGGERED,
             message="触发自更新",
@@ -535,6 +539,10 @@ class CommandRouter:
             triggered = self.update_service.trigger_restart()
         except RuntimeError as exc:
             return CommandResult(f"启动重启失败: {exc}")
+        self.tasks.queue_system_notification(
+            chat_id=ctx.telegram_chat_id,
+            kind="restart_completed",
+        )
         self.audit.log(
             action=audit_events.SYSTEM_RESTART_TRIGGERED,
             message="触发服务重启",

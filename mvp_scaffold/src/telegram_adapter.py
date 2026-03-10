@@ -241,6 +241,7 @@ class TelegramBotService:
             .token(self.config.telegram_bot_token)
             .request(request)
             .get_updates_request(get_updates_request)
+            .post_init(self._on_post_init)
             .build()
         )
 
@@ -249,6 +250,53 @@ class TelegramBotService:
         app.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, self._on_document_message))
         app.add_handler(CallbackQueryHandler(self._on_callback_query))
         app.add_error_handler(self._on_application_error)
+
+    async def _on_post_init(self, app: Application) -> None:
+        await self._deliver_pending_system_notifications(app)
+
+    async def _deliver_pending_system_notifications(self, app: Application) -> None:
+        tasks = getattr(self.router, "tasks", None)
+        if tasks is None or not hasattr(tasks, "list_pending_system_notifications"):
+            return
+        pending = tasks.list_pending_system_notifications(limit=32)
+        if not pending:
+            return
+        for item in pending:
+            text = self._system_notification_text(item.notification_kind)
+            if text is None:
+                tasks.delete_system_notification(notification_id=item.id)
+                continue
+            try:
+                await app.bot.send_message(
+                    chat_id=item.telegram_chat_id,
+                    text=text,
+                    reply_markup=self._main_menu_markup(),
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to deliver pending system notification kind=%s chat_id=%s",
+                    item.notification_kind,
+                    item.telegram_chat_id,
+                    exc_info=True,
+                )
+                continue
+            tasks.delete_system_notification(notification_id=item.id)
+
+    def _system_notification_text(self, kind: str) -> str | None:
+        version_text = ""
+        update_service = getattr(self.router, "update_service", None)
+        if update_service is not None:
+            try:
+                info = update_service.get_current_version()
+            except Exception:
+                info = None
+            if info is not None:
+                version_text = f"\n当前版本: {info.version} ({info.commit})"
+        if kind == "restart_completed":
+            return f"OpenFish 已重启完成。{version_text}".rstrip()
+        if kind == "update_completed":
+            return f"OpenFish 已更新并重启完成。{version_text}".rstrip()
+        return None
 
     async def _on_application_error(
         self,

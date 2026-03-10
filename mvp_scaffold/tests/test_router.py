@@ -244,6 +244,7 @@ class TasksStub:
         self.bound_project_sessions: list[tuple[int, str, str | None]] = []
         self.resolved_approvals: list[tuple[int, str, str | None]] = []
         self.fail_resolve_for: set[int] = set()
+        self.system_notifications: list[tuple[str, str, dict | None, bool]] = []
         self.tasks_by_id: dict[int, TaskRecord] = {
             self.latest_task.id: self.latest_task,
         }
@@ -302,6 +303,16 @@ class TasksStub:
     def clear_chat_codex_model(self, *, chat_id: str) -> None:
         _ = chat_id
         self.codex_model = None
+
+    def queue_system_notification(
+        self,
+        *,
+        chat_id: str,
+        kind: str,
+        payload: dict | None = None,
+        collapse_existing: bool = True,
+    ) -> None:
+        self.system_notifications.append((chat_id, kind, payload, collapse_existing))
 
     def create_task(
         self,
@@ -1669,6 +1680,7 @@ def test_update_command_triggers_self_update() -> None:
     result = router.handle(_ctx("/update"))
 
     assert updates.triggered is True
+    assert tasks.system_notifications == [("1", "update_completed", None, True)]
     assert "已开始自更新" in result.reply_text
 
 
@@ -1682,6 +1694,7 @@ def test_restart_command_triggers_service_restart() -> None:
     result = router.handle(_ctx("/restart"))
 
     assert updates.restart_triggered is True
+    assert tasks.system_notifications == [("1", "restart_completed", None, True)]
     assert "已开始重启服务" in result.reply_text
 
 

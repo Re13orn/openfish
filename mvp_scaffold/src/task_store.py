@@ -13,6 +13,7 @@ from src.models import CommandContext, UserRecord
 from src.project_registry import ProjectRegistry
 from src.project_state_store import ProjectStateStore
 from src.schedule_store import ScheduleStore, ScheduledTaskRecord
+from src.system_notification_store import SystemNotificationRecord, SystemNotificationStore
 from src.task_runtime_store import TaskRuntimeStore
 
 
@@ -92,6 +93,7 @@ class TaskStore:
         self.schedules = ScheduleStore(db)
         self.project_state = ProjectStateStore(db)
         self.runtime = TaskRuntimeStore(db)
+        self.system_notifications = SystemNotificationStore(db)
 
     def sync_projects_from_registry(self, projects: ProjectRegistry) -> None:
         """Mirror YAML registry entries into SQLite project tables."""
@@ -239,6 +241,27 @@ class TaskStore:
             context=context,
             max_age_seconds=max_age_seconds,
         )
+
+    def queue_system_notification(
+        self,
+        *,
+        chat_id: str,
+        kind: str,
+        payload: dict[str, Any] | None = None,
+        collapse_existing: bool = True,
+    ) -> None:
+        self.system_notifications.queue_notification(
+            chat_id=chat_id,
+            kind=kind,
+            payload=payload,
+            collapse_existing=collapse_existing,
+        )
+
+    def list_pending_system_notifications(self, *, limit: int = 32) -> list[SystemNotificationRecord]:
+        return self.system_notifications.list_pending_notifications(limit=limit)
+
+    def delete_system_notification(self, *, notification_id: int) -> None:
+        self.system_notifications.delete_notification(notification_id=notification_id)
 
     # User/project registry helpers.
     def list_recent_project_keys(self, *, user_id: int, limit: int = 6) -> list[str]:

@@ -534,13 +534,12 @@ class CodexRunner:
         progress_callback: Callable[[str, str], None] | None = None,
         process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
-        proc = self._run_subprocess(
+        proc, used_json, resolved_command = self._execute_with_optional_fallback(
             command,
-            cwd=project.path,
+            project.path,
             progress_callback=progress_callback,
             process_callback=process_callback,
         )
-        used_json = self.config.codex_json_output
         if proc.returncode != 0 and fallback_to_exec and self._looks_like_resume_command_error(proc.stderr):
             fallback_prompt = (
                 "Continue the previous task context if available and report remaining blockers.\n\n"
@@ -560,7 +559,7 @@ class CodexRunner:
             )
             return self._build_result(fallback_proc, used_json, resolved_command)
 
-        return self._build_result(proc, used_json, command)
+        return self._build_result(proc, used_json, resolved_command)
 
     def _kill_process_tree(self, proc: subprocess.Popen[str]) -> None:
         try:

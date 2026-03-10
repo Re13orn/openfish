@@ -34,6 +34,7 @@ class WizardTasksStub:
             task_summary="等待审批",
         )
         self.scheduled_tasks = []
+        self.pending_system_notifications = []
 
     def ensure_user(self, ctx):  # noqa: ANN001
         _ = ctx
@@ -116,6 +117,14 @@ class WizardTasksStub:
     def list_scheduled_tasks(self, project_id: int):  # noqa: ANN201
         _ = project_id
         return self.scheduled_tasks
+
+    def list_pending_system_notifications(self, *, limit: int = 32):  # noqa: ANN201
+        return self.pending_system_notifications[:limit]
+
+    def delete_system_notification(self, *, notification_id: int) -> None:
+        self.pending_system_notifications = [
+            item for item in self.pending_system_notifications if item.id != notification_id
+        ]
 
 
 class WizardRouterStub:
@@ -292,6 +301,10 @@ def test_build_application_uses_dedicated_requests(monkeypatch) -> None:
             captured["get_updates_request"] = value
             return self
 
+        def post_init(self, value):  # noqa: ANN001, ANN201
+            captured["post_init"] = value
+            return self
+
         def build(self):  # noqa: ANN201
             return "app"
 
@@ -303,6 +316,70 @@ def test_build_application_uses_dedicated_requests(monkeypatch) -> None:
     assert captured["token"] == "dummy"
     assert isinstance(captured["request"], HTTPXRequest)
     assert isinstance(captured["get_updates_request"], HTTPXRequest)
+
+
+def test_build_application_registers_post_init(monkeypatch) -> None:
+    service = _service()
+    captured: dict[str, object] = {}
+
+    class FakeBuilder:
+        def token(self, value):  # noqa: ANN001, ANN201
+            _ = value
+            return self
+
+        def request(self, value):  # noqa: ANN001, ANN201
+            _ = value
+            return self
+
+        def get_updates_request(self, value):  # noqa: ANN001, ANN201
+            _ = value
+            return self
+
+        def post_init(self, value):  # noqa: ANN001, ANN201
+            captured["post_init"] = value
+            return self
+
+        def build(self):  # noqa: ANN201
+            return "app"
+
+    monkeypatch.setattr("src.telegram_adapter.ApplicationBuilder", lambda: FakeBuilder())
+
+    service._build_application()
+
+    assert captured["post_init"] == service._on_post_init
+
+
+def test_deliver_pending_system_notifications_sends_and_clears() -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    router.update_service = SimpleNamespace(
+        get_current_version=lambda: SimpleNamespace(version="v1.0.0", commit="abc1234")
+    )
+    router.tasks.pending_system_notifications = [
+        SimpleNamespace(id=1, telegram_chat_id="1", notification_kind="restart_completed"),
+        SimpleNamespace(id=2, telegram_chat_id="2", notification_kind="update_completed"),
+    ]
+    service = TelegramBotService(config=config, router=router)
+    sent: list[tuple[str, str, object]] = []
+
+    class BotStub:
+        async def send_message(self, *, chat_id, text, reply_markup=None):  # noqa: ANN001
+            sent.append((chat_id, text, reply_markup))
+            return object()
+
+    asyncio.run(service._deliver_pending_system_notifications(SimpleNamespace(bot=BotStub())))
+
+    assert len(sent) == 2
+    assert sent[0][0] == "1"
+    assert "已重启完成" in sent[0][1]
+    assert "v1.0.0" in sent[0][1]
+    assert sent[1][0] == "2"
+    assert "已更新并重启完成" in sent[1][1]
+    assert router.tasks.pending_system_notifications == []
 
 
 def test_menu_text_maps_to_status_command() -> None:

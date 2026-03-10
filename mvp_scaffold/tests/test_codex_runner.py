@@ -259,6 +259,54 @@ def test_resume_session_uses_explicit_session_command() -> None:
     assert runner.commands[0][:4] == ["codex", "exec", "resume", "sess-123"]
 
 
+def test_resume_session_adds_skip_git_repo_check_for_untrusted_directory() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(
+                args=[],
+                returncode=2,
+                stdout="",
+                stderr="Not inside a trusted directory and --skip-git-repo-check was not specified.",
+            ),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    result = runner.resume_session(_project(), "sess-123", "continue")
+
+    assert result.ok is True
+    assert len(runner.commands) == 2
+    assert "--skip-git-repo-check" not in runner.commands[0]
+    assert "--skip-git-repo-check" in runner.commands[1]
+
+
+def test_resume_session_removes_skip_git_repo_check_when_not_supported() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(
+                args=[],
+                returncode=2,
+                stdout="",
+                stderr="Not inside a trusted directory and --skip-git-repo-check was not specified.",
+            ),
+            subprocess.CompletedProcess(
+                args=[],
+                returncode=2,
+                stdout="",
+                stderr="error: unexpected argument '--skip-git-repo-check' found",
+            ),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    result = runner.resume_session(_project(), "sess-123", "continue")
+
+    assert result.ok is True
+    assert len(runner.commands) == 3
+    assert "--skip-git-repo-check" in runner.commands[1]
+    assert "--skip-git-repo-check" not in runner.commands[2]
+
+
 def test_normalize_progress_line_extracts_json_text() -> None:
     runner = StubCodexRunner(
         responses=[
