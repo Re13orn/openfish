@@ -152,6 +152,7 @@ class MessageStub:
         self.outcomes = list(outcomes)
         self.sent_texts: list[str] = []
         self.sent_markups: list[object] = []
+        self.sent_documents: list[dict[str, object]] = []
         self.edit_reply_markup_calls: list[object] = []
         self.chat_actions: list[str] = []
         self.message_id = 10
@@ -167,6 +168,17 @@ class MessageStub:
     async def reply_chat_action(self, action: str, **kwargs):  # noqa: ANN003
         _ = kwargs
         self.chat_actions.append(action)
+        return object()
+
+    async def reply_document(self, document, **kwargs):  # noqa: ANN003
+        payload = document.read()
+        self.sent_documents.append(
+            {
+                "payload": payload,
+                "filename": kwargs.get("filename"),
+                "caption": kwargs.get("caption"),
+            }
+        )
         return object()
 
     async def edit_reply_markup(self, **kwargs):  # noqa: ANN003
@@ -1392,6 +1404,44 @@ def test_send_command_result_marks_status_for_editing(monkeypatch) -> None:
     assert spec.context == "sending status result"
     assert spec.edit_context == "sending status result"
     assert spec.edit_window_seconds == 300.0
+
+
+def test_send_command_result_sends_local_file_document(tmp_path) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    file_path = tmp_path / "demo.txt"
+    file_path.write_text("hello file", encoding="utf-8")
+    message = MessageStub([])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    ok = asyncio.run(
+        service._send_command_result(
+            message,
+            "/send-file",
+            ctx,
+            CommandResult(
+                f"发送文件: {file_path.name}\n路径: {file_path}",
+                metadata={"send_local_file": {"path": str(file_path), "name": file_path.name}},
+            ),
+        )
+    )
+
+    assert ok is True
+    assert len(message.sent_documents) == 1
+    assert message.sent_documents[0]["filename"] == "demo.txt"
+    assert message.sent_documents[0]["payload"] == b"hello file"
 
 
 def test_send_command_result_marks_projects_for_editing(monkeypatch) -> None:

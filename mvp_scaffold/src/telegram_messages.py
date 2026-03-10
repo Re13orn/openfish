@@ -43,6 +43,10 @@ def prompt_mode_hint(hint: str) -> str:
     return f"{hint}\n可发送 /help 查看命令。"
 
 
+def local_file_send_failed(error_text: str) -> str:
+    return f"发送本机文件失败：{error_text}"
+
+
 def wizard_missing_state() -> str:
     return "当前向导已结束，按钮可能已过期。请重新开始。"
 

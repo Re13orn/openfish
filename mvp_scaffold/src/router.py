@@ -161,6 +161,8 @@ class CommandRouter:
             return self._handle_session_import(ctx, argument)
         if command == "/model":
             return self._handle_model(ctx, argument)
+        if command == "/send-file":
+            return self._handle_send_file(ctx, argument)
         if command == "/version":
             return self._handle_version(ctx)
         if command == "/update-check":
@@ -341,6 +343,61 @@ class CommandRouter:
             model=normalized,
         )
         return CommandResult(f"当前会话模型已切换为: {normalized}")
+
+    def _handle_send_file(self, ctx: CommandContext, argument: str) -> CommandResult:
+        raw_path = argument.strip()
+        if not raw_path:
+            return CommandResult("用法: /send-file <abs_path>")
+
+        candidate = Path(os.path.expanduser(raw_path))
+        if not candidate.is_absolute():
+            return CommandResult("文件路径必须是绝对路径，或使用 ~ 开头。")
+        try:
+            resolved = candidate.resolve(strict=True)
+        except FileNotFoundError:
+            return CommandResult(f"文件不存在: {candidate}")
+        except OSError as exc:
+            return CommandResult(f"读取文件失败: {exc}")
+
+        if not resolved.is_file():
+            return CommandResult("只支持发送单个文件，不支持目录。")
+
+        try:
+            size_bytes = int(resolved.stat().st_size)
+        except OSError as exc:
+            return CommandResult(f"读取文件失败: {exc}")
+
+        max_size_bytes = int(
+            getattr(self.config, "telegram_send_local_file_max_size_bytes", 49 * 1024 * 1024)
+        )
+        if size_bytes > max_size_bytes:
+            return CommandResult(
+                f"文件过大，无法通过 Telegram 发送。\n"
+                f"当前文件: {resolved.name} ({size_bytes} bytes)\n"
+                f"上限: {max_size_bytes} bytes"
+            )
+
+        user = self.tasks.ensure_user(ctx)
+        self.audit.log(
+            action=audit_events.SYSTEM_LOCAL_FILE_SENT,
+            message=f"发送本机文件: {resolved.name}",
+            user_id=user.id,
+            details={
+                "path": str(resolved),
+                "size_bytes": size_bytes,
+                "chat_id": ctx.telegram_chat_id,
+            },
+        )
+        return CommandResult(
+            f"发送文件: {resolved.name}\n路径: {resolved}",
+            metadata={
+                "send_local_file": {
+                    "path": str(resolved),
+                    "name": resolved.name,
+                    "size_bytes": size_bytes,
+                }
+            },
+        )
 
     def _handle_version(self, ctx: CommandContext) -> CommandResult:
         user = self.tasks.ensure_user(ctx)

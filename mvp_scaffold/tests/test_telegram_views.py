@@ -70,6 +70,18 @@ def test_model_panel_marks_current_model_and_reset_action() -> None:
     assert any(button.callback_data == "model:reset" for row in rows for button in row)
 
 
+def test_more_panel_contains_send_file_prompt() -> None:
+    factory = TelegramViewFactory()
+
+    spec = factory.more_panel()
+
+    assert any(
+        button.callback_data == "prompt:send_file"
+        for row in spec.reply_markup.inline_keyboard
+        for button in row
+    )
+
+
 def test_mcp_detail_markup_contains_toggle_and_refresh() -> None:
     factory = TelegramViewFactory()
 

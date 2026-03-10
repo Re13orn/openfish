@@ -16,6 +16,7 @@ def test_load_config_always_includes_zip_in_allowed_upload_extensions(monkeypatc
     assert config.process_lock_path.name == "openfish.lock"
     assert config.codex_model_choices == ("gpt-5.4", "gpt-5", "o3")
     assert config.telegram_connection_pool_size == 64
+    assert config.telegram_send_local_file_max_size_bytes == 49 * 1024 * 1024
     assert config.telegram_pool_timeout_seconds == 15.0
     assert config.telegram_get_updates_connection_pool_size == 8
     assert config.telegram_get_updates_pool_timeout_seconds == 30.0

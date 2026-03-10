@@ -5,6 +5,7 @@ from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, field
 import logging
+from pathlib import Path
 import random
 from threading import Lock
 import time
@@ -122,6 +123,7 @@ class TelegramBotService:
         "reject": "/reject",
         "mcp": "/mcp",
         "model": "/model",
+        "send_file": "/send-file",
     }
 
     _PROMPT_HINTS = {
@@ -139,6 +141,7 @@ class TelegramBotService:
         "reject": "请输入拒绝原因。下一条消息将按 /reject 执行。",
         "mcp": "请输入 MCP 名称（留空则查看列表）。下一条消息将按 /mcp 执行。",
         "model": "请输入模型名称。下一条消息将按 /model set 执行。",
+        "send_file": "请输入本机文件绝对路径，或使用 ~ 开头。下一条消息将按 /send-file 执行。",
     }
     _TYPING_COMMANDS = {
         "/ask",
@@ -1164,6 +1167,8 @@ class TelegramBotService:
         *,
         context: str = "sending command result",
     ) -> bool:  # noqa: ANN001
+        if await self._send_local_file_result(message, result):
+            return True
         parts = self._split_long_text(result.reply_text)
         if len(parts) == 1:
             return await self._send_view_spec(
@@ -1197,6 +1202,44 @@ class TelegramBotService:
             if not ok:
                 return False
         return True
+
+    async def _send_local_file_result(
+        self,
+        message,
+        result: CommandResult,
+    ) -> bool:  # noqa: ANN001
+        metadata = result.metadata or {}
+        send_local_file = metadata.get("send_local_file")
+        if not isinstance(send_local_file, dict):
+            return False
+        path_value = send_local_file.get("path")
+        if not isinstance(path_value, str) or not path_value:
+            return False
+
+        file_path = Path(path_value)
+        caption = result.reply_text.strip()
+        if len(caption) > 900:
+            caption = caption[:897] + "..."
+        try:
+            with file_path.open("rb") as handle:
+                if hasattr(message, "reply_document"):
+                    await message.reply_document(document=handle, filename=file_path.name, caption=caption)
+                    return True
+                chat_id = getattr(message, "chat_id", None)
+                get_bot = getattr(message, "get_bot", None)
+                if chat_id is not None and callable(get_bot):
+                    bot = get_bot()
+                    await bot.send_document(chat_id=chat_id, document=handle, filename=file_path.name, caption=caption)
+                    return True
+                raise RuntimeError("当前消息对象不支持文件发送。")
+        except (OSError, BadRequest, NetworkError, TelegramError, RuntimeError) as exc:
+            await self._send_text(
+                message,
+                telegram_messages.local_file_send_failed(str(exc)),
+                context="sending local file failure",
+                reply_markup=self._main_menu_markup(),
+            )
+            return True
 
     def _split_long_text(self, text: str) -> list[str]:
         limit = int(getattr(self.config, "max_telegram_message_length", 3500))

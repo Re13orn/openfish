@@ -1410,6 +1410,31 @@ def test_start_and_upload_policy_commands() -> None:
     assert audit_events.UPLOAD_POLICY_VIEWED in codes
 
 
+def test_send_file_requires_absolute_path() -> None:
+    router = _build_router(TasksStub(), AuditStub(), CodexStub(_codex_result("ok")))
+
+    result = router.handle(_ctx("/send-file relative.txt"))
+
+    assert result.reply_text == "文件路径必须是绝对路径，或使用 ~ 开头。"
+
+
+def test_send_file_returns_local_send_metadata(tmp_path) -> None:
+    router = _build_router(TasksStub(), AuditStub(), CodexStub(_codex_result("ok")))
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("report body", encoding="utf-8")
+
+    result = router.handle(_ctx(f"/send-file {file_path}"))
+
+    assert result.reply_text.startswith("发送文件: report.txt")
+    assert result.metadata == {
+        "send_local_file": {
+            "path": str(file_path.resolve()),
+            "name": "report.txt",
+            "size_bytes": len("report body".encode("utf-8")),
+        }
+    }
+
+
 def test_last_returns_latest_task() -> None:
     tasks = TasksStub()
     audit = AuditStub()

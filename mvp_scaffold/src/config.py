@@ -58,6 +58,7 @@ class AppConfig:
     skill_install_timeout_seconds: int
     poll_interval_seconds: int
     max_telegram_message_length: int
+    telegram_send_local_file_max_size_bytes: int
     telegram_connection_pool_size: int
     telegram_pool_timeout_seconds: float
     telegram_get_updates_connection_pool_size: int
@@ -152,6 +153,9 @@ def load_config() -> AppConfig:
         skill_install_timeout_seconds=int(os.getenv("SKILL_INSTALL_TIMEOUT_SECONDS", "600")),
         poll_interval_seconds=int(os.getenv("TELEGRAM_POLL_INTERVAL_SECONDS", "2")),
         max_telegram_message_length=int(os.getenv("MAX_TELEGRAM_MESSAGE_LENGTH", "3500")),
+        telegram_send_local_file_max_size_bytes=int(
+            os.getenv("TELEGRAM_SEND_LOCAL_FILE_MAX_SIZE_BYTES", str(49 * 1024 * 1024))
+        ),
         telegram_connection_pool_size=int(os.getenv("TELEGRAM_CONNECTION_POOL_SIZE", "64")),
         telegram_pool_timeout_seconds=float(os.getenv("TELEGRAM_POOL_TIMEOUT_SECONDS", "15")),
         telegram_get_updates_connection_pool_size=int(
