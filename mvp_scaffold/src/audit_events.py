@@ -47,6 +47,7 @@ SYSTEM_RESTART_TRIGGERED = "system.restart_triggered"
 SYSTEM_LOGS_VIEWED = "system.logs_viewed"
 SYSTEM_LOGS_CLEARED = "system.logs_cleared"
 SYSTEM_LOCAL_FILE_SENT = "system.local_file_sent"
+SYSTEM_GITHUB_CLONED = "system.github_cloned"
 SCHEDULE_CREATED = "schedule.created"
 SCHEDULE_VIEWED = "schedule.viewed"
 SCHEDULE_DELETED = "schedule.deleted"
@@ -104,6 +105,7 @@ ALL_EVENTS = {
     SYSTEM_LOGS_VIEWED,
     SYSTEM_LOGS_CLEARED,
     SYSTEM_LOCAL_FILE_SENT,
+    SYSTEM_GITHUB_CLONED,
     SCHEDULE_CREATED,
     SCHEDULE_VIEWED,
     SCHEDULE_DELETED,

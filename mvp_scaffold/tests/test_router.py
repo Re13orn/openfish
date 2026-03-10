@@ -5,6 +5,7 @@ from src import audit_events
 from src.approval import ApprovalService
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.codex_runner import CodexRunResult
+from src.github_repo_service import GitHubCloneResult, GitHubRepoService
 from src.mcp_service import McpDetailResult, McpListResult, McpServerDetail, McpServerSummary
 from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
 from src.repo_inspector import RepoState
@@ -890,6 +891,29 @@ class SessionsStub:
         return None
 
 
+class GitHubReposStub:
+    def __init__(self) -> None:
+        self.plans = []
+        self.cloned = []
+
+    def plan_clone(self, *, repo_input: str, project_root: Path, target_name: str | None = None):  # noqa: ANN001
+        plan = GitHubRepoService().plan_clone(
+            repo_input=repo_input,
+            project_root=project_root,
+            target_name=target_name,
+        )
+        self.plans.append(plan)
+        return plan
+
+    def clone(self, plan):  # noqa: ANN001
+        self.cloned.append(plan)
+        return GitHubCloneResult(
+            ok=True,
+            summary=f"ok {plan.owner}/{plan.repo}",
+            plan=plan,
+        )
+
+
 def _build_router(
     tasks: TasksStub,
     audit: AuditStub,
@@ -898,6 +922,7 @@ def _build_router(
     mcp: McpStub | None = None,
     updates: UpdateStub | None = None,
     sessions: SessionsStub | None = None,
+    github_repos: GitHubReposStub | None = None,
 ) -> CommandRouter:
     config = SimpleNamespace(
         allowed_telegram_user_ids={"123"},
@@ -919,6 +944,7 @@ def _build_router(
         mcp_service=mcp,
         update_service=updates,
         codex_sessions=sessions,
+        github_repos=github_repos or GitHubReposStub(),
     )
 
 
@@ -1413,7 +1439,7 @@ def test_start_and_upload_policy_commands() -> None:
 def test_send_file_requires_absolute_path() -> None:
     router = _build_router(TasksStub(), AuditStub(), CodexStub(_codex_result("ok")))
 
-    result = router.handle(_ctx("/send-file relative.txt"))
+    result = router.handle(_ctx("/download-file relative.txt"))
 
     assert result.reply_text == "文件路径必须是绝对路径，或使用 ~ 开头。"
 
@@ -1423,9 +1449,9 @@ def test_send_file_returns_local_send_metadata(tmp_path) -> None:
     file_path = tmp_path / "report.txt"
     file_path.write_text("report body", encoding="utf-8")
 
-    result = router.handle(_ctx(f"/send-file {file_path}"))
+    result = router.handle(_ctx(f"/download-file {file_path}"))
 
-    assert result.reply_text.startswith("发送文件: report.txt")
+    assert result.reply_text.startswith("下载文件: report.txt")
     assert result.metadata == {
         "send_local_file": {
             "path": str(file_path.resolve()),
@@ -1433,6 +1459,31 @@ def test_send_file_returns_local_send_metadata(tmp_path) -> None:
             "size_bytes": len("report body".encode("utf-8")),
         }
     }
+
+
+def test_send_file_old_alias_still_works(tmp_path) -> None:
+    router = _build_router(TasksStub(), AuditStub(), CodexStub(_codex_result("ok")))
+    file_path = tmp_path / "legacy.txt"
+    file_path.write_text("legacy", encoding="utf-8")
+
+    result = router.handle(_ctx(f"/send-file {file_path}"))
+
+    assert result.reply_text.startswith("下载文件: legacy.txt")
+
+
+def test_github_clone_downloads_into_active_project() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("ok"))
+    github_repos = GitHubReposStub()
+    router = _build_router(tasks, audit, codex, github_repos=github_repos)
+
+    result = router.handle(_ctx("/github-clone openai/openai-python vendor/openai-python"))
+
+    assert result.reply_text.startswith("已下载 GitHub 仓库: openai/openai-python")
+    assert "目标目录: vendor/openai-python" in result.reply_text
+    assert github_repos.plans[0].target_dir == Path("/tmp/vendor/openai-python").resolve()
+    assert github_repos.cloned[0].clone_url == "https://github.com/openai/openai-python.git"
 
 
 def test_last_returns_latest_task() -> None:

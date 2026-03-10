@@ -70,13 +70,18 @@ def test_model_panel_marks_current_model_and_reset_action() -> None:
     assert any(button.callback_data == "model:reset" for row in rows for button in row)
 
 
-def test_more_panel_contains_send_file_prompt() -> None:
+def test_more_panel_contains_download_file_prompt() -> None:
     factory = TelegramViewFactory()
 
     spec = factory.more_panel()
 
     assert any(
-        button.callback_data == "prompt:send_file"
+        button.callback_data == "prompt:send_file" and button.text == "下载文件"
+        for row in spec.reply_markup.inline_keyboard
+        for button in row
+    )
+    assert any(
+        button.callback_data == "prompt:github_clone" and button.text == "下载 GitHub 仓库"
         for row in spec.reply_markup.inline_keyboard
         for button in row
     )

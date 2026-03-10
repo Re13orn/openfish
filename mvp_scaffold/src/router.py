@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import shlex
 import signal
 import subprocess
 from threading import Lock
@@ -44,6 +45,7 @@ from src.formatters import (
     format_use_confirmation,
     format_version_info,
 )
+from src.github_repo_service import GitHubRepoService
 from src.mcp_service import McpService
 from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
 from src.project_registry import ProjectRegistry
@@ -100,6 +102,7 @@ class CommandRouter:
         mcp_service: McpService | None = None,
         update_service: UpdateService | None = None,
         codex_sessions: CodexSessionService | None = None,
+        github_repos: GitHubRepoService | None = None,
     ) -> None:
         self.config = config
         self.projects = projects
@@ -112,6 +115,7 @@ class CommandRouter:
         self.mcp_service = mcp_service
         self.update_service = update_service
         self.codex_sessions = codex_sessions
+        self.github_repos = github_repos
         self._project_locks: dict[int, LockType] = {}
         self._project_locks_guard = Lock()
         self._active_task_executions: dict[int, ActiveTaskExecution] = {}
@@ -161,8 +165,10 @@ class CommandRouter:
             return self._handle_session_import(ctx, argument)
         if command == "/model":
             return self._handle_model(ctx, argument)
-        if command == "/send-file":
+        if command in {"/download-file", "/send-file"}:
             return self._handle_send_file(ctx, argument)
+        if command == "/github-clone":
+            return self._handle_github_clone(ctx, argument)
         if command == "/version":
             return self._handle_version(ctx)
         if command == "/update-check":
@@ -347,7 +353,7 @@ class CommandRouter:
     def _handle_send_file(self, ctx: CommandContext, argument: str) -> CommandResult:
         raw_path = argument.strip()
         if not raw_path:
-            return CommandResult("用法: /send-file <abs_path>")
+            return CommandResult("用法: /download-file <abs_path>")
 
         candidate = Path(os.path.expanduser(raw_path))
         if not candidate.is_absolute():
@@ -389,7 +395,7 @@ class CommandRouter:
             },
         )
         return CommandResult(
-            f"发送文件: {resolved.name}\n路径: {resolved}",
+            f"下载文件: {resolved.name}\n路径: {resolved}",
             metadata={
                 "send_local_file": {
                     "path": str(resolved),
@@ -397,6 +403,65 @@ class CommandRouter:
                     "size_bytes": size_bytes,
                 }
             },
+        )
+
+    def _handle_github_clone(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.github_repos is None:
+            return CommandResult("当前未启用 GitHub 仓库下载。")
+
+        repo_input, target_name = self._parse_github_clone_argument(argument)
+        if repo_input is None:
+            return CommandResult("用法: /github-clone <repo_url|owner/repo> [relative_dir]")
+
+        try:
+            plan = self.github_repos.plan_clone(
+                repo_input=repo_input,
+                project_root=active.project.path,
+                target_name=target_name,
+            )
+        except ValueError as exc:
+            return CommandResult(str(exc))
+
+        if not self.projects.is_path_allowed(active.project, plan.target_dir):
+            return CommandResult(f"目标目录超出当前项目允许范围: {plan.target_dir}")
+        if has_symlink_in_path(active.project.path, plan.target_dir):
+            return CommandResult(f"目标路径包含符号链接，已拒绝: {plan.target_dir}")
+        if is_sensitive_file_name(plan.target_dir.name):
+            return CommandResult(f"目标目录名称过于敏感，已拒绝: {plan.target_dir.name}")
+
+        lock_or_result = self._try_acquire_project_lock(active=active, operation="github_clone")
+        if isinstance(lock_or_result, CommandResult):
+            return lock_or_result
+        project_lock = lock_or_result
+        try:
+            result = self.github_repos.clone(plan)
+        except (ValueError, RuntimeError) as exc:
+            return CommandResult(f"GitHub 仓库下载失败: {exc}")
+        finally:
+            project_lock.release()
+
+        self._refresh_repo_state(project_id=active.project_id, project=active.project)
+        self.audit.log(
+            action=audit_events.SYSTEM_GITHUB_CLONED,
+            message=f"下载 GitHub 仓库: {plan.owner}/{plan.repo}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={
+                "clone_url": plan.clone_url,
+                "target_dir": str(plan.target_dir),
+            },
+        )
+        try:
+            relative_target = str(plan.target_dir.relative_to(active.project.path.resolve()))
+        except ValueError:
+            relative_target = str(plan.target_dir)
+        return CommandResult(
+            f"已下载 GitHub 仓库: {plan.owner}/{plan.repo}\n"
+            f"目标目录: {relative_target}\n"
+            f"完整路径: {plan.target_dir}"
         )
 
     def _handle_version(self, ctx: CommandContext) -> CommandResult:
@@ -2298,6 +2363,20 @@ class CommandRouter:
 
         display_name = " ".join(parts[1:]).strip() or key
         return key, None, display_name
+
+    def _parse_github_clone_argument(self, argument: str) -> tuple[str | None, str | None]:
+        text = argument.strip()
+        if not text:
+            return None, None
+        try:
+            parts = shlex.split(text)
+        except ValueError:
+            return None, None
+        if not parts:
+            return None, None
+        repo_input = parts[0].strip()
+        target_name = " ".join(parts[1:]).strip() if len(parts) > 1 else None
+        return (repo_input or None), (target_name or None)
 
     def _resolve_project_add_path(
         self,

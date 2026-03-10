@@ -157,7 +157,10 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="Skills", callback_data="cmd:skills"),
                         InlineKeyboardButton(text="安装 Skill", callback_data="prompt:skill_install"),
                     ],
-                    [InlineKeyboardButton(text="发送文件", callback_data="prompt:send_file")],
+                    [
+                        InlineKeyboardButton(text="下载文件", callback_data="prompt:send_file"),
+                        InlineKeyboardButton(text="下载 GitHub 仓库", callback_data="prompt:github_clone"),
+                    ],
                     [
                         InlineKeyboardButton(text="MCP 列表", callback_data="cmd:mcp"),
                         InlineKeyboardButton(text="MCP 详情", callback_data="prompt:mcp"),

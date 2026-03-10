@@ -44,7 +44,7 @@ def prompt_mode_hint(hint: str) -> str:
 
 
 def local_file_send_failed(error_text: str) -> str:
-    return f"发送本机文件失败：{error_text}"
+    return f"下载本机文件失败：{error_text}"
 
 
 def wizard_missing_state() -> str:

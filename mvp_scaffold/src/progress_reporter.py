@@ -19,6 +19,7 @@ class ProgressReporter:
         "/schedule-pause": ["读取定期任务", "更新为暂停"],
         "/schedule-enable": ["读取定期任务", "更新为启用"],
         "/schedule-del": ["校验项目", "删除定期任务"],
+        "/github-clone": ["校验项目", "下载 GitHub 仓库", "汇总结果"],
         "/retry": ["读取最近任务", "校验项目", "启动 Codex"],
         "/resume": ["定位可恢复任务", "继续 Codex 会话", "汇总状态"],
         "/approve": ["确认待审批任务", "继续执行", "汇总结果"],

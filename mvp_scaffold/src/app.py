@@ -9,6 +9,7 @@ from src.codex_runner import CodexRunner
 from src.codex_session_service import CodexSessionService
 from src.config import AppConfig, load_config
 from src.db import Database
+from src.github_repo_service import GitHubRepoService
 from src.project_registry import ProjectRegistry
 from src.process_lock import ProcessLock, acquire_process_lock
 from src.repo_inspector import RepoInspector
@@ -52,6 +53,7 @@ class Application:
             repo_root=Path(__file__).resolve().parents[2],
             script_path=Path(__file__).resolve().parents[1] / "scripts" / "install_start.sh",
         )
+        self.github_repos = GitHubRepoService()
         self.repo = RepoInspector()
         self.router = CommandRouter(
             config=config,
@@ -65,6 +67,7 @@ class Application:
             mcp_service=self.mcp,
             update_service=self.updates,
             codex_sessions=self.codex_sessions,
+            github_repos=self.github_repos,
         )
         self.scheduler = ScheduledTaskService(
             tasks=self.tasks,

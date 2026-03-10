@@ -1429,10 +1429,10 @@ def test_send_command_result_sends_local_file_document(tmp_path) -> None:
     ok = asyncio.run(
         service._send_command_result(
             message,
-            "/send-file",
+            "/download-file",
             ctx,
             CommandResult(
-                f"发送文件: {file_path.name}\n路径: {file_path}",
+                f"下载文件: {file_path.name}\n路径: {file_path}",
                 metadata={"send_local_file": {"path": str(file_path), "name": file_path.name}},
             ),
         )

@@ -123,7 +123,8 @@ class TelegramBotService:
         "reject": "/reject",
         "mcp": "/mcp",
         "model": "/model",
-        "send_file": "/send-file",
+        "send_file": "/download-file",
+        "github_clone": "/github-clone",
     }
 
     _PROMPT_HINTS = {
@@ -141,7 +142,8 @@ class TelegramBotService:
         "reject": "请输入拒绝原因。下一条消息将按 /reject 执行。",
         "mcp": "请输入 MCP 名称（留空则查看列表）。下一条消息将按 /mcp 执行。",
         "model": "请输入模型名称。下一条消息将按 /model set 执行。",
-        "send_file": "请输入本机文件绝对路径，或使用 ~ 开头。下一条消息将按 /send-file 执行。",
+        "send_file": "请输入本机文件绝对路径，或使用 ~ 开头。下一条消息将按 /download-file 执行。",
+        "github_clone": "请输入公开 GitHub 仓库 URL 或 owner/repo，可选再跟一个相对目录名。下一条消息将按 /github-clone 执行。",
     }
     _TYPING_COMMANDS = {
         "/ask",
@@ -157,6 +159,7 @@ class TelegramBotService:
         "/update",
         "/update-check",
         "/restart",
+        "/github-clone",
     }
 
     def __init__(self, config, router) -> None:
