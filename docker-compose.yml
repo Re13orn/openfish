@@ -5,10 +5,22 @@ services:
       dockerfile: Dockerfile
     container_name: openfish
     restart: unless-stopped
-    env_file:
-      - .env
+    environment:
+      OPENFISH_HOME: /var/lib/openfish
+      OPENFISH_DOCKER_MODE: "1"
+      DEFAULT_PROJECT_ROOT: /workspace/projects
+      CODEX_HOME: /root/.codex
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      ALLOWED_TELEGRAM_USER_IDS: ${ALLOWED_TELEGRAM_USER_IDS:-}
+      DEFAULT_PROJECT: ${DEFAULT_PROJECT:-}
+      OPENFISH_BOOTSTRAP_PROJECT_KEY: ${OPENFISH_BOOTSTRAP_PROJECT_KEY:-}
+      OPENFISH_BOOTSTRAP_PROJECT_NAME: ${OPENFISH_BOOTSTRAP_PROJECT_NAME:-}
     volumes:
-      - ./mvp_scaffold/data:/app/mvp_scaffold/data
-      - ./mvp_scaffold/projects.yaml:/app/mvp_scaffold/projects.yaml
-      - ${HOME}/.codex:/root/.codex
-      - ${OPENFISH_WORKSPACE_ROOT:-.}:/workspace
+      - openfish_home:/var/lib/openfish
+      - openfish_codex:/root/.codex
+      - openfish_workspace:/workspace
+
+volumes:
+  openfish_home:
+  openfish_codex:
+  openfish_workspace:
