@@ -52,6 +52,7 @@ def test_cli_runs_docker_up_from_repo_root(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
     monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
     monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(cli, "_validate_telegram_token", lambda token: (True, ""))
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     code = cli.main(["docker-up"])
@@ -97,6 +98,24 @@ def test_cli_docker_up_requires_docker_config(monkeypatch, capsys) -> None:
     assert "openfish docker-configure" in err
 
 
+def test_cli_docker_up_rejects_invalid_token(monkeypatch, tmp_path, capsys) -> None:
+    repo_root = tmp_path
+    env_file = repo_root / ".openfish.docker.env"
+    (repo_root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    env_file.write_text("TELEGRAM_BOT_TOKEN=bad-token\n", encoding="utf-8")
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(cli, "_validate_telegram_token", lambda token: (False, "Unauthorized"))
+
+    code = cli.main(["docker-up"])
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "Telegram Bot Token 校验失败" in err
+
+
 def test_cli_docker_configure_writes_env_file(monkeypatch, tmp_path) -> None:
     env_file = tmp_path / ".openfish.docker.env"
     inputs = iter(["123456789", "demo", "demo", "Demo"])
@@ -106,6 +125,7 @@ def test_cli_docker_configure_writes_env_file(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "token-123")
     monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
     monkeypatch.setattr(cli, "_suggest_telegram_user_ids", lambda token: None)
+    monkeypatch.setattr(cli, "_validate_telegram_token", lambda token: (True, ""))
 
     code = cli.main(["docker-configure"])
 
@@ -126,6 +146,7 @@ def test_cli_docker_configure_allows_empty_optional_fields(monkeypatch, tmp_path
     monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "token-123")
     monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
     monkeypatch.setattr(cli, "_suggest_telegram_user_ids", lambda token: None)
+    monkeypatch.setattr(cli, "_validate_telegram_token", lambda token: (True, ""))
 
     code = cli.main(["docker-configure"])
 
@@ -137,6 +158,25 @@ def test_cli_docker_configure_allows_empty_optional_fields(monkeypatch, tmp_path
     assert "DEFAULT_PROJECT=" not in content
     assert "OPENFISH_BOOTSTRAP_PROJECT_KEY=" not in content
     assert "OPENFISH_BOOTSTRAP_PROJECT_NAME=" not in content
+
+
+def test_cli_docker_configure_rejects_invalid_token(monkeypatch, tmp_path, capsys) -> None:
+    env_file = tmp_path / ".openfish.docker.env"
+    inputs = iter(["123456789"])
+
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "bad-token")
+    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+    monkeypatch.setattr(cli, "_suggest_telegram_user_ids", lambda token: None)
+    monkeypatch.setattr(cli, "_validate_telegram_token", lambda token: (False, "Unauthorized"))
+
+    code = cli.main(["docker-configure"])
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "Telegram Bot Token 校验失败" in err
+    assert not env_file.exists()
 
 
 def test_cli_docker_login_codex_imports_auth_file(monkeypatch, tmp_path) -> None:

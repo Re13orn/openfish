@@ -510,6 +510,11 @@ def _native_docker_configure() -> int:
             break
         print("[warn] 必须是纯数字 Telegram 用户 ID。")
 
+    token_ok, token_error = _validate_telegram_token(token)
+    if not token_ok:
+        print(f"[docker-configure] Telegram Bot Token 校验失败: {token_error}", file=sys.stderr)
+        return 1
+
     default_project = _prompt_value("3/5 默认项目 key（可留空）", current.get("DEFAULT_PROJECT", ""), allow_empty=True)
     bootstrap_key = _prompt_value("4/5 容器启动时预置项目 key（可留空）", current.get("OPENFISH_BOOTSTRAP_PROJECT_KEY", ""), allow_empty=True)
     bootstrap_name_default = current.get("OPENFISH_BOOTSTRAP_PROJECT_NAME", bootstrap_key)
@@ -617,6 +622,26 @@ def _suggest_telegram_user_ids(token: str) -> str | None:
     if not rows:
         return None
     return ",".join(row["user_id"] for row in rows)
+
+
+def _validate_telegram_token(token: str) -> tuple[bool, str]:
+    if _is_placeholder_token(token):
+        return False, "TELEGRAM_BOT_TOKEN 未配置"
+    try:
+        import httpx
+
+        response = httpx.get(
+            f"https://api.telegram.org/bot{token}/getMe",
+            timeout=20.0,
+        )
+        if response.status_code != 200:
+            return False, "Bot Token 无效或 Telegram API 不可达"
+        payload = response.json()
+        if not payload.get("ok"):
+            return False, str(payload.get("description") or "Bot Token 无效")
+        return True, ""
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Telegram API 校验失败: {exc}"
 
 
 def _native_tg_user_id(args: list[str]) -> int:
@@ -1238,6 +1263,13 @@ def _run_docker_command(command: str, args: list[str]) -> int:
         print(f"[docker] 未找到 Docker 配置文件: {_docker_env_file()}", file=sys.stderr)
         print("[docker] 先执行: openfish docker-configure", file=sys.stderr)
         return 1
+    if command == "docker-up":
+        docker_env = _load_simple_env_file(_docker_env_file())
+        token_ok, token_error = _validate_telegram_token(docker_env.get("TELEGRAM_BOT_TOKEN", "").strip())
+        if not token_ok:
+            print(f"[docker] Telegram Bot Token 校验失败: {token_error}", file=sys.stderr)
+            print("[docker] 先执行: openfish docker-configure", file=sys.stderr)
+            return 1
     mapping = {
         "docker-up": [*compose_base, "up", "-d", "--build"],
         "docker-down": [*compose_base, "down"],
