@@ -63,15 +63,15 @@ OpenFish is not:
 - Status/projects/schedule/approval/more panels now prefer updating the latest card instead of spamming new messages
 - Short-window outbound dedup plus recent message reference tracking for stable Telegram rendering
 
-## Quick Start
+## ><> CLI Quick Start
 
-Install the package entrypoint first:
+Install the CLI entrypoint first:
 
 ```bash
 pip install -e ./mvp_scaffold
 ```
 
-Then run OpenFish through the `openfish` CLI:
+Then run OpenFish through the `><> openfish` CLI:
 
 ```bash
 openfish install
@@ -80,7 +80,7 @@ openfish check
 openfish start
 ```
 
-The primary lifecycle commands are now native CLI commands:
+`><>` Primary lifecycle commands:
 
 - `openfish install`
 - `openfish configure`
@@ -92,12 +92,12 @@ The primary lifecycle commands are now native CLI commands:
 - `openfish status`
 - `openfish logs`
 
-Update behavior is mode-aware:
+`><>` Update behavior is mode-aware:
 
 - repository mode: `openfish update` performs git-based self-update
 - package/home mode: use `python -m pip install --upgrade openfish`
 
-If you want a user-home runtime instead of repository-local runtime data, bootstrap it first:
+`><>` If you want a user-home runtime instead of repository-local runtime data, bootstrap it first:
 
 ```bash
 openfish init-home
@@ -106,19 +106,19 @@ openfish check
 openfish start
 ```
 
-If you do not know your Telegram user ID yet, send `/start` to the bot first, then run:
+`><>` If you do not know your Telegram user ID yet, send `/start` to the bot first, then run:
 
 ```bash
 openfish tg-user-id
 ```
 
-Legacy script entrypoint remains available for compatibility:
+`><>` Legacy script entrypoint remains available for compatibility:
 
 ```bash
 bash mvp_scaffold/scripts/install_start.sh start
 ```
 
-## Docker
+## ><> Docker
 
 OpenFish also includes a Docker runtime skeleton for long-running self-hosted deployment.
 
@@ -135,14 +135,14 @@ Current Docker assumptions:
 
 Docker is optional. For local owner-operated usage, the `openfish` CLI remains the primary path.
 
-Supported Docker helper commands:
+`><>` Supported Docker helper commands:
 
 - `openfish docker-up`
 - `openfish docker-down`
 - `openfish docker-logs`
 - `openfish docker-ps`
 
-## Command Overview
+## ><> Command Overview
 
 Core commands:
 

@@ -63,15 +63,15 @@ OpenFish 不做：
 - `状态`、`项目`、`定时`、`审批`、`更多` 这些卡片会优先更新已有消息，而不是不断堆新消息
 - 发送链路增加短窗口去重和最近消息引用跟踪，减少重复输出
 
-## 快速开始
+## ><> CLI 快速开始
 
-先安装 `openfish` 命令入口：
+先安装 `><> openfish` 命令入口：
 
 ```bash
 pip install -e ./mvp_scaffold
 ```
 
-然后统一通过 `openfish` CLI 使用：
+然后统一通过 `><> openfish` CLI 使用：
 
 ```bash
 openfish install
@@ -80,7 +80,7 @@ openfish check
 openfish start
 ```
 
-当前主生命周期命令已经是原生 CLI：
+`><>` 当前主生命周期命令已经是原生 CLI：
 
 - `openfish install`
 - `openfish configure`
@@ -92,12 +92,12 @@ openfish start
 - `openfish status`
 - `openfish logs`
 
-更新行为现在按安装模式区分：
+`><>` 更新行为现在按安装模式区分：
 
 - 仓库模式：`openfish update` 走 git 自更新
 - 包/home 模式：使用 `python -m pip install --upgrade openfish`
 
-如果你想把运行时数据放到用户目录，而不是仓库目录，可以先初始化 home 模式：
+`><>` 如果你想把运行时数据放到用户目录，而不是仓库目录，可以先初始化 home 模式：
 
 ```bash
 openfish init-home
@@ -106,19 +106,19 @@ openfish check
 openfish start
 ```
 
-如果你还不知道自己的 Telegram 用户 ID，先给 bot 发 `/start`，再执行：
+`><>` 如果你还不知道自己的 Telegram 用户 ID，先给 bot 发 `/start`，再执行：
 
 ```bash
 openfish tg-user-id
 ```
 
-旧脚本入口仍保留兼容：
+`><>` 旧脚本入口仍保留兼容：
 
 ```bash
 bash mvp_scaffold/scripts/install_start.sh start
 ```
 
-## Docker 运行
+## ><> Docker 运行
 
 仓库已经提供 Docker 运行骨架，可用于长期自托管部署：
 
@@ -135,14 +135,14 @@ openfish docker-up
 
 Docker 是可选部署方式。对个人本机使用场景，仍建议优先使用 `openfish` CLI。
 
-可用的 Docker 辅助命令：
+`><>` 可用的 Docker 辅助命令：
 
 - `openfish docker-up`
 - `openfish docker-down`
 - `openfish docker-logs`
 - `openfish docker-ps`
 
-## 命令总览
+## ><> 命令总览
 
 核心命令：
 
