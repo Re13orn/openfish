@@ -26,9 +26,53 @@ It lets you control local repositories from Telegram while execution, state, app
 
 ## Architecture
 
-![OpenFish Architecture](docs/ARCHITECTURE_EN.png)
+### Module View
 
-Detailed architecture notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+```mermaid
+flowchart LR
+    U[Telegram User] --> TG[Telegram Bot API]
+    TG --> A[telegram_adapter.py]
+    A --> R[router.py]
+
+    R --> PR[project_registry.py]
+    R --> TS[task_store.py]
+    R --> AU[audit.py]
+    R --> AP[approval.py]
+    R --> CR[codex_runner.py]
+    R --> RI[repo_inspector.py]
+    R --> SS[skills_service.py]
+    R --> MS[mcp_service.py]
+
+    CR --> CCLI[Codex CLI]
+    CCLI --> REPO[Local Repositories]
+
+    TS --> DB[(SQLite)]
+    AU --> DB
+    PR --> CFG[projects.yaml]
+
+    SCH[scheduler.py] --> TS
+    SCH --> R
+```
+
+### Runtime Flow
+
+```mermaid
+sequenceDiagram
+    participant User as Telegram User
+    participant Adapter as Telegram Adapter
+    participant Router as Command Router
+    participant Store as Task Store
+    participant Codex as Codex Runner
+
+    User->>Adapter: /ask or /do
+    Adapter->>Router: CommandContext
+    Router->>Store: create task + mark running
+    Router->>Codex: execute request in active project
+    Codex-->>Router: summary/session/exit_code
+    Router->>Store: finalize task + update project state
+    Router-->>Adapter: CommandResult
+    Adapter-->>User: concise mobile reply
+```
 
 ## Product Scope
 
@@ -169,7 +213,6 @@ Telegram quick buttons cover all command capabilities:
 User-facing docs:
 
 - Chinese homepage: [README_CN.md](README_CN.md)
-- Architecture details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Persistence details: [docs/PERSISTENCE_ARCHITECTURE.md](docs/PERSISTENCE_ARCHITECTURE.md)
 - Install/Deploy/Usage manual (Chinese): [docs/安装部署和使用手册.md](docs/安装部署和使用手册.md)
 
