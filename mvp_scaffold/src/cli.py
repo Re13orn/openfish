@@ -22,6 +22,7 @@ SCRIPT_FORWARDED_COMMANDS: set[str] = set()
 
 NATIVE_COMMANDS = {
     "install",
+    "uninstall",
     "configure",
     "install-start",
     "init-home",
@@ -292,6 +293,62 @@ def _native_install() -> int:
     print("  openfish configure")
     print("  openfish check")
     return 0
+
+
+def _purge_runtime_files() -> None:
+    repo_root = _repo_root().resolve()
+    runtime_root = _runtime_root().resolve()
+    env_file = _env_file().resolve()
+    projects_file = _projects_path_for_runtime().resolve()
+    data_dir = _data_dir().resolve()
+
+    candidates: list[Path] = []
+    if data_dir.exists():
+        candidates.append(data_dir)
+    for path in (projects_file, env_file):
+        if path.exists():
+            candidates.append(path)
+
+    removable: list[Path] = []
+    for path in candidates:
+        try:
+            path.relative_to(repo_root)
+            removable.append(path)
+            continue
+        except ValueError:
+            pass
+        try:
+            path.relative_to(runtime_root)
+            removable.append(path)
+        except ValueError:
+            continue
+
+    for path in sorted(removable, key=lambda item: len(item.parts), reverse=True):
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def _native_uninstall(args: list[str]) -> int:
+    purge_runtime = "--purge-runtime" in args
+
+    stop_code = _native_stop()
+    uninstall_cmd = [sys.executable, "-m", "pip", "uninstall", "-y", "openfish"]
+    completed = subprocess.run(uninstall_cmd, check=False)  # noqa: S603
+    if completed.returncode != 0:
+        print("[uninstall] pip 卸载失败。", file=sys.stderr)
+        print("[uninstall] 可手动执行: python -m pip uninstall openfish", file=sys.stderr)
+        return int(completed.returncode)
+
+    print("[uninstall] openfish 包已卸载。")
+    if purge_runtime:
+        _purge_runtime_files()
+        print("[uninstall] 运行时配置与数据已清理。")
+    else:
+        print("[uninstall] 保留运行时配置与数据。")
+        print("[uninstall] 如需一并清理，可执行: openfish uninstall --purge-runtime")
+    return stop_code
 
 
 def _native_configure() -> int:
@@ -931,6 +988,8 @@ def _native_update() -> int:
 def _run_native_command(command: str, args: list[str]) -> int:
     if command == "install":
         return _native_install()
+    if command == "uninstall":
+        return _native_uninstall(args)
     if command == "configure":
         return _native_configure()
     if command == "install-start":

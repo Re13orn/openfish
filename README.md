@@ -127,6 +127,7 @@ openfish start
 `><>` Primary lifecycle commands:
 
 - `openfish install`
+- `openfish uninstall`
 - `openfish configure`
 - `openfish init-home`
 - `openfish check`
@@ -148,6 +149,18 @@ openfish init-home
 export OPENFISH_HOME=~/.config/openfish
 openfish check
 openfish start
+```
+
+`><>` Uninstall the package:
+
+```bash
+openfish uninstall
+```
+
+To remove runtime config and data at the same time:
+
+```bash
+openfish uninstall --purge-runtime
 ```
 
 `><>` If you do not know your Telegram user ID yet, send `/start` to the bot first, then run:

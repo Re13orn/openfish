@@ -127,6 +127,7 @@ openfish start
 `><>` 当前主生命周期命令已经是原生 CLI：
 
 - `openfish install`
+- `openfish uninstall`
 - `openfish configure`
 - `openfish init-home`
 - `openfish check`
@@ -148,6 +149,18 @@ openfish init-home
 export OPENFISH_HOME=~/.config/openfish
 openfish check
 openfish start
+```
+
+`><>` 卸载命令入口：
+
+```bash
+openfish uninstall
+```
+
+如果连运行时配置和数据也要一起清理：
+
+```bash
+openfish uninstall --purge-runtime
 ```
 
 `><>` 如果你还不知道自己的 Telegram 用户 ID，先给 bot 发 `/start`，再执行：
