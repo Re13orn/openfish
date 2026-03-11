@@ -24,6 +24,7 @@ NATIVE_COMMANDS = {
     "install",
     "uninstall",
     "configure",
+    "docker-configure",
     "install-start",
     "init-home",
     "check",
@@ -45,6 +46,8 @@ DOCKER_COMMANDS = {
     "docker-down",
     "docker-logs",
     "docker-ps",
+    "docker-login-codex",
+    "docker-codex-status",
 }
 
 SUPPORTED_COMMANDS = SCRIPT_FORWARDED_COMMANDS | NATIVE_COMMANDS | DOCKER_COMMANDS
@@ -71,6 +74,14 @@ def _package_resource(*parts: str) -> Path:
 
 def _default_home_dir() -> Path:
     return Path(os.path.expanduser(os.environ.get("OPENFISH_HOME", "~/.config/openfish"))).resolve()
+
+
+def _docker_mode() -> bool:
+    return os.environ.get("OPENFISH_DOCKER_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _docker_env_file() -> Path:
+    return _repo_root() / ".openfish.docker.env"
 
 
 def _repo_mode() -> bool:
@@ -258,6 +269,33 @@ def _render_env_file(overrides: dict[str, str]) -> str:
     return content
 
 
+def _load_simple_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    loaded: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if value and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        loaded[key] = value
+    return loaded
+
+
+def _write_simple_env_file(path: Path, values: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["# OpenFish Docker runtime configuration"]
+    for key in sorted(values):
+        lines.append(f"{key}={values[key]}")
+    path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+
+
 def _derive_project_key(raw: str) -> str:
     candidate = Path(raw).name.lower()
     candidate = re.sub(r"[^a-z0-9._-]+", "-", candidate).strip("-._")
@@ -387,12 +425,16 @@ def _native_configure() -> int:
             break
         print("[warn] 必须是纯数字 Telegram 用户 ID。")
 
-    default_root_default = current.get("DEFAULT_PROJECT_ROOT", os.path.expanduser("~/workspace/projects"))
-    while True:
-        default_root = _prompt_value("3/6 默认项目根目录（绝对路径）", default_root_default)
-        if Path(os.path.expanduser(default_root)).is_absolute():
-            break
-        print("[warn] 默认项目根目录必须是绝对路径。")
+    if _docker_mode():
+        default_root = "/workspace/projects"
+        print(f"3/6 默认项目根目录（Docker 固定）: {default_root}")
+    else:
+        default_root_default = current.get("DEFAULT_PROJECT_ROOT", os.path.expanduser("~/workspace/projects"))
+        while True:
+            default_root = _prompt_value("3/6 默认项目根目录（绝对路径）", default_root_default)
+            if Path(os.path.expanduser(default_root)).is_absolute():
+                break
+            print("[warn] 默认项目根目录必须是绝对路径。")
     default_root_path = Path(os.path.expanduser(default_root))
     default_root_path.mkdir(parents=True, exist_ok=True)
 
@@ -435,6 +477,60 @@ def _native_configure() -> int:
     print("[configure] next:")
     print("  openfish check")
     print("  openfish start")
+    return 0
+
+
+def _native_docker_configure() -> int:
+    if not sys.stdin.isatty():
+        print("[docker-configure] 需要交互终端。", file=sys.stderr)
+        return 1
+
+    env_file = _docker_env_file()
+    current = _load_simple_env_file(env_file)
+    print("[docker-configure] 开始 Docker 配置向导")
+
+    token_default = current.get("TELEGRAM_BOT_TOKEN", "")
+    if token_default == "your_telegram_bot_token_here":
+        token_default = ""
+    token = _prompt_value("1/5 TELEGRAM_BOT_TOKEN", token_default, secret=True)
+
+    ids_default = current.get("ALLOWED_TELEGRAM_USER_IDS", "")
+    if not _is_valid_user_ids(ids_default):
+        suggested_ids = _suggest_telegram_user_ids(token)
+        if suggested_ids:
+            ids_default = suggested_ids
+            print(f"[docker-configure] 已自动探测 Telegram 用户 ID: {suggested_ids}")
+        else:
+            print("[hint] 未自动探测到用户 ID。先给 bot 发一条私聊消息（例如 /start），再重试。")
+    while True:
+        allowed_ids = _prompt_value("2/5 Telegram 用户 ID（多个逗号分隔）", ids_default)
+        if _is_valid_user_ids(allowed_ids):
+            break
+        print("[warn] 必须是纯数字 Telegram 用户 ID。")
+
+    default_project = _prompt_value("3/5 默认项目 key（可留空）", current.get("DEFAULT_PROJECT", ""))
+    bootstrap_key = _prompt_value("4/5 容器启动时预置项目 key（可留空）", current.get("OPENFISH_BOOTSTRAP_PROJECT_KEY", ""))
+    bootstrap_name_default = current.get("OPENFISH_BOOTSTRAP_PROJECT_NAME", bootstrap_key)
+    bootstrap_name = _prompt_value("5/5 预置项目显示名（可留空）", bootstrap_name_default)
+
+    values = {
+        "TELEGRAM_BOT_TOKEN": token,
+        "ALLOWED_TELEGRAM_USER_IDS": allowed_ids,
+        "DEFAULT_PROJECT_ROOT": "/workspace/projects",
+        "OPENFISH_DOCKER_MODE": "1",
+    }
+    if default_project:
+        values["DEFAULT_PROJECT"] = default_project
+    if bootstrap_key:
+        values["OPENFISH_BOOTSTRAP_PROJECT_KEY"] = bootstrap_key
+    if bootstrap_name:
+        values["OPENFISH_BOOTSTRAP_PROJECT_NAME"] = bootstrap_name
+    _write_simple_env_file(env_file, values)
+    print(f"[docker-configure] wrote {env_file}")
+    print("[docker-configure] next:")
+    print("  openfish docker-up")
+    print("  openfish docker-login-codex")
+    print("  openfish docker-codex-status")
     return 0
 
 
@@ -997,6 +1093,8 @@ def _run_native_command(command: str, args: list[str]) -> int:
         return _native_uninstall(args)
     if command == "configure":
         return _native_configure()
+    if command == "docker-configure":
+        return _native_docker_configure()
     if command == "install-start":
         return _native_install_start()
     if command == "init-home":
@@ -1039,6 +1137,87 @@ def _run_script_command(command: str, args: list[str]) -> int:
     return int(completed.returncode)
 
 
+def _docker_compose_base_cmd(docker_bin: str) -> list[str]:
+    env_file = _docker_env_file()
+    base = [docker_bin, "compose"]
+    if env_file.exists():
+        base.extend(["--env-file", str(env_file)])
+    return base
+
+
+def _import_codex_auth_into_container(docker_bin: str, auth_content: str) -> int:
+    repo_root = _repo_root()
+    cmd = [
+        docker_bin,
+        "exec",
+        "-i",
+        "openfish",
+        "/bin/sh",
+        "-lc",
+        "mkdir -p /root/.codex && cat > /root/.codex/auth.json && chmod 600 /root/.codex/auth.json",
+    ]
+    completed = subprocess.run(  # noqa: S603
+        cmd,
+        check=False,
+        cwd=str(repo_root),
+        input=auth_content,
+        text=True,
+    )
+    if completed.returncode != 0:
+        print("[docker] 导入 auth.json 失败。", file=sys.stderr)
+        return int(completed.returncode)
+    status_cmd = [docker_bin, "exec", "openfish", "codex", "login", "status"]
+    subprocess.run(status_cmd, check=False, cwd=str(repo_root))  # noqa: S603
+    return 0
+
+
+def _docker_login_codex(docker_bin: str, args: list[str]) -> int:
+    repo_root = _repo_root()
+    tty_flags = ["-it"] if sys.stdin.isatty() and sys.stdout.isatty() else []
+
+    if args and args[0] == "--device-auth":
+        cmd = [docker_bin, "exec", *tty_flags, "openfish", "codex", "login", "--device-auth", *args[1:]]
+        completed = subprocess.run(cmd, check=False, cwd=str(repo_root))  # noqa: S603
+        return int(completed.returncode)
+
+    auth_path_arg = args[0] if args else ""
+    if auth_path_arg:
+        auth_path = Path(os.path.expanduser(auth_path_arg))
+        if not auth_path.exists() or not auth_path.is_file():
+            print(f"[docker] auth.json 路径不存在: {auth_path}", file=sys.stderr)
+            return 1
+        return _import_codex_auth_into_container(docker_bin, auth_path.read_text(encoding="utf-8"))
+
+    default_auth_path = Path(os.path.expanduser("~/.codex/auth.json"))
+    if sys.stdin.isatty():
+        print("[docker-login-codex] 选择登录方式：")
+        print("  1) device     通过 Codex 官方设备登录")
+        if default_auth_path.exists():
+            print(f"  2) path       导入本机 auth.json ({default_auth_path})")
+        else:
+            print("  2) path       导入本机 auth.json 路径")
+        print("  3) paste      粘贴 auth.json 内容")
+        choice = input("登录方式 [device/path/paste] (默认 device): ").strip().lower() or "device"
+        if choice == "path":
+            path_default = str(default_auth_path) if default_auth_path.exists() else ""
+            auth_path_raw = _prompt_value("auth.json 路径", path_default)
+            auth_path = Path(os.path.expanduser(auth_path_raw))
+            if not auth_path.exists() or not auth_path.is_file():
+                print(f"[docker] auth.json 路径不存在: {auth_path}", file=sys.stderr)
+                return 1
+            return _import_codex_auth_into_container(docker_bin, auth_path.read_text(encoding="utf-8"))
+        if choice == "paste":
+            auth_content = input("粘贴 auth.json 内容（单行 JSON）: ").strip()
+            if not auth_content:
+                print("[docker] auth.json 内容不能为空。", file=sys.stderr)
+                return 1
+            return _import_codex_auth_into_container(docker_bin, auth_content)
+
+    cmd = [docker_bin, "exec", *tty_flags, "openfish", "codex", "login", "--device-auth"]
+    completed = subprocess.run(cmd, check=False, cwd=str(repo_root))  # noqa: S603
+    return int(completed.returncode)
+
+
 def _run_docker_command(command: str, args: list[str]) -> int:
     repo_root = _repo_root()
     compose_file = repo_root / "docker-compose.yml"
@@ -1049,11 +1228,20 @@ def _run_docker_command(command: str, args: list[str]) -> int:
         print("[docker] 未找到 docker 可执行文件。", file=sys.stderr)
         print("[docker] 请先安装 Docker Desktop 或将 docker 加入 PATH。", file=sys.stderr)
         return 1
+    if command == "docker-login-codex":
+        return _docker_login_codex(docker_bin, args)
+
+    compose_base = _docker_compose_base_cmd(docker_bin)
+    if command == "docker-up" and not _docker_env_file().exists():
+        print(f"[docker] 未找到 Docker 配置文件: {_docker_env_file()}", file=sys.stderr)
+        print("[docker] 先执行: openfish docker-configure", file=sys.stderr)
+        return 1
     mapping = {
-        "docker-up": [docker_bin, "compose", "up", "-d", "--build"],
-        "docker-down": [docker_bin, "compose", "down"],
-        "docker-logs": [docker_bin, "compose", "logs", "-f"],
-        "docker-ps": [docker_bin, "compose", "ps"],
+        "docker-up": [*compose_base, "up", "-d", "--build"],
+        "docker-down": [*compose_base, "down"],
+        "docker-logs": [*compose_base, "logs", "-f"],
+        "docker-ps": [*compose_base, "ps"],
+        "docker-codex-status": [docker_bin, "exec", "openfish", "codex", "login", "status"],
     }
     cmd = [*mapping[command], *args]
     try:

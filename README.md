@@ -177,27 +177,59 @@ bash mvp_scaffold/scripts/install_start.sh start
 
 ## ><> Docker
 
-OpenFish also includes a Docker runtime skeleton for long-running self-hosted deployment.
+OpenFish also includes an isolated Docker runtime for long-running self-hosted deployment.
 
 ```bash
+openfish docker-configure
 openfish docker-up
 ```
 
-Current Docker assumptions:
+Current Docker mode is isolated from the host runtime layout:
 
-- `.env` stays at repository root
-- `mvp_scaffold/projects.yaml` is mounted into the container
-- `~/.codex` is mounted into the container
-- your workspace root is mounted to `/workspace`
+- OpenFish home lives in a Docker volume at `/var/lib/openfish`
+- the default project root is fixed inside the container at `/workspace/projects`
+- Codex auth state lives in a Docker volume at `/root/.codex`
+- runtime state, logs, SQLite, and `projects.yaml` live in named Docker volumes
+- repository-local `.env`, `projects.yaml`, and `mvp_scaffold/data` are not mounted into the container
 
 Docker is optional. For local owner-operated usage, the `openfish` CLI remains the primary path.
 
 `><>` Supported Docker helper commands:
 
+- `openfish docker-configure`
 - `openfish docker-up`
 - `openfish docker-down`
 - `openfish docker-logs`
 - `openfish docker-ps`
+- `openfish docker-login-codex`
+- `openfish docker-codex-status`
+
+`><>` Recommended flow:
+
+1. `openfish docker-configure`
+2. `openfish docker-up`
+3. `openfish docker-login-codex`
+4. `openfish docker-codex-status`
+
+If you need to log Codex into the container after it starts:
+
+```bash
+openfish docker-login-codex
+openfish docker-codex-status
+```
+
+`openfish docker-configure` writes Docker-specific runtime settings into `.openfish.docker.env` and guides:
+
+- `TELEGRAM_BOT_TOKEN`
+- `ALLOWED_TELEGRAM_USER_IDS`
+- optional `DEFAULT_PROJECT`
+- optional bootstrap project key/name
+
+`openfish docker-login-codex` supports:
+
+- device auth login
+- importing a local `auth.json` path such as `~/.codex/auth.json`
+- pasting raw `auth.json` content directly
 
 ## ><> Command Overview
 

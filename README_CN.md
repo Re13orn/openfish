@@ -177,27 +177,59 @@ bash mvp_scaffold/scripts/install_start.sh start
 
 ## ><> Docker 运行
 
-仓库已经提供 Docker 运行骨架，可用于长期自托管部署：
+仓库已经提供 Docker 独立运行模式，可用于长期自托管部署：
 
 ```bash
+openfish docker-configure
 openfish docker-up
 ```
 
-当前 Docker 方案默认：
+当前 Docker 模式已经改成独立运行态：
 
-- 使用仓库根目录的 `.env`
-- 挂载 `mvp_scaffold/projects.yaml`
-- 挂载本机 `~/.codex`
-- 将宿主机工作区挂到容器内 `/workspace`
+- OpenFish home 固定在 Docker volume `/var/lib/openfish`
+- 默认项目根目录固定为 `/workspace/projects`
+- Codex 登录态保存在 Docker volume `/root/.codex`
+- 运行时状态、日志、SQLite、`projects.yaml` 都放在 named volumes
+- 不再直接复用宿主机仓库里的 `.env`、`projects.yaml`、`mvp_scaffold/data`
 
 Docker 是可选部署方式。对个人本机使用场景，仍建议优先使用 `openfish` CLI。
 
 `><>` 可用的 Docker 辅助命令：
 
+- `openfish docker-configure`
 - `openfish docker-up`
 - `openfish docker-down`
 - `openfish docker-logs`
 - `openfish docker-ps`
+- `openfish docker-login-codex`
+- `openfish docker-codex-status`
+
+`><>` 推荐流程：
+
+1. `openfish docker-configure`
+2. `openfish docker-up`
+3. `openfish docker-login-codex`
+4. `openfish docker-codex-status`
+
+如果需要给容器内 Codex 完成登录：
+
+```bash
+openfish docker-login-codex
+openfish docker-codex-status
+```
+
+`openfish docker-configure` 会写入 Docker 专用配置文件 `.openfish.docker.env`，并引导填写：
+
+- `TELEGRAM_BOT_TOKEN`
+- `ALLOWED_TELEGRAM_USER_IDS`
+- 可选的 `DEFAULT_PROJECT`
+- 可选的 bootstrap 项目 key / name
+
+`openfish docker-login-codex` 支持：
+
+- 官方 device auth 登录
+- 导入本机 `~/.codex/auth.json` 或任意 auth.json 路径
+- 直接粘贴原始 `auth.json` 内容
 
 ## ><> 命令总览
 

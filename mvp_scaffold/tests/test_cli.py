@@ -37,9 +37,12 @@ def test_cli_forwards_script_command(monkeypatch) -> None:
     assert captured == [("update", [])]
 
 
-def test_cli_runs_docker_up_from_repo_root(monkeypatch) -> None:
+def test_cli_runs_docker_up_from_repo_root(monkeypatch, tmp_path) -> None:
     captured: list[tuple[list[str], str | None]] = []
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = tmp_path
+    env_file = repo_root / ".openfish.docker.env"
+    (repo_root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    env_file.write_text("TELEGRAM_BOT_TOKEN=token\n", encoding="utf-8")
 
     def fake_run(command, check=False, cwd=None):  # noqa: ANN001, FBT002
         _ = check
@@ -47,13 +50,128 @@ def test_cli_runs_docker_up_from_repo_root(monkeypatch) -> None:
         return subprocess.CompletedProcess(args=command, returncode=0)
 
     monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
     monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     code = cli.main(["docker-up"])
 
     assert code == 0
-    assert captured == [(["/usr/bin/docker", "compose", "up", "-d", "--build"], str(repo_root))]
+    assert captured == [(["/usr/bin/docker", "compose", "--env-file", str(env_file), "up", "-d", "--build"], str(repo_root))]
+
+
+def test_cli_runs_docker_login_codex(monkeypatch) -> None:
+    captured: list[list[str]] = []
+    repo_root = Path(__file__).resolve().parents[2]
+
+    def fake_run(command, check=False, cwd=None):  # noqa: ANN001, FBT002
+        _ = check
+        _ = cwd
+        captured.append(list(command))
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    code = cli.main(["docker-login-codex"])
+
+    assert code == 0
+    assert captured == [["/usr/bin/docker", "exec", "openfish", "codex", "login", "--device-auth"]]
+
+
+def test_cli_docker_up_requires_docker_config(monkeypatch, capsys) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    env_file = repo_root / ".openfish.docker.env"
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+
+    code = cli.main(["docker-up"])
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "openfish docker-configure" in err
+
+
+def test_cli_docker_configure_writes_env_file(monkeypatch, tmp_path) -> None:
+    env_file = tmp_path / ".openfish.docker.env"
+    inputs = iter(["123456789", "demo", "demo", "Demo"])
+
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "token-123")
+    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+    monkeypatch.setattr(cli, "_suggest_telegram_user_ids", lambda token: None)
+
+    code = cli.main(["docker-configure"])
+
+    assert code == 0
+    content = env_file.read_text(encoding="utf-8")
+    assert "TELEGRAM_BOT_TOKEN=token-123" in content
+    assert "ALLOWED_TELEGRAM_USER_IDS=123456789" in content
+    assert "DEFAULT_PROJECT_ROOT=/workspace/projects" in content
+    assert "OPENFISH_BOOTSTRAP_PROJECT_KEY=demo" in content
+
+
+def test_cli_docker_login_codex_imports_auth_file(monkeypatch, tmp_path) -> None:
+    captured: list[tuple[list[str], str | None]] = []
+    repo_root = Path(__file__).resolve().parents[2]
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text('{"access_token":"abc"}', encoding="utf-8")
+
+    def fake_run(command, check=False, cwd=None, input=None, text=None):  # noqa: ANN001, FBT002
+        _ = check
+        _ = text
+        captured.append((list(command), input))
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    code = cli.main(["docker-login-codex", str(auth_file)])
+
+    assert code == 0
+    assert captured[0][0] == [
+        "/usr/bin/docker",
+        "exec",
+        "-i",
+        "openfish",
+        "/bin/sh",
+        "-lc",
+        "mkdir -p /root/.codex && cat > /root/.codex/auth.json && chmod 600 /root/.codex/auth.json",
+    ]
+    assert captured[0][1] == '{"access_token":"abc"}'
+    assert captured[1][0] == ["/usr/bin/docker", "exec", "openfish", "codex", "login", "status"]
+
+
+def test_cli_docker_login_codex_pastes_auth_content(monkeypatch) -> None:
+    captured: list[tuple[list[str], str | None]] = []
+    repo_root = Path(__file__).resolve().parents[2]
+    answers = iter(["paste", '{"access_token":"xyz"}'])
+
+    def fake_run(command, check=False, cwd=None, input=None, text=None):  # noqa: ANN001, FBT002
+        _ = check
+        _ = cwd
+        _ = text
+        captured.append((list(command), input))
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    code = cli.main(["docker-login-codex"])
+
+    assert code == 0
+    assert captured[0][1] == '{"access_token":"xyz"}'
 
 
 def test_cli_docker_command_reports_missing_docker(monkeypatch, capsys) -> None:
@@ -220,6 +338,40 @@ def test_cli_configure_autodetects_telegram_user_id(monkeypatch, tmp_path, capsy
     assert "已自动探测 Telegram 用户 ID: 123456789" in out
     env_file = tmp_path / "home" / ".env"
     assert "ALLOWED_TELEGRAM_USER_IDS=123456789" in env_file.read_text(encoding="utf-8")
+
+
+def test_cli_configure_uses_fixed_project_root_in_docker_mode(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("OPENFISH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("OPENFISH_DOCKER_MODE", "1")
+    inputs = iter(
+        [
+            "123456789",
+            "/workspace/projects/demo",
+            "demo",
+            "Demo",
+        ]
+    )
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "token-123")
+    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+    monkeypatch.setattr(cli, "_suggest_telegram_user_ids", lambda token: None)
+    original_mkdir = Path.mkdir
+
+    def fake_mkdir(self, mode=0o777, parents=False, exist_ok=False):  # noqa: ANN001, FBT002
+        if str(self).startswith("/workspace"):
+            return None
+        return original_mkdir(self, mode=mode, parents=parents, exist_ok=exist_ok)
+
+    monkeypatch.setattr(Path, "mkdir", fake_mkdir)
+
+    code = cli.main(["configure"])
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "默认项目根目录（Docker 固定）: /workspace/projects" in out
+    env_file = tmp_path / "home" / ".env"
+    assert "DEFAULT_PROJECT_ROOT=/workspace/projects" in env_file.read_text(encoding="utf-8")
 
 
 def test_cli_dispatches_native_tg_user_id_with_args(monkeypatch) -> None:
