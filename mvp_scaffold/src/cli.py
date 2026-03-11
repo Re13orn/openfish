@@ -312,6 +312,13 @@ def _native_configure() -> int:
     token = _prompt_value("1/6 TELEGRAM_BOT_TOKEN", token_default, secret=True)
 
     ids_default = current.get("ALLOWED_TELEGRAM_USER_IDS", "")
+    if not _is_valid_user_ids(ids_default):
+        suggested_ids = _suggest_telegram_user_ids(token)
+        if suggested_ids:
+            ids_default = suggested_ids
+            print(f"[configure] 已自动探测 Telegram 用户 ID: {suggested_ids}")
+        else:
+            print("[hint] 未自动探测到用户 ID。先给 bot 发一条私聊消息（例如 /start），再重试。")
     while True:
         allowed_ids = _prompt_value("2/6 Telegram 用户 ID（多个逗号分隔）", ids_default)
         if _is_valid_user_ids(allowed_ids):
@@ -376,31 +383,19 @@ def _native_install_start() -> int:
     return _native_start()
 
 
-def _native_tg_user_id(args: list[str]) -> int:
-    env = _load_env_map()
-    token = env.get("TELEGRAM_BOT_TOKEN", "").strip()
-    if _is_placeholder_token(token):
-        print("[error] TELEGRAM_BOT_TOKEN 未配置，请先执行 openfish configure。", file=sys.stderr)
-        return 1
-    filter_username = (args[0] if args else "").strip().lstrip("@").lower()
-    try:
-        import httpx
+def _fetch_recent_telegram_users(token: str, filter_username: str = "") -> list[dict[str, str]]:
+    import httpx
 
-        response = httpx.get(
-            f"https://api.telegram.org/bot{token}/getUpdates",
-            params={"limit": 100},
-            timeout=25.0,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except Exception as exc:  # noqa: BLE001
-        print(f"[error] 调用 Telegram API 失败: {exc}", file=sys.stderr)
-        return 1
-
+    response = httpx.get(
+        f"https://api.telegram.org/bot{token}/getUpdates",
+        params={"limit": 100},
+        timeout=25.0,
+    )
+    response.raise_for_status()
+    payload = response.json()
     if not payload.get("ok"):
         description = payload.get("description") or "unknown error"
-        print(f"[error] Telegram API error: {description}", file=sys.stderr)
-        return 1
+        raise RuntimeError(f"Telegram API error: {description}")
 
     users: dict[str, dict[str, str]] = {}
 
@@ -449,6 +444,34 @@ def _native_tg_user_id(args: list[str]) -> int:
     if filter_username:
         rows = [row for row in rows if row["username"].lower() == filter_username]
     rows.sort(key=lambda row: int(row["user_id"]))
+    return rows
+
+
+def _suggest_telegram_user_ids(token: str) -> str | None:
+    if _is_placeholder_token(token):
+        return None
+    try:
+        rows = _fetch_recent_telegram_users(token)
+    except Exception:  # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    return ",".join(row["user_id"] for row in rows)
+
+
+def _native_tg_user_id(args: list[str]) -> int:
+    env = _load_env_map()
+    token = env.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if _is_placeholder_token(token):
+        print("[error] TELEGRAM_BOT_TOKEN 未配置，请先执行 openfish configure。", file=sys.stderr)
+        return 1
+    filter_username = (args[0] if args else "").strip().lstrip("@").lower()
+    try:
+        rows = _fetch_recent_telegram_users(token, filter_username)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[error] 调用 Telegram API 失败: {exc}", file=sys.stderr)
+        return 1
+
     if not rows:
         if filter_username:
             print(f"[hint] 未找到用户名 @{filter_username} 的最近记录。", file=sys.stderr)
@@ -527,6 +550,9 @@ def _native_check() -> int:
         _print_check_result("ok", "ALLOWED_TELEGRAM_USER_IDS 已配置")
     else:
         _print_check_result("fail", "ALLOWED_TELEGRAM_USER_IDS 无效")
+        suggested_ids = _suggest_telegram_user_ids(token)
+        if suggested_ids:
+            print(f"[check] hint  可直接写入 .env: ALLOWED_TELEGRAM_USER_IDS={suggested_ids}")
         failures += 1
 
     projects_path = _resolve_runtime_path(

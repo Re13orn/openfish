@@ -112,6 +112,32 @@ def test_cli_configure_writes_env_and_project(monkeypatch, tmp_path) -> None:
     assert "demo:" in projects_file.read_text(encoding="utf-8")
 
 
+def test_cli_configure_autodetects_telegram_user_id(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("OPENFISH_HOME", str(tmp_path / "home"))
+    inputs = iter(
+        [
+            "",
+            "/tmp/projects",
+            "/tmp/projects/demo",
+            "demo",
+            "Demo",
+        ]
+    )
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "token-123")
+    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+    monkeypatch.setattr(cli, "_suggest_telegram_user_ids", lambda token: "123456789")
+
+    code = cli.main(["configure"])
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "已自动探测 Telegram 用户 ID: 123456789" in out
+    env_file = tmp_path / "home" / ".env"
+    assert "ALLOWED_TELEGRAM_USER_IDS=123456789" in env_file.read_text(encoding="utf-8")
+
+
 def test_cli_dispatches_native_tg_user_id_with_args(monkeypatch) -> None:
     captured: list[tuple[str, list[str]]] = []
 
@@ -141,3 +167,31 @@ def test_cli_update_rejects_package_mode_without_git(monkeypatch, capsys) -> Non
     assert code == 1
     err = capsys.readouterr().err
     assert "python -m pip install --upgrade openfish" in err
+
+
+def test_cli_check_suggests_detected_user_ids(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("OPENFISH_HOME", str(tmp_path / "home"))
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / ".env").write_text(
+        "\n".join(
+            [
+                "TELEGRAM_BOT_TOKEN=token-123",
+                "ALLOWED_TELEGRAM_USER_IDS=",
+                "PROJECTS_CONFIG_PATH=./projects.yaml",
+                "SQLITE_PATH=./data/app.db",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (home / "projects.yaml").write_text("version: 1\ndefault_project_root: ''\nprojects: {}\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "_suggest_telegram_user_ids", lambda token: "123456789")
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/codex")
+    monkeypatch.setattr("httpx.get", lambda *args, **kwargs: type("Resp", (), {"status_code": 200})())
+
+    code = cli._native_check()
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "ALLOWED_TELEGRAM_USER_IDS=123456789" in out
