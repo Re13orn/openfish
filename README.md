@@ -173,22 +173,10 @@ User-facing docs:
 - Persistence details: [docs/PERSISTENCE_ARCHITECTURE.md](docs/PERSISTENCE_ARCHITECTURE.md)
 - Install/Deploy/Usage manual (Chinese): [docs/安装部署和使用手册.md](docs/安装部署和使用手册.md)
 
-Internal docs:
-
-- Product spec: [docs/internal/SPEC.md](docs/internal/SPEC.md)
-- Agent design rules: [docs/internal/AGENTS.md](docs/internal/AGENTS.md)
-- Product design story: [docs/internal/系统设计理念与开发历程.md](docs/internal/系统设计理念与开发历程.md)
-- 5-minute pitch: [docs/internal/5分钟精简路演版.md](docs/internal/5分钟精简路演版.md)
-- GitHub release checklist: [docs/internal/GitHub开源发布清单.md](docs/internal/GitHub开源发布清单.md)
-- v1.0 release readiness checklist: [docs/internal/v1.0发布准备清单.md](docs/internal/v1.0发布准备清单.md)
-- Manual smoke test checklist: [docs/internal/SMOKE_TEST_CHECKLIST.md](docs/internal/SMOKE_TEST_CHECKLIST.md)
-- RC observation template: [docs/internal/RC观察记录模板.md](docs/internal/RC观察记录模板.md)
-
 ## Repository Layout
 
 - Runtime app: `mvp_scaffold/`
 - Docs: `docs/`
-- Internal docs: `docs/internal/`
 - Config samples: `env.example`, `projects.example.yaml`
 - DB schema: `schema.sql`
 
