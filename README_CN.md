@@ -92,6 +92,11 @@ openfish start
 - `openfish status`
 - `openfish logs`
 
+更新行为现在按安装模式区分：
+
+- 仓库模式：`openfish update` 走 git 自更新
+- 包/home 模式：使用 `python -m pip install --upgrade openfish`
+
 如果你想把运行时数据放到用户目录，而不是仓库目录，可以先初始化 home 模式：
 
 ```bash

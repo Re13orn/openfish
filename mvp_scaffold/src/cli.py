@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
-from importlib import resources
+from importlib import metadata, resources
 import os
 from pathlib import Path
 import re
@@ -18,9 +18,7 @@ import time
 from src.update_service import UpdateService
 
 
-SCRIPT_FORWARDED_COMMANDS = {
-    "update",
-}
+SCRIPT_FORWARDED_COMMANDS: set[str] = set()
 
 NATIVE_COMMANDS = {
     "install",
@@ -37,6 +35,7 @@ NATIVE_COMMANDS = {
     "logs-clear",
     "tg-user-id",
     "version",
+    "update",
     "update-check",
 }
 
@@ -477,6 +476,10 @@ def _configured_lock_path() -> Path:
     return _resolve_runtime_path(raw, repo_root=_repo_root(), app_root=_runtime_root())
 
 
+def _supports_repo_updates() -> bool:
+    return (_repo_root() / ".git").exists()
+
+
 def _print_check_result(status: str, message: str) -> None:
     prefix = "ok   " if status == "ok" else "fail "
     print(f"[check] {prefix} {message}")
@@ -845,16 +848,29 @@ def _native_logs_clear() -> int:
 
 
 def _native_version() -> int:
-    service = UpdateService(repo_root=_repo_root(), script_path=_script_path(), log_dir=_log_dir())
-    version = service.get_current_version()
-    print(f"repo: {_repo_root()}")
-    print(f"branch: {version.branch}")
-    print(f"version: {version.version}")
-    print(f"commit: {version.commit}")
+    if _supports_repo_updates():
+        service = UpdateService(repo_root=_repo_root(), script_path=_script_path(), log_dir=_log_dir())
+        version = service.get_current_version()
+        print(f"repo: {_repo_root()}")
+        print(f"branch: {version.branch}")
+        print(f"version: {version.version}")
+        print(f"commit: {version.commit}")
+        return 0
+    try:
+        package_version = metadata.version("openfish")
+    except metadata.PackageNotFoundError:
+        package_version = "unknown"
+    print("mode: package")
+    print(f"runtime: {_runtime_root()}")
+    print(f"version: {package_version}")
     return 0
 
 
 def _native_update_check() -> int:
+    if not _supports_repo_updates():
+        print("[update-check] 当前不是 git 仓库模式。")
+        print("[update-check] 请使用: python -m pip install --upgrade openfish")
+        return 0
     service = UpdateService(repo_root=_repo_root(), script_path=_script_path(), log_dir=_log_dir())
     result = service.check_for_updates()
     current = result.current
@@ -872,6 +888,17 @@ def _native_update_check() -> int:
             print(line)
     else:
         print("[update-check] already up to date")
+    return 0
+
+
+def _native_update() -> int:
+    if not _supports_repo_updates():
+        print("[update] 当前不是 git 仓库模式，不能执行 git 自更新。", file=sys.stderr)
+        print("[update] 请使用: python -m pip install --upgrade openfish", file=sys.stderr)
+        return 1
+    service = UpdateService(repo_root=_repo_root(), script_path=_script_path(), log_dir=_log_dir())
+    result = service.trigger_update()
+    print(result.summary)
     return 0
 
 
@@ -906,6 +933,8 @@ def _run_native_command(command: str, args: list[str]) -> int:
         return _native_tg_user_id(args)
     if command == "version":
         return _native_version()
+    if command == "update":
+        return _native_update()
     if command == "update-check":
         return _native_update_check()
     raise RuntimeError(f"unsupported native command: {command}")

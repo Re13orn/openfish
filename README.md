@@ -92,6 +92,11 @@ The primary lifecycle commands are now native CLI commands:
 - `openfish status`
 - `openfish logs`
 
+Update behavior is mode-aware:
+
+- repository mode: `openfish update` performs git-based self-update
+- package/home mode: use `python -m pip install --upgrade openfish`
+
 If you want a user-home runtime instead of repository-local runtime data, bootstrap it first:
 
 ```bash

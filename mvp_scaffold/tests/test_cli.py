@@ -27,21 +27,14 @@ def test_cli_dispatches_native_check(monkeypatch) -> None:
 
 
 def test_cli_forwards_script_command(monkeypatch) -> None:
-    captured: list[list[str]] = []
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "install_start.sh"
+    captured: list[tuple[str, list[str]]] = []
 
-    def fake_run(command, check=False):  # noqa: ANN001, FBT002
-        _ = check
-        captured.append(list(command))
-        return subprocess.CompletedProcess(args=command, returncode=0)
-
-    monkeypatch.setattr(cli, "_script_path", lambda: script_path)
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(cli, "_run_native_command", lambda command, args: captured.append((command, args)) or 0)
 
     code = cli.main(["update"])
 
     assert code == 0
-    assert captured == [["bash", str(script_path), "update"]]
+    assert captured == [("update", [])]
 
 
 def test_cli_runs_docker_up_from_repo_root(monkeypatch) -> None:
@@ -128,3 +121,23 @@ def test_cli_dispatches_native_tg_user_id_with_args(monkeypatch) -> None:
 
     assert code == 0
     assert captured == [("tg-user-id", ["alice"])]
+
+
+def test_cli_update_check_reports_package_mode_without_git(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "_supports_repo_updates", lambda: False)
+
+    code = cli._native_update_check()
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "不是 git 仓库模式" in out
+
+
+def test_cli_update_rejects_package_mode_without_git(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "_supports_repo_updates", lambda: False)
+
+    code = cli._native_update()
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "python -m pip install --upgrade openfish" in err
