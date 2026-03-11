@@ -302,11 +302,13 @@ def _derive_project_key(raw: str) -> str:
     return candidate or "demo"
 
 
-def _prompt_value(prompt: str, default: str = "", *, secret: bool = False) -> str:
+def _prompt_value(prompt: str, default: str = "", *, secret: bool = False, allow_empty: bool = False) -> str:
     label = f"{prompt} [{default}]" if default else prompt
     while True:
         value = getpass.getpass(f"{label}: ") if secret else input(f"{label}: ")
         value = value.strip() or default
+        if allow_empty:
+            return value
         if value:
             return value
 
@@ -508,10 +510,10 @@ def _native_docker_configure() -> int:
             break
         print("[warn] 必须是纯数字 Telegram 用户 ID。")
 
-    default_project = _prompt_value("3/5 默认项目 key（可留空）", current.get("DEFAULT_PROJECT", ""))
-    bootstrap_key = _prompt_value("4/5 容器启动时预置项目 key（可留空）", current.get("OPENFISH_BOOTSTRAP_PROJECT_KEY", ""))
+    default_project = _prompt_value("3/5 默认项目 key（可留空）", current.get("DEFAULT_PROJECT", ""), allow_empty=True)
+    bootstrap_key = _prompt_value("4/5 容器启动时预置项目 key（可留空）", current.get("OPENFISH_BOOTSTRAP_PROJECT_KEY", ""), allow_empty=True)
     bootstrap_name_default = current.get("OPENFISH_BOOTSTRAP_PROJECT_NAME", bootstrap_key)
-    bootstrap_name = _prompt_value("5/5 预置项目显示名（可留空）", bootstrap_name_default)
+    bootstrap_name = _prompt_value("5/5 预置项目显示名（可留空）", bootstrap_name_default, allow_empty=True)
 
     values = {
         "TELEGRAM_BOT_TOKEN": token,

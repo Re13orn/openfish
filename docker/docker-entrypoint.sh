@@ -5,10 +5,11 @@ export OPENFISH_HOME="${OPENFISH_HOME:-/var/lib/openfish}"
 export OPENFISH_DOCKER_MODE="${OPENFISH_DOCKER_MODE:-1}"
 export DEFAULT_PROJECT_ROOT="${DEFAULT_PROJECT_ROOT:-/workspace/projects}"
 export CODEX_HOME="${CODEX_HOME:-/root/.codex}"
+OPENFISH_BIN="${OPENFISH_BIN:-/app/mvp_scaffold/.venv/bin/openfish}"
 
 mkdir -p "$OPENFISH_HOME" "$DEFAULT_PROJECT_ROOT" "$CODEX_HOME"
 
-openfish install >/dev/null
+"$OPENFISH_BIN" install >/dev/null
 
 python - <<'PY'
 import os
@@ -73,4 +74,4 @@ if [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${ALLOWED_TELEGRAM_USER_IDS:-}" ]]; th
   exit 1
 fi
 
-exec openfish run
+exec "$OPENFISH_BIN" run

@@ -117,6 +117,28 @@ def test_cli_docker_configure_writes_env_file(monkeypatch, tmp_path) -> None:
     assert "OPENFISH_BOOTSTRAP_PROJECT_KEY=demo" in content
 
 
+def test_cli_docker_configure_allows_empty_optional_fields(monkeypatch, tmp_path) -> None:
+    env_file = tmp_path / ".openfish.docker.env"
+    inputs = iter(["123456789", "", "", ""])
+
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "token-123")
+    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+    monkeypatch.setattr(cli, "_suggest_telegram_user_ids", lambda token: None)
+
+    code = cli.main(["docker-configure"])
+
+    assert code == 0
+    content = env_file.read_text(encoding="utf-8")
+    assert "TELEGRAM_BOT_TOKEN=token-123" in content
+    assert "ALLOWED_TELEGRAM_USER_IDS=123456789" in content
+    assert "DEFAULT_PROJECT_ROOT=/workspace/projects" in content
+    assert "DEFAULT_PROJECT=" not in content
+    assert "OPENFISH_BOOTSTRAP_PROJECT_KEY=" not in content
+    assert "OPENFISH_BOOTSTRAP_PROJECT_NAME=" not in content
+
+
 def test_cli_docker_login_codex_imports_auth_file(monkeypatch, tmp_path) -> None:
     captured: list[tuple[list[str], str | None]] = []
     repo_root = Path(__file__).resolve().parents[2]
