@@ -1,6 +1,7 @@
 """Configuration loading from environment variables."""
 
 from dataclasses import dataclass
+from importlib import resources
 import os
 from pathlib import Path
 
@@ -31,6 +32,13 @@ def _resolve_runtime_path(raw: str, *, repo_root: Path, app_root: Path) -> Path:
     if normalized.startswith("mvp_scaffold/"):
         return repo_root / normalized
     return app_root / normalized
+
+
+def _bundled_resource_path(*parts: str) -> Path:
+    path = resources.files("src")
+    for part in ("resources", *parts):
+        path = path.joinpath(part)
+    return Path(str(path))
 
 
 @dataclass(slots=True)
@@ -126,12 +134,12 @@ def load_config() -> AppConfig:
         ),
         sqlite_path=sqlite_path,
         schema_path=_resolve_runtime_path(
-            os.getenv("SCHEMA_PATH", str(repo_root / "schema.sql")),
+            os.getenv("SCHEMA_PATH", str(_bundled_resource_path("schema.sql"))),
             repo_root=repo_root,
             app_root=app_root,
         ),
         migrations_dir=_resolve_runtime_path(
-            os.getenv("MIGRATIONS_DIR", str(app_root / "migrations")),
+            os.getenv("MIGRATIONS_DIR", str(_bundled_resource_path("migrations"))),
             repo_root=repo_root,
             app_root=app_root,
         ),

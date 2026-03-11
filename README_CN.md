@@ -65,18 +65,77 @@ OpenFish 不做：
 
 ## 快速开始
 
+先安装 `openfish` 命令入口：
+
 ```bash
-bash mvp_scaffold/scripts/install_start.sh install
-bash mvp_scaffold/scripts/install_start.sh configure
-bash mvp_scaffold/scripts/install_start.sh check
-bash mvp_scaffold/scripts/install_start.sh start
+pip install -e ./mvp_scaffold
+```
+
+然后统一通过 `openfish` CLI 使用：
+
+```bash
+openfish install
+openfish configure
+openfish check
+openfish start
+```
+
+当前主生命周期命令已经是原生 CLI：
+
+- `openfish install`
+- `openfish configure`
+- `openfish init-home`
+- `openfish check`
+- `openfish start`
+- `openfish stop`
+- `openfish restart`
+- `openfish status`
+- `openfish logs`
+
+如果你想把运行时数据放到用户目录，而不是仓库目录，可以先初始化 home 模式：
+
+```bash
+openfish init-home
+export OPENFISH_HOME=~/.config/openfish
+openfish check
+openfish start
 ```
 
 如果你还不知道自己的 Telegram 用户 ID，先给 bot 发 `/start`，再执行：
 
 ```bash
-bash mvp_scaffold/scripts/install_start.sh tg-user-id
+openfish tg-user-id
 ```
+
+旧脚本入口仍保留兼容：
+
+```bash
+bash mvp_scaffold/scripts/install_start.sh start
+```
+
+## Docker 运行
+
+仓库已经提供 Docker 运行骨架，可用于长期自托管部署：
+
+```bash
+openfish docker-up
+```
+
+当前 Docker 方案默认：
+
+- 使用仓库根目录的 `.env`
+- 挂载 `mvp_scaffold/projects.yaml`
+- 挂载本机 `~/.codex`
+- 将宿主机工作区挂到容器内 `/workspace`
+
+Docker 是可选部署方式。对个人本机使用场景，仍建议优先使用 `openfish` CLI。
+
+可用的 Docker 辅助命令：
+
+- `openfish docker-up`
+- `openfish docker-down`
+- `openfish docker-logs`
+- `openfish docker-ps`
 
 ## 命令总览
 

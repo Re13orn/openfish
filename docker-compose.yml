@@ -1,0 +1,14 @@
+services:
+  openfish:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openfish
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./mvp_scaffold/data:/app/mvp_scaffold/data
+      - ./mvp_scaffold/projects.yaml:/app/mvp_scaffold/projects.yaml
+      - ${HOME}/.codex:/root/.codex
+      - ${OPENFISH_WORKSPACE_ROOT:-.}:/workspace

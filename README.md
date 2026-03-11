@@ -65,18 +65,77 @@ OpenFish is not:
 
 ## Quick Start
 
+Install the package entrypoint first:
+
 ```bash
-bash mvp_scaffold/scripts/install_start.sh install
-bash mvp_scaffold/scripts/install_start.sh configure
-bash mvp_scaffold/scripts/install_start.sh check
-bash mvp_scaffold/scripts/install_start.sh start
+pip install -e ./mvp_scaffold
+```
+
+Then run OpenFish through the `openfish` CLI:
+
+```bash
+openfish install
+openfish configure
+openfish check
+openfish start
+```
+
+The primary lifecycle commands are now native CLI commands:
+
+- `openfish install`
+- `openfish configure`
+- `openfish init-home`
+- `openfish check`
+- `openfish start`
+- `openfish stop`
+- `openfish restart`
+- `openfish status`
+- `openfish logs`
+
+If you want a user-home runtime instead of repository-local runtime data, bootstrap it first:
+
+```bash
+openfish init-home
+export OPENFISH_HOME=~/.config/openfish
+openfish check
+openfish start
 ```
 
 If you do not know your Telegram user ID yet, send `/start` to the bot first, then run:
 
 ```bash
-bash mvp_scaffold/scripts/install_start.sh tg-user-id
+openfish tg-user-id
 ```
+
+Legacy script entrypoint remains available for compatibility:
+
+```bash
+bash mvp_scaffold/scripts/install_start.sh start
+```
+
+## Docker
+
+OpenFish also includes a Docker runtime skeleton for long-running self-hosted deployment.
+
+```bash
+openfish docker-up
+```
+
+Current Docker assumptions:
+
+- `.env` stays at repository root
+- `mvp_scaffold/projects.yaml` is mounted into the container
+- `~/.codex` is mounted into the container
+- your workspace root is mounted to `/workspace`
+
+Docker is optional. For local owner-operated usage, the `openfish` CLI remains the primary path.
+
+Supported Docker helper commands:
+
+- `openfish docker-up`
+- `openfish docker-down`
+- `openfish docker-logs`
+- `openfish docker-ps`
 
 ## Command Overview
 

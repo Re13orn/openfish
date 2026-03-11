@@ -61,3 +61,16 @@ def test_load_config_invalid_ui_mode_falls_back_to_stream(monkeypatch) -> None:
     config = load_config()
 
     assert config.default_ui_mode == "stream"
+
+
+def test_load_config_defaults_to_bundled_schema_and_migrations(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
+    monkeypatch.delenv("SCHEMA_PATH", raising=False)
+    monkeypatch.delenv("MIGRATIONS_DIR", raising=False)
+
+    config = load_config()
+
+    assert config.schema_path.name == "schema.sql"
+    assert config.schema_path.as_posix().endswith("src/resources/schema.sql")
+    assert config.migrations_dir.as_posix().endswith("src/resources/migrations")
