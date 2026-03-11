@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.png" alt="OpenFish Logo" width="220" />
+  <img src="docs/openfish_trending_icon_animated.svg" alt="OpenFish Logo" width="220" />
 </p>
 
 <h1 align="center">OpenFish（小鱼）</h1>
