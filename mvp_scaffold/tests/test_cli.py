@@ -47,12 +47,26 @@ def test_cli_runs_docker_up_from_repo_root(monkeypatch) -> None:
         return subprocess.CompletedProcess(args=command, returncode=0)
 
     monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     code = cli.main(["docker-up"])
 
     assert code == 0
-    assert captured == [(["docker", "compose", "up", "-d", "--build"], str(repo_root))]
+    assert captured == [(["/usr/bin/docker", "compose", "up", "-d", "--build"], str(repo_root))]
+
+
+def test_cli_docker_command_reports_missing_docker(monkeypatch, capsys) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+
+    code = cli.main(["docker-up"])
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "未找到 docker 可执行文件" in err
 
 
 def test_cli_init_home_bootstraps_runtime_files(monkeypatch, tmp_path) -> None:

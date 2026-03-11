@@ -980,14 +980,23 @@ def _run_docker_command(command: str, args: list[str]) -> int:
     compose_file = repo_root / "docker-compose.yml"
     if not compose_file.exists():
         raise RuntimeError(f"Docker compose file not found: {compose_file}")
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
+        print("[docker] 未找到 docker 可执行文件。", file=sys.stderr)
+        print("[docker] 请先安装 Docker Desktop 或将 docker 加入 PATH。", file=sys.stderr)
+        return 1
     mapping = {
-        "docker-up": ["docker", "compose", "up", "-d", "--build"],
-        "docker-down": ["docker", "compose", "down"],
-        "docker-logs": ["docker", "compose", "logs", "-f"],
-        "docker-ps": ["docker", "compose", "ps"],
+        "docker-up": [docker_bin, "compose", "up", "-d", "--build"],
+        "docker-down": [docker_bin, "compose", "down"],
+        "docker-logs": [docker_bin, "compose", "logs", "-f"],
+        "docker-ps": [docker_bin, "compose", "ps"],
     }
     cmd = [*mapping[command], *args]
-    completed = subprocess.run(cmd, check=False, cwd=str(repo_root))  # noqa: S603
+    try:
+        completed = subprocess.run(cmd, check=False, cwd=str(repo_root))  # noqa: S603
+    except FileNotFoundError:
+        print("[docker] 无法执行 docker 命令。请检查 Docker 是否已正确安装。", file=sys.stderr)
+        return 1
     return int(completed.returncode)
 
 
