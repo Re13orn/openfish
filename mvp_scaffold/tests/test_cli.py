@@ -236,6 +236,33 @@ def test_cli_docker_login_codex_pastes_auth_content(monkeypatch) -> None:
     assert captured[0][1] == '{"access_token":"xyz"}'
 
 
+def test_cli_docker_login_codex_accepts_numeric_path_choice(monkeypatch, tmp_path) -> None:
+    captured: list[tuple[list[str], str | None]] = []
+    repo_root = Path(__file__).resolve().parents[2]
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text('{"access_token":"num"}', encoding="utf-8")
+    answers = iter(["2", str(auth_file)])
+
+    def fake_run(command, check=False, cwd=None, input=None, text=None):  # noqa: ANN001, FBT002
+        _ = check
+        _ = cwd
+        _ = text
+        captured.append((list(command), input))
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    code = cli.main(["docker-login-codex"])
+
+    assert code == 0
+    assert captured[0][1] == '{"access_token":"num"}'
+
+
 def test_cli_docker_command_reports_missing_docker(monkeypatch, capsys) -> None:
     repo_root = Path(__file__).resolve().parents[2]
 

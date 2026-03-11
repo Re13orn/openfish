@@ -1225,6 +1225,7 @@ def _docker_login_codex(docker_bin: str, args: list[str]) -> int:
             print("  2) path       导入本机 auth.json 路径")
         print("  3) paste      粘贴 auth.json 内容")
         choice = input("登录方式 [device/path/paste] (默认 device): ").strip().lower() or "device"
+        choice = {"1": "device", "2": "path", "3": "paste"}.get(choice, choice)
         if choice == "path":
             path_default = str(default_auth_path) if default_auth_path.exists() else ""
             auth_path_raw = _prompt_value("auth.json 路径", path_default)
