@@ -332,6 +332,9 @@ def _purge_runtime_files() -> None:
 
 def _native_uninstall(args: list[str]) -> int:
     purge_runtime = "--purge-runtime" in args
+    if not purge_runtime and sys.stdin.isatty():
+        choice = input("同时清理运行时配置和数据吗？ [y/N]: ").strip().lower()
+        purge_runtime = choice in {"y", "yes"}
 
     stop_code = _native_stop()
     uninstall_cmd = [sys.executable, "-m", "pip", "uninstall", "-y", "openfish"]
@@ -347,7 +350,9 @@ def _native_uninstall(args: list[str]) -> int:
         print("[uninstall] 运行时配置与数据已清理。")
     else:
         print("[uninstall] 保留运行时配置与数据。")
-        print("[uninstall] 如需一并清理，可执行: openfish uninstall --purge-runtime")
+        print(f"[uninstall] 如需手动清理，可删除: {_env_file()}")
+        print(f"[uninstall] 如需手动清理，可删除: {_projects_path_for_runtime()}")
+        print(f"[uninstall] 如需手动清理，可删除: {_data_dir()}")
     return stop_code
 
 

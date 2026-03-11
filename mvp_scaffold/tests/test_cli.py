@@ -104,6 +104,7 @@ def test_cli_uninstall_stops_and_runs_pip(monkeypatch) -> None:
     calls: list[list[str]] = []
 
     monkeypatch.setattr(cli, "_native_stop", lambda: 0)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
 
     def fake_run(command, check=False, cwd=None):  # noqa: ANN001, FBT002
         _ = check
@@ -123,6 +124,7 @@ def test_cli_uninstall_can_purge_runtime(monkeypatch, tmp_path) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("OPENFISH_HOME", str(home))
     monkeypatch.setattr(cli, "_native_stop", lambda: 0)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
     (home / "data").mkdir(parents=True, exist_ok=True)
     (home / ".env").write_text("X=1\n", encoding="utf-8")
     (home / "projects.yaml").write_text("version: 1\nprojects: {}\n", encoding="utf-8")
@@ -136,6 +138,31 @@ def test_cli_uninstall_can_purge_runtime(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     code = cli.main(["uninstall", "--purge-runtime"])
+
+    assert code == 0
+    assert not (home / ".env").exists()
+    assert not (home / "projects.yaml").exists()
+    assert not (home / "data").exists()
+
+
+def test_cli_uninstall_interactively_enables_runtime_purge(monkeypatch, tmp_path) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("OPENFISH_HOME", str(home))
+    monkeypatch.setattr(cli, "_native_stop", lambda: 0)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    (home / "data").mkdir(parents=True, exist_ok=True)
+    (home / ".env").write_text("X=1\n", encoding="utf-8")
+    (home / "projects.yaml").write_text("version: 1\nprojects: {}\n", encoding="utf-8")
+
+    def fake_run(command, check=False, cwd=None):  # noqa: ANN001, FBT002
+        _ = check
+        _ = cwd
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    code = cli.main(["uninstall"])
 
     assert code == 0
     assert not (home / ".env").exists()
