@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 from threading import Lock
@@ -20,6 +21,7 @@ from src.formatters import (
     format_current_task,
     format_diff_card,
     format_do_result,
+    format_health,
     format_help,
     format_home,
     format_last_task,
@@ -174,6 +176,8 @@ class CommandRouter:
             return self._handle_github_clone(ctx, argument)
         if command == "/version":
             return self._handle_version(ctx)
+        if command == "/health":
+            return self._handle_health(ctx)
         if command == "/update-check":
             return self._handle_update_check(ctx)
         if command == "/update":
@@ -495,6 +499,46 @@ class CommandRouter:
         )
         return CommandResult(
             format_version_info(branch=info.branch, version=info.version, commit=info.commit)
+        )
+
+    def _handle_health(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        if self.update_service is None:
+            return CommandResult("当前未启用服务健康检查。")
+        info = self.update_service.get_current_version()
+        snapshot = self.tasks.get_status_snapshot(user.id, ctx.telegram_chat_id)
+        active_task_summary = None
+        active_task = getattr(snapshot, "active_task", None)
+        if active_task is not None:
+            status = getattr(active_task, "status", "running")
+            active_task_summary = f"#{active_task.id} · {status}"
+        elif getattr(snapshot, "most_recent_task_summary", None):
+            active_task_summary = str(snapshot.most_recent_task_summary)
+        current_model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+        codex_available = shutil.which(getattr(self.config, "codex_bin", "codex")) is not None
+        project_count = len(self.projects.list_keys())
+        self.audit.log(
+            action=audit_events.SYSTEM_VERSION_VIEWED,
+            message="查看服务健康状态",
+            user_id=user.id,
+            details={
+                "codex_available": codex_available,
+                "project_count": project_count,
+            },
+        )
+        return CommandResult(
+            format_health(
+                version=info.version,
+                branch=info.branch,
+                commit=info.commit,
+                codex_available=codex_available,
+                project_count=project_count,
+                active_project_key=getattr(snapshot, "active_project_key", None),
+                active_task_summary=active_task_summary,
+                pending_approval=bool(getattr(snapshot, "pending_approval", False)),
+                current_model=current_model,
+                session_id=getattr(snapshot, "last_codex_session_id", None),
+            )
         )
 
     def _handle_update_check(self, ctx: CommandContext) -> CommandResult:

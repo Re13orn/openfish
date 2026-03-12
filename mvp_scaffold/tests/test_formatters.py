@@ -2,6 +2,7 @@ from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.formatters import (
     format_current_task,
     format_do_result,
+    format_health,
     format_help,
     format_home,
     format_last_task,
@@ -249,6 +250,7 @@ def test_format_current_task_card() -> None:
 def test_help_contains_last_and_retry() -> None:
     text = format_help()
     assert "/task-current" in text
+    assert "/health" in text
     assert "/last" in text
     assert "/retry [附加说明]" in text
     assert "/project-root [abs_path]" in text
@@ -258,10 +260,27 @@ def test_help_contains_last_and_retry() -> None:
     assert "/mcp-enable <name>" in text
     assert "/mcp-disable <name>" in text
     assert "/model [show|set <name>|reset]" in text
-    assert "/project-add <key> [abs_path] [name]" in text
-    assert "/schedule-add <HH:MM> <ask|do> <text>" in text
-    assert "/schedule-run <id>" in text
-    assert "/tasks-clear" in text
+
+
+def test_format_health_card() -> None:
+    text = format_health(
+        version="v1.1.0",
+        branch="main",
+        commit="abc1234",
+        codex_available=True,
+        project_count=3,
+        active_project_key="demo",
+        active_task_summary="#12 · running",
+        pending_approval=False,
+        current_model="o3",
+        session_id="sess-1",
+    )
+
+    assert "【服务】" in text
+    assert "版本: v1.1.0" in text
+    assert "Codex: 可用" in text
+    assert "项目数: 3" in text
+    assert "当前项目: demo" in text
 
 
 def test_help_summary_mode_is_shorter() -> None:

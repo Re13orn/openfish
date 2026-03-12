@@ -63,6 +63,7 @@ def format_help(mode: str = "verbose") -> str:
             "/github-clone <repo_url|owner/repo> [relative_dir]\n"
             "/sessions\n"
             "/version\n"
+            "/health\n"
             "/update-check\n"
             "/restart\n"
             "/ui summary|verbose|stream|reset\n"
@@ -117,6 +118,7 @@ def format_help(mode: str = "verbose") -> str:
         "/mcp [name]\n"
         "/mcp-enable <name>\n"
         "/mcp-disable <name>\n"
+        "/health\n"
         "/version\n"
         "/update-check\n"
         "/update\n"
@@ -250,6 +252,36 @@ def format_home(
     if recent:
         lines.append("最近项目: " + ", ".join(recent[:4]))
     return _card("控制台", lines)
+
+
+def format_health(
+    *,
+    version: str,
+    branch: str,
+    commit: str,
+    codex_available: bool,
+    project_count: int,
+    active_project_key: str | None,
+    active_task_summary: str | None,
+    pending_approval: bool,
+    current_model: str | None,
+    session_id: str | None,
+) -> str:
+    lines = [
+        "服务: 在线",
+        f"版本: {version}",
+        f"分支: {branch}",
+        f"提交: {commit}",
+        f"Codex: {'可用' if codex_available else '不可用'}",
+        f"项目数: {project_count}",
+        f"当前项目: {active_project_key or '未选择'}",
+        f"当前任务: {active_task_summary or '空闲'}",
+        f"当前模型: {current_model or '默认'}",
+        f"当前会话: {session_id or '暂无'}",
+        f"审批: {'待处理' if pending_approval else '无'}",
+        "下一步: 可查看版本、日志、更新，或直接重启服务。",
+    ]
+    return _card("服务", lines)
 
 
 def format_do_result(

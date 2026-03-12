@@ -868,6 +868,7 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
 
     markup = captured["markup"]
     rows = markup.inline_keyboard
+    assert any(button.callback_data == "panel:service" for row in rows for button in row)
     assert any(button.callback_data == "cmd:sessions" for row in rows for button in row)
     assert any(button.callback_data == "cmd:tasks" for row in rows for button in row)
     assert any(button.callback_data == "cmd:task_current" for row in rows for button in row)
@@ -879,6 +880,32 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
     assert any(button.callback_data == "cmd:ui_summary" for row in rows for button in row)
     assert any(button.callback_data == "cmd:ui_stream" for row in rows for button in row)
     assert any(button.callback_data == "cmd:ui_verbose" for row in rows for button in row)
+
+
+def test_send_service_panel_marks_panel_for_editing(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    captured = {}
+
+    async def fake_send(message, spec):  # noqa: ANN001, ANN201
+        _ = message
+        captured["spec"] = spec
+        return True
+
+    monkeypatch.setattr(service.sink, "send", fake_send)
+
+    asyncio.run(service._send_service_panel(MessageStub([])))
+
+    spec = captured["spec"]
+    assert spec.context == "sending service panel"
+    assert spec.edit_context == "sending service panel"
+    assert spec.edit_window_seconds == 300.0
 
 
 def test_send_model_panel_contains_model_buttons(monkeypatch) -> None:

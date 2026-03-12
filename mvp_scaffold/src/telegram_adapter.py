@@ -86,6 +86,7 @@ class TelegramBotService:
         "mcp": "/mcp",
         "sessions": "/sessions",
         "model": "/model",
+        "health": "/health",
         "version": "/version",
         "update_check": "/update-check",
         "update": "/update",
@@ -701,6 +702,9 @@ class TelegramBotService:
                 if panel == "more":
                     await self._send_more_panel(query.message)
                     return
+                if panel == "service":
+                    await self._send_service_panel(query.message)
+                    return
                 if panel == "model":
                     await self._send_model_panel(query.message, base_ctx)
                     return
@@ -1056,6 +1060,16 @@ class TelegramBotService:
             edit_window_seconds=float(getattr(self.config, "telegram_more_edit_window_seconds", 300.0)),
         )
 
+    async def _send_service_panel(self, message) -> None:  # noqa: ANN001
+        spec = self.views.service_panel()
+        await self._send_view_spec(
+            message,
+            spec,
+            context="sending service panel",
+            edit_context="sending service panel",
+            edit_window_seconds=float(getattr(self.config, "telegram_service_edit_window_seconds", 300.0)),
+        )
+
     async def _send_model_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
         current_model = self.router.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
         spec = self.views.model_panel(
@@ -1217,6 +1231,12 @@ class TelegramBotService:
             send_spec.edit_context = "sending session detail"
             send_spec.edit_window_seconds = float(
                 getattr(self.config, "telegram_session_detail_edit_window_seconds", 300.0)
+            )
+        elif command in {"/health", "/version", "/update-check", "/logs", "/logs-clear"}:
+            send_spec.context = "sending service panel"
+            send_spec.edit_context = "sending service panel"
+            send_spec.edit_window_seconds = float(
+                getattr(self.config, "telegram_service_edit_window_seconds", 300.0)
             )
         elif edit_context is not None:
             send_spec.edit_context = edit_context
@@ -1786,6 +1806,8 @@ class TelegramBotService:
                 snapshot=snapshot,
                 recent_projects=(result.metadata or {}).get("recent_projects"),
             )
+        if command in {"/health", "/version", "/update-check", "/logs", "/logs-clear"}:
+            return self.views.service_panel().reply_markup
         if command == "/schedule-list":
             active_key = self.router.tasks.get_active_project_key(
                 self.router.tasks.ensure_user(ctx).id,

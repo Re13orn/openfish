@@ -145,6 +145,7 @@ class TelegramViewFactory:
             reply_markup=InlineKeyboardMarkup(
                 [
                     [InlineKeyboardButton(text="首页控制台", callback_data="cmd:home")],
+                    [InlineKeyboardButton(text="服务面板", callback_data="panel:service")],
                     [
                         InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
                         InlineKeyboardButton(text="项目记忆", callback_data="cmd:memory"),
@@ -192,6 +193,32 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="设置根目录", callback_data="prompt:project_root"),
                     ],
                     [InlineKeyboardButton(text="清除输入引导", callback_data="prompt:clear")],
+                ]
+            ),
+        )
+
+    def service_panel(self) -> TelegramReplySpec:
+        return TelegramReplySpec(
+            text="服务操作：",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(text="健康检查", callback_data="cmd:health"),
+                        InlineKeyboardButton(text="版本", callback_data="cmd:version"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="检查更新", callback_data="cmd:update_check"),
+                        InlineKeyboardButton(text="立即更新", callback_data="cmd:update"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="重启服务", callback_data="cmd:restart"),
+                        InlineKeyboardButton(text="查看日志", callback_data="cmd:logs"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="清空日志", callback_data="cmd:logs_clear"),
+                        InlineKeyboardButton(text="首页控制台", callback_data="cmd:home"),
+                    ],
+                    [InlineKeyboardButton(text="更多操作", callback_data="panel:more")],
                 ]
             ),
         )

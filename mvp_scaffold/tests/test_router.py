@@ -978,6 +978,23 @@ def test_do_success_end_to_end_with_stubs() -> None:
     assert audit_events.TASK_COMPLETED in codes
 
 
+def test_health_returns_service_snapshot() -> None:
+    tasks = TasksStub()
+    tasks.codex_model = "o3"
+    tasks.last_project_session_id = "sess-1"
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("任务执行完成", ok=True))
+    updates = UpdateStub()
+    router = _build_router(tasks, audit, codex, updates=updates)
+
+    result = router.handle(_ctx("/health"))
+
+    assert "【服务】" in result.reply_text
+    assert "版本: v1.0.0-rc1" in result.reply_text
+    assert "当前模型: o3" in result.reply_text
+    assert "当前项目: demo" in result.reply_text
+
+
 def test_tasks_lists_project_tasks() -> None:
     tasks = TasksStub()
     tasks.tasks_by_id = {

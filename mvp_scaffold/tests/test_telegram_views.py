@@ -81,6 +81,11 @@ def test_more_panel_contains_download_file_prompt() -> None:
         for button in row
     )
     assert any(
+        button.callback_data == "panel:service" and button.text == "服务面板"
+        for row in spec.reply_markup.inline_keyboard
+        for button in row
+    )
+    assert any(
         button.callback_data == "prompt:send_file" and button.text == "下载文件"
         for row in spec.reply_markup.inline_keyboard
         for button in row
@@ -90,6 +95,18 @@ def test_more_panel_contains_download_file_prompt() -> None:
         for row in spec.reply_markup.inline_keyboard
         for button in row
     )
+
+
+def test_service_panel_contains_health_and_logs_actions() -> None:
+    factory = TelegramViewFactory()
+
+    spec = factory.service_panel()
+
+    rows = spec.reply_markup.inline_keyboard
+    assert rows[0][0].callback_data == "cmd:health"
+    assert rows[0][1].callback_data == "cmd:version"
+    assert any(button.callback_data == "cmd:restart" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:logs" for row in rows for button in row)
 
 
 def test_mcp_detail_markup_contains_toggle_and_refresh() -> None:
