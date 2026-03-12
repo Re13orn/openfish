@@ -1172,6 +1172,60 @@ def _docker_compose_base_cmd(docker_bin: str) -> list[str]:
     return base
 
 
+def _docker_container_state(docker_bin: str) -> str | None:
+    repo_root = _repo_root()
+    cmd = [docker_bin, "inspect", "-f", "{{.State.Status}}", "openfish"]
+    completed = subprocess.run(  # noqa: S603
+        cmd,
+        check=False,
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        return None
+    status = (completed.stdout or "").strip().lower()
+    return status or None
+
+
+def _docker_recent_logs(docker_bin: str, *, lines: int = 40) -> str:
+    repo_root = _repo_root()
+    cmd = [*_docker_compose_base_cmd(docker_bin), "logs", "--no-color", "--tail", str(lines), "openfish"]
+    completed = subprocess.run(  # noqa: S603
+        cmd,
+        check=False,
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+    )
+    output = "\n".join(part.strip("\n") for part in (completed.stdout or "", completed.stderr or "") if part)
+    return output.strip()
+
+
+def _docker_wait_for_running_state(docker_bin: str, *, timeout_seconds: float = 8.0) -> str | None:
+    deadline = time.time() + timeout_seconds
+    last_status: str | None = None
+    while time.time() < deadline:
+        last_status = _docker_container_state(docker_bin)
+        if last_status == "running":
+            return last_status
+        if last_status in {"restarting", "exited", "dead"}:
+            return last_status
+        time.sleep(1.0)
+    return last_status
+
+
+def _docker_require_running(docker_bin: str, *, command_name: str) -> bool:
+    status = _docker_container_state(docker_bin)
+    if status == "running":
+        return True
+    print(f"[docker] openfish 容器当前状态: {status or 'missing'}", file=sys.stderr)
+    print(f"[docker] 无法执行 {command_name}。先检查：", file=sys.stderr)
+    print("[docker]   openfish docker-ps", file=sys.stderr)
+    print("[docker]   openfish docker-logs", file=sys.stderr)
+    return False
+
+
 def _import_codex_auth_into_container(docker_bin: str, auth_content: str) -> int:
     repo_root = _repo_root()
     cmd = [
@@ -1201,6 +1255,8 @@ def _import_codex_auth_into_container(docker_bin: str, auth_content: str) -> int
 def _docker_login_codex(docker_bin: str, args: list[str]) -> int:
     repo_root = _repo_root()
     tty_flags = ["-it"] if sys.stdin.isatty() and sys.stdout.isatty() else []
+    if not _docker_require_running(docker_bin, command_name="docker-login-codex"):
+        return 1
 
     if args and args[0] == "--device-auth":
         cmd = [docker_bin, "exec", *tty_flags, "openfish", "codex", "login", "--device-auth", *args[1:]]
@@ -1258,6 +1314,8 @@ def _run_docker_command(command: str, args: list[str]) -> int:
         return 1
     if command == "docker-login-codex":
         return _docker_login_codex(docker_bin, args)
+    if command == "docker-codex-status" and not _docker_require_running(docker_bin, command_name="docker-codex-status"):
+        return 1
 
     compose_base = _docker_compose_base_cmd(docker_bin)
     if command == "docker-up" and not _docker_env_file().exists():
@@ -1284,7 +1342,26 @@ def _run_docker_command(command: str, args: list[str]) -> int:
     except FileNotFoundError:
         print("[docker] 无法执行 docker 命令。请检查 Docker 是否已正确安装。", file=sys.stderr)
         return 1
-    return int(completed.returncode)
+    if completed.returncode != 0:
+        return int(completed.returncode)
+    if command == "docker-up":
+        status = _docker_wait_for_running_state(docker_bin)
+        if status != "running":
+            print(f"[docker] openfish 容器启动失败，当前状态: {status or 'unknown'}", file=sys.stderr)
+            logs = _docker_recent_logs(docker_bin)
+            if logs:
+                print("[docker] 最近日志：", file=sys.stderr)
+                print(logs, file=sys.stderr)
+            print("[docker] 先检查 Docker 配置与 TELEGRAM_BOT_TOKEN。", file=sys.stderr)
+            print("[docker] 下一步：", file=sys.stderr)
+            print("[docker]   openfish docker-configure", file=sys.stderr)
+            print("[docker]   openfish docker-logs", file=sys.stderr)
+            return 1
+        print("[docker] openfish 容器已启动。")
+        print("[docker] next:")
+        print("  openfish docker-login-codex")
+        print("  openfish docker-codex-status")
+    return 0
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -53,6 +53,7 @@ def test_cli_runs_docker_up_from_repo_root(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
     monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr(cli, "_validate_telegram_token", lambda token: (True, ""))
+    monkeypatch.setattr(cli, "_docker_wait_for_running_state", lambda docker_bin, timeout_seconds=8.0: "running")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     code = cli.main(["docker-up"])
@@ -75,6 +76,7 @@ def test_cli_runs_docker_login_codex(monkeypatch) -> None:
     monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
     monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(cli, "_docker_require_running", lambda docker_bin, command_name: True)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     code = cli.main(["docker-login-codex"])
@@ -193,6 +195,7 @@ def test_cli_docker_login_codex_imports_auth_file(monkeypatch, tmp_path) -> None
 
     monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
     monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(cli, "_docker_require_running", lambda docker_bin, command_name: True)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     code = cli.main(["docker-login-codex", str(auth_file)])
@@ -228,6 +231,7 @@ def test_cli_docker_login_codex_pastes_auth_content(monkeypatch) -> None:
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+    monkeypatch.setattr(cli, "_docker_require_running", lambda docker_bin, command_name: True)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     code = cli.main(["docker-login-codex"])
@@ -255,6 +259,7 @@ def test_cli_docker_login_codex_accepts_numeric_path_choice(monkeypatch, tmp_pat
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+    monkeypatch.setattr(cli, "_docker_require_running", lambda docker_bin, command_name: True)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     code = cli.main(["docker-login-codex"])
@@ -274,6 +279,45 @@ def test_cli_docker_command_reports_missing_docker(monkeypatch, capsys) -> None:
     assert code == 1
     err = capsys.readouterr().err
     assert "未找到 docker 可执行文件" in err
+
+
+def test_cli_docker_up_reports_startup_failure_with_logs(monkeypatch, tmp_path, capsys) -> None:
+    repo_root = tmp_path
+    env_file = repo_root / ".openfish.docker.env"
+    (repo_root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    env_file.write_text("TELEGRAM_BOT_TOKEN=token\n", encoding="utf-8")
+
+    def fake_run(command, check=False, cwd=None):  # noqa: ANN001, FBT002
+        _ = check
+        _ = cwd
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(cli, "_validate_telegram_token", lambda token: (True, ""))
+    monkeypatch.setattr(cli, "_docker_wait_for_running_state", lambda docker_bin, timeout_seconds=8.0: "restarting")
+    monkeypatch.setattr(cli, "_docker_recent_logs", lambda docker_bin, lines=40: "invalid token")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    code = cli.main(["docker-up"])
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "启动失败" in err
+    assert "invalid token" in err
+
+
+def test_cli_docker_login_codex_requires_running_container(monkeypatch, capsys) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(cli, "_docker_require_running", lambda docker_bin, command_name: False)
+
+    code = cli.main(["docker-login-codex"])
+
+    assert code == 1
 
 
 def test_cli_init_home_bootstraps_runtime_files(monkeypatch, tmp_path) -> None:
