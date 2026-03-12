@@ -180,8 +180,7 @@ bash mvp_scaffold/scripts/install_start.sh start
 OpenFish also includes an isolated Docker runtime for long-running self-hosted deployment.
 
 ```bash
-openfish docker-configure
-openfish docker-up
+openfish docker-init
 ```
 
 Current Docker mode is isolated from the host runtime layout:
@@ -196,9 +195,11 @@ Docker is optional. For local owner-operated usage, the `openfish` CLI remains t
 
 `><>` Supported Docker helper commands:
 
+- `openfish docker-init`
 - `openfish docker-configure`
 - `openfish docker-up`
 - `openfish docker-down`
+- `openfish docker-health`
 - `openfish docker-logs`
 - `openfish docker-ps`
 - `openfish docker-login-codex`
@@ -206,10 +207,11 @@ Docker is optional. For local owner-operated usage, the `openfish` CLI remains t
 
 `><>` Recommended flow:
 
-1. `openfish docker-configure`
-2. `openfish docker-up`
-3. `openfish docker-login-codex`
-4. `openfish docker-codex-status`
+1. `openfish docker-init`
+2. `openfish docker-login-codex`
+3. `openfish docker-codex-status`
+
+`openfish docker-init` is the shortest path. It will run `docker-configure` when needed, start the container, and then run `docker-health`.
 
 If you need to log Codex into the container after it starts:
 

@@ -42,6 +42,7 @@ NATIVE_COMMANDS = {
 }
 
 DOCKER_COMMANDS = {
+    "docker-init",
     "docker-up",
     "docker-down",
     "docker-health",
@@ -1290,6 +1291,23 @@ def _docker_health(docker_bin: str) -> int:
     return 1
 
 
+def _docker_init(docker_bin: str) -> int:
+    env_file = _docker_env_file()
+    if not env_file.exists():
+        configure_code = _native_docker_configure()
+        if configure_code != 0:
+            return configure_code
+    up_code = _run_docker_command("docker-up", [])
+    if up_code != 0:
+        return up_code
+    health_code = _docker_health(docker_bin)
+    if health_code == 0:
+        print("[docker-init] next:")
+        print("  openfish docker-login-codex")
+        print("  openfish docker-codex-status")
+    return health_code
+
+
 def _import_codex_auth_into_container(docker_bin: str, auth_content: str) -> int:
     repo_root = _repo_root()
     cmd = [
@@ -1376,6 +1394,8 @@ def _run_docker_command(command: str, args: list[str]) -> int:
         print("[docker] 未找到 docker 可执行文件。", file=sys.stderr)
         print("[docker] 请先安装 Docker Desktop 或将 docker 加入 PATH。", file=sys.stderr)
         return 1
+    if command == "docker-init":
+        return _docker_init(docker_bin)
     if command == "docker-login-codex":
         return _docker_login_codex(docker_bin, args)
     if command == "docker-health":

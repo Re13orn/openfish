@@ -62,6 +62,41 @@ def test_cli_runs_docker_up_from_repo_root(monkeypatch, tmp_path) -> None:
     assert captured == [(["/usr/bin/docker", "compose", "--env-file", str(env_file), "up", "-d", "--build"], str(repo_root))]
 
 
+def test_cli_runs_docker_init_without_existing_config(monkeypatch, tmp_path) -> None:
+    repo_root = tmp_path
+    env_file = repo_root / ".openfish.docker.env"
+    captured: list[str] = []
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
+    monkeypatch.setattr(cli, "_native_docker_configure", lambda: captured.append("configure") or 0)
+    monkeypatch.setattr(cli, "_run_docker_command", lambda command, args: captured.append(command) or 0)
+    monkeypatch.setattr(cli, "_docker_health", lambda docker_bin: captured.append("health") or 0)
+
+    code = cli._docker_init("/usr/bin/docker")
+
+    assert code == 0
+    assert captured == ["configure", "docker-up", "health"]
+
+
+def test_cli_runs_docker_init_with_existing_config(monkeypatch, tmp_path) -> None:
+    repo_root = tmp_path
+    env_file = repo_root / ".openfish.docker.env"
+    env_file.write_text("TELEGRAM_BOT_TOKEN=token\n", encoding="utf-8")
+    captured: list[str] = []
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
+    monkeypatch.setattr(cli, "_native_docker_configure", lambda: captured.append("configure") or 0)
+    monkeypatch.setattr(cli, "_run_docker_command", lambda command, args: captured.append(command) or 0)
+    monkeypatch.setattr(cli, "_docker_health", lambda docker_bin: captured.append("health") or 0)
+
+    code = cli._docker_init("/usr/bin/docker")
+
+    assert code == 0
+    assert captured == ["docker-up", "health"]
+
+
 def test_cli_runs_docker_login_codex(monkeypatch) -> None:
     captured: list[list[str]] = []
     repo_root = Path(__file__).resolve().parents[2]
