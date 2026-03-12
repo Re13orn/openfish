@@ -645,6 +645,86 @@ def test_wizard_default_callback_advances_project_add(monkeypatch) -> None:
     assert any("项目新增向导 3/4" in text for text in sent_texts)
 
 
+def test_project_add_path_step_accepts_quoted_default(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    router.tasks.state = {"kind": "project_add", "step": "path", "data": {"key": "demo"}}
+    service = TelegramBotService(config=config, router=router)
+    sent_texts: list[str] = []
+
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
+        _ = message
+        _ = context
+        _ = command
+        _ = edit_context
+        _ = edit_window_seconds
+        sent_texts.append(spec.text)
+        return True
+
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="chat-1",
+        telegram_message_id="1",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    message = MessageStub([object()])
+    handled = asyncio.run(service._handle_wizard_input(message, ctx, router.tasks.state, "“默认”"))
+
+    assert handled is True
+    assert router.tasks.state == {
+        "kind": "project_add",
+        "step": "name",
+        "data": {"key": "demo", "path": ""},
+    }
+    assert any("项目新增向导 3/4" in text for text in sent_texts)
+
+
+def test_on_text_message_treats_absolute_path_as_project_wizard_input(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    router.tasks.state = {"kind": "project_add", "step": "path", "data": {"key": "demo"}}
+    service = TelegramBotService(config=config, router=router)
+    sent_texts: list[str] = []
+
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
+        _ = message
+        _ = context
+        _ = command
+        _ = edit_context
+        _ = edit_window_seconds
+        sent_texts.append(spec.text)
+        return True
+
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
+    message = MessageStub([object()])
+    message.text = "/workspace/projects/test1"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert router.tasks.state == {
+        "kind": "project_add",
+        "step": "name",
+        "data": {"key": "demo", "path": "/workspace/projects/test1"},
+    }
+    assert any("项目新增向导 3/4" in text for text in sent_texts)
+
+
 def test_reject_note_wizard_preset_advances_to_confirm(monkeypatch) -> None:
     config = SimpleNamespace(
         telegram_bot_token="dummy",

@@ -26,6 +26,15 @@ from src.telegram_views import TelegramReplySpec, TelegramViewFactory
 
 logger = logging.getLogger(__name__)
 
+_QUOTE_PAIRS = {
+    '"': '"',
+    "'": "'",
+    "“": "”",
+    "‘": "’",
+    "「": "」",
+    "『": "』",
+}
+
 
 @dataclass(slots=True)
 class _StreamProgressState:
@@ -357,19 +366,26 @@ class TelegramBotService:
                 return
 
             raw_text = mapped or message.text.strip()
+            wizard_state = self._get_wizard_state(command_context.telegram_chat_id)
+            if wizard_state is not None and (
+                not raw_text.startswith("/")
+                or (
+                    str(wizard_state.get("kind")) == "project_add"
+                    and str(wizard_state.get("step")) == "path"
+                )
+            ):
+                handled = await self._handle_wizard_input(
+                    message,
+                    command_context,
+                    wizard_state,
+                    raw_text,
+                )
+                if handled:
+                    return
+
             if raw_text.startswith("/"):
                 self._clear_input_modes(command_context.telegram_chat_id)
             else:
-                wizard_state = self._get_wizard_state(command_context.telegram_chat_id)
-                if wizard_state is not None:
-                    handled = await self._handle_wizard_input(
-                        message,
-                        command_context,
-                        wizard_state,
-                        raw_text,
-                    )
-                    if handled:
-                        return
                 pending_command = self._pending_command_by_chat.pop(command_context.telegram_chat_id, None)
                 if pending_command:
                     raw_text = f"{pending_command} {raw_text}"
@@ -1601,7 +1617,7 @@ class TelegramBotService:
         state: dict,
         raw_text: str,
     ) -> bool:  # noqa: ANN001
-        text = raw_text.strip()
+        text = self._normalize_wizard_input(raw_text)
         lowered = text.lower()
         if lowered in {item.lower() for item in self._WIZARD_CANCEL_TOKENS}:
             self.router.tasks.clear_chat_wizard_state(chat_id=ctx.telegram_chat_id)
@@ -1647,6 +1663,14 @@ class TelegramBotService:
             context="sending wizard next prompt",
         )
         return True
+
+    def _normalize_wizard_input(self, raw_text: str) -> str:
+        text = raw_text.strip()
+        if len(text) >= 2:
+            closing = _QUOTE_PAIRS.get(text[0])
+            if closing is not None and text[-1] == closing:
+                text = text[1:-1].strip()
+        return text
 
     def _advance_wizard_state(self, state: dict, text: str) -> dict | None:
         kind = str(state.get("kind") or "")
