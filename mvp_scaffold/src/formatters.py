@@ -210,6 +210,48 @@ def format_status(snapshot: StatusSnapshot, mode: str = "verbose") -> str:
     return _card(title, lines)
 
 
+def format_home(
+    *,
+    snapshot: StatusSnapshot,
+    current_model: str | None,
+    recent_project_keys: list[str] | None = None,
+) -> str:
+    """Render the Telegram home/control panel summary."""
+
+    active_project = snapshot.active_project_key or "未选择"
+    task_line = "空闲"
+    if snapshot.active_task is not None:
+        task_line = f"#{snapshot.active_task.id} · {STATUS_LABELS.get(snapshot.active_task.status, snapshot.active_task.status)}"
+    elif snapshot.most_recent_task_summary:
+        task_line = _clip(snapshot.most_recent_task_summary, 80)
+
+    lines = [
+        "服务: 在线",
+        f"项目: {active_project}",
+        f"任务: {task_line}",
+        f"模型: {current_model or '默认'}",
+        f"会话: {snapshot.last_codex_session_id or '暂无'}",
+        f"审批: {'待处理' if snapshot.pending_approval else '无'}",
+    ]
+    if snapshot.next_schedule_id and snapshot.next_schedule_hhmm:
+        lines.append(f"定时: #{snapshot.next_schedule_id} {snapshot.next_schedule_hhmm}")
+    else:
+        lines.append("定时: 暂无")
+    if snapshot.next_step:
+        lines.append(f"下一步: {_clip(snapshot.next_step, 100)}")
+    elif snapshot.active_project_key is None:
+        lines.append("下一步: 先切换项目，再直接提问或执行任务。")
+    elif snapshot.active_task is not None:
+        lines.append("下一步: 查看当前任务，或等待执行完成。")
+    else:
+        lines.append("下一步: 直接提问，或点“执行”安排任务。")
+
+    recent = [key for key in (recent_project_keys or []) if key and key != snapshot.active_project_key]
+    if recent:
+        lines.append("最近项目: " + ", ".join(recent[:4]))
+    return _card("控制台", lines)
+
+
 def format_do_result(
     *,
     project_key: str,

@@ -76,6 +76,11 @@ def test_more_panel_contains_download_file_prompt() -> None:
     spec = factory.more_panel()
 
     assert any(
+        button.callback_data == "cmd:home" and button.text == "首页控制台"
+        for row in spec.reply_markup.inline_keyboard
+        for button in row
+    )
+    assert any(
         button.callback_data == "prompt:send_file" and button.text == "下载文件"
         for row in spec.reply_markup.inline_keyboard
         for button in row
@@ -213,6 +218,38 @@ def test_status_result_markup_prefers_current_task_button_for_active_task() -> N
     )
 
     markup = factory.status_result_markup(snapshot=snapshot, recent_projects=None)
+
+    rows = markup.inline_keyboard
+    assert rows[0][0].callback_data == "cmd:task_current"
+    assert rows[0][1].callback_data == "task:cancel:12"
+
+
+def test_home_markup_for_active_task_exposes_current_task_and_cancel() -> None:
+    factory = TelegramViewFactory()
+    snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id="sess-1",
+        most_recent_task_summary="fix auth",
+        recent_failed_summary=None,
+        pending_approval=False,
+        next_schedule_id=None,
+        next_schedule_hhmm=None,
+        next_step=None,
+        active_task=TaskRecord(
+            id=12,
+            command_type="do",
+            original_request="run task",
+            status="running",
+            codex_session_id="sess-12",
+            latest_summary="处理中",
+        ),
+    )
+
+    markup = factory.home_markup(snapshot=snapshot, recent_projects=["demo", "ops"])
 
     rows = markup.inline_keyboard
     assert rows[0][0].callback_data == "cmd:task_current"

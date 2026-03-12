@@ -3,6 +3,7 @@ from src.formatters import (
     format_current_task,
     format_do_result,
     format_help,
+    format_home,
     format_last_task,
     format_memory,
     format_projects,
@@ -103,6 +104,31 @@ def test_format_status_running_card_title_and_empty_card_title() -> None:
     assert "【状态·进行中】" in running_text
     assert "【状态·空闲】" in idle_text
     assert "任务: 空闲" in idle_text
+
+
+def test_format_home_uses_dashboard_layout() -> None:
+    snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id="sess-1",
+        most_recent_task_summary="修复支付回调问题",
+        recent_failed_summary=None,
+        pending_approval=False,
+        next_schedule_id=3,
+        next_schedule_hhmm="09:30",
+        next_step="继续修复测试",
+    )
+
+    text = format_home(snapshot=snapshot, current_model="o3", recent_project_keys=["demo", "ops"])
+
+    assert "【控制台】" in text
+    assert "项目: demo" in text
+    assert "模型: o3" in text
+    assert "会话: sess-1" in text
+    assert "最近项目: ops" in text
 
 
 def test_format_memory_snapshot() -> None:

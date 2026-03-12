@@ -21,6 +21,7 @@ from src.formatters import (
     format_diff_card,
     format_do_result,
     format_help,
+    format_home,
     format_last_task,
     format_memory,
     format_mcp_detail,
@@ -135,6 +136,8 @@ class CommandRouter:
 
         if command == "/start":
             return self._handle_start(ctx)
+        if command == "/home":
+            return self._handle_home(ctx)
         if command == "/help":
             return self._handle_help(ctx, argument)
         if command == "/projects":
@@ -284,17 +287,29 @@ class CommandRouter:
         return result
 
     def _handle_start(self, ctx: CommandContext) -> CommandResult:
+        return self._handle_home(ctx)
+
+    def _handle_home(self, ctx: CommandContext) -> CommandResult:
         user = self.tasks.ensure_user(ctx)
-        active_project = self.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+        snapshot = self.tasks.get_status_snapshot(user.id, ctx.telegram_chat_id)
         recent_projects = self.tasks.list_recent_project_keys(user_id=user.id)
+        current_model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
         self.audit.log(
             action=audit_events.START_VIEWED,
             message="用户查看启动引导",
             user_id=user.id,
         )
         return CommandResult(
-            format_start(active_project, recent_projects),
-            metadata={"recent_projects": recent_projects},
+            format_home(
+                snapshot=snapshot,
+                current_model=current_model,
+                recent_project_keys=recent_projects,
+            ),
+            metadata={
+                "recent_projects": recent_projects,
+                "home_snapshot": snapshot,
+                "current_model": current_model,
+            },
         )
 
     def _chat_ui_mode(self, *, chat_id: str) -> str:

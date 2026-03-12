@@ -242,6 +242,12 @@ def test_safe_reply_success() -> None:
     assert message.sent_texts == ["hello"]
 
 
+def test_resolve_callback_command_supports_home() -> None:
+    service = _service()
+
+    assert service._resolve_callback_command("home") == "/home"
+
+
 def test_safe_reply_retries_after_timeout(monkeypatch) -> None:
     service = _service()
     message = MessageStub([TimedOut(), object()])

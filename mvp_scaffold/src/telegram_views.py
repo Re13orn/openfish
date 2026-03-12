@@ -144,6 +144,7 @@ class TelegramViewFactory:
             text="更多操作：",
             reply_markup=InlineKeyboardMarkup(
                 [
+                    [InlineKeyboardButton(text="首页控制台", callback_data="cmd:home")],
                     [
                         InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
                         InlineKeyboardButton(text="项目记忆", callback_data="cmd:memory"),
@@ -193,6 +194,88 @@ class TelegramViewFactory:
                     [InlineKeyboardButton(text="清除输入引导", callback_data="prompt:clear")],
                 ]
             ),
+        )
+
+    def home_markup(
+        self,
+        *,
+        snapshot: StatusSnapshot,
+        recent_projects: list[str] | None,
+    ) -> InlineKeyboardMarkup | ReplyKeyboardMarkup:
+        if snapshot.active_project_key is None:
+            return InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(text="项目", callback_data="cmd:projects")],
+                    [
+                        InlineKeyboardButton(text="提问", callback_data="status:ask"),
+                        InlineKeyboardButton(text="执行", callback_data="status:do"),
+                    ],
+                    [InlineKeyboardButton(text="更多", callback_data="status:more")],
+                ]
+            )
+
+        if snapshot.pending_approval:
+            if snapshot.pending_approval_id is not None:
+                approve_callback = f"approval:approve:{snapshot.pending_approval_id}"
+                reject_callback = f"approval:reject:{snapshot.pending_approval_id}"
+            else:
+                approve_callback = "panel:approval"
+                reject_callback = "panel:approval"
+            return InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(text="批准", callback_data=approve_callback),
+                        InlineKeyboardButton(text="拒绝", callback_data=reject_callback),
+                    ],
+                    [
+                        InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
+                        InlineKeyboardButton(text="项目", callback_data="status:projects"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
+                        InlineKeyboardButton(text="模型", callback_data="panel:model"),
+                    ],
+                    [InlineKeyboardButton(text="更多", callback_data="status:more")],
+                ]
+            )
+
+        if snapshot.active_task is not None:
+            return InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
+                        InlineKeyboardButton(
+                            text=f"取消 #{snapshot.active_task.id}",
+                            callback_data=f"task:cancel:{snapshot.active_task.id}",
+                        ),
+                    ],
+                    [
+                        InlineKeyboardButton(text="项目", callback_data="status:projects"),
+                        InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="模型", callback_data="panel:model"),
+                        InlineKeyboardButton(text="更多", callback_data="status:more"),
+                    ],
+                ]
+            )
+
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(text="提问", callback_data="status:ask"),
+                    InlineKeyboardButton(text="执行", callback_data="status:do"),
+                ],
+                [
+                    InlineKeyboardButton(text="项目", callback_data="status:projects"),
+                    InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
+                ],
+                [
+                    InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
+                    InlineKeyboardButton(text="模型", callback_data="panel:model"),
+                ],
+                [InlineKeyboardButton(text="更多", callback_data="status:more")],
+            ]
         )
 
     def model_panel(

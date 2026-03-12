@@ -1448,14 +1448,19 @@ def test_help_command_uses_current_ui_mode() -> None:
 
 def test_start_and_upload_policy_commands() -> None:
     tasks = TasksStub()
+    tasks.codex_model = "o3"
     audit = AuditStub()
     codex = CodexStub(_codex_result("unused", ok=True))
     router = _build_router(tasks, audit, codex)
 
     start_result = router.handle(_ctx("/start"))
+    home_result = router.handle(_ctx("/home"))
     policy_result = router.handle(_ctx("/upload_policy"))
 
-    assert "快速开始" in start_result.reply_text
+    assert "【控制台】" in start_result.reply_text
+    assert "模型: o3" in start_result.reply_text
+    assert "【控制台】" in home_result.reply_text
+    assert home_result.metadata["current_model"] == "o3"
     assert "上传策略" in policy_result.reply_text
     codes = [event[0] for event in audit.events]
     assert audit_events.START_VIEWED in codes
