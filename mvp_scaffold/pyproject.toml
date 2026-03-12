@@ -6,11 +6,34 @@ build-backend = "setuptools.build_meta"
 name = "openfish"
 version = "1.0.0"
 description = "OpenFish: single-user Telegram-driven personal Codex assistant"
+readme = "README_PYPI.md"
 requires-python = ">=3.12"
+license = "MIT"
+authors = [
+  { name = "Re13orn" },
+]
+keywords = ["telegram", "codex", "assistant", "cli", "self-hosted"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Communications :: Chat",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
   "PyYAML>=6.0",
   "python-telegram-bot>=22.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Re13orn/openfish"
+Repository = "https://github.com/Re13orn/openfish"
+Issues = "https://github.com/Re13orn/openfish/issues"
+Changelog = "https://github.com/Re13orn/openfish/blob/main/CHANGELOG.md"
 
 [project.scripts]
 openfish = "src.cli:main"
@@ -22,6 +45,7 @@ dev = [
 
 [tool.setuptools]
 packages = ["src"]
+include-package-data = true
 
 [tool.setuptools.package-data]
 src = [

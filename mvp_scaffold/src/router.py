@@ -316,8 +316,12 @@ class CommandRouter:
         current = self._chat_ui_mode(chat_id=ctx.telegram_chat_id)
         if mode_arg in {"", "show"}:
             return CommandResult(f"当前界面模式: {current}")
+        if mode_arg == "reset":
+            self.tasks.clear_chat_ui_mode(chat_id=ctx.telegram_chat_id)
+            default_mode = getattr(self.config, "default_ui_mode", "stream")
+            return CommandResult(f"界面模式已重置为默认值: {default_mode}")
         if mode_arg not in {"summary", "verbose", "stream"}:
-            return CommandResult("用法: /ui [show|summary|verbose|stream]")
+            return CommandResult("用法: /ui [show|summary|verbose|stream|reset]")
         self.tasks.set_chat_ui_mode(chat_id=ctx.telegram_chat_id, user_id=user.id, mode=mode_arg)
         return CommandResult(f"界面模式已切换为: {mode_arg}")
 

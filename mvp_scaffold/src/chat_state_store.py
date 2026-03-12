@@ -206,6 +206,22 @@ class ChatStateStore:
         except sqlite3.OperationalError:
             logger.debug("ui_mode column not available when storing chat UI mode.")
 
+    def clear_chat_ui_mode(self, *, chat_id: str) -> None:
+        connection = self.db.get_connection()
+        try:
+            connection.execute(
+                """
+                UPDATE chat_context
+                SET ui_mode = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_chat_id = ?
+                """,
+                (chat_id,),
+            )
+            connection.commit()
+        except sqlite3.OperationalError:
+            logger.debug("ui_mode column not available when clearing chat UI mode.")
+
     def get_chat_codex_model(self, *, chat_id: str) -> str | None:
         connection = self.db.get_connection()
         try:

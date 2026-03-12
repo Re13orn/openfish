@@ -240,7 +240,7 @@ def test_help_contains_last_and_retry() -> None:
 
 def test_help_summary_mode_is_shorter() -> None:
     text = format_help("summary")
-    assert "/ui summary|verbose|stream" in text
+    assert "/ui summary|verbose|stream|reset" in text
     assert "/model" in text
     assert "/task-current" in text
     assert "/project-add <key> [abs_path] [name]" not in text

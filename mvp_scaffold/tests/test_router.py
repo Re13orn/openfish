@@ -291,6 +291,10 @@ class TasksStub:
         _ = user_id
         self.ui_mode = mode
 
+    def clear_chat_ui_mode(self, *, chat_id: str) -> None:
+        _ = chat_id
+        self.ui_mode = None
+
     def get_chat_codex_model(self, *, chat_id: str) -> str | None:
         _ = chat_id
         return self.codex_model
@@ -1368,13 +1372,24 @@ def test_ui_command_sets_stream_mode() -> None:
     assert tasks.ui_mode == "stream"
 
 
+def test_ui_command_resets_to_default_mode() -> None:
+    tasks = TasksStub()
+    tasks.ui_mode = "summary"
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/ui reset"))
+
+    assert result.reply_text == "界面模式已重置为默认值: stream"
+    assert tasks.ui_mode is None
+
+
 def test_help_command_works_with_default_stream_ui_mode() -> None:
     tasks = TasksStub()
     router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
 
     result = router.handle(_ctx("/help"))
 
-    assert "/ui [show|summary|verbose|stream]" in result.reply_text
+    assert "/ui [show|summary|verbose|stream|reset]" in result.reply_text
 
 
 def test_ui_show_uses_config_default_mode_when_chat_not_set() -> None:

@@ -65,7 +65,7 @@ def format_help(mode: str = "verbose") -> str:
             "/version\n"
             "/update-check\n"
             "/restart\n"
-            "/ui summary|verbose|stream\n"
+            "/ui summary|verbose|stream|reset\n"
             "\n"
             "更多命令可用 /help verbose 查看。"
         )
@@ -123,7 +123,7 @@ def format_help(mode: str = "verbose") -> str:
         "/restart\n"
         "/logs\n"
         "/logs-clear\n"
-        "/ui [show|summary|verbose|stream]\n"
+        "/ui [show|summary|verbose|stream|reset]\n"
         "/upload_policy\n"
         "/cancel\n"
         "\n"
