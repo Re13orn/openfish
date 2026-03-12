@@ -44,6 +44,7 @@ NATIVE_COMMANDS = {
 DOCKER_COMMANDS = {
     "docker-up",
     "docker-down",
+    "docker-health",
     "docker-logs",
     "docker-ps",
     "docker-login-codex",
@@ -1226,6 +1227,69 @@ def _docker_require_running(docker_bin: str, *, command_name: str) -> bool:
     return False
 
 
+def _docker_codex_login_status(docker_bin: str) -> tuple[bool, str]:
+    repo_root = _repo_root()
+    cmd = [docker_bin, "exec", "openfish", "codex", "login", "status"]
+    completed = subprocess.run(  # noqa: S603
+        cmd,
+        check=False,
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+    )
+    output = "\n".join(part.strip("\n") for part in (completed.stdout or "", completed.stderr or "") if part).strip()
+    return completed.returncode == 0, output
+
+
+def _docker_health(docker_bin: str) -> int:
+    env_file = _docker_env_file()
+    if not env_file.exists():
+        print("[docker-health] fail  Docker 配置文件不存在")
+        print(f"[docker-health] path: {env_file}")
+        print("[docker-health] next: openfish docker-configure")
+        return 1
+
+    docker_env = _load_simple_env_file(env_file)
+    token_ok, token_error = _validate_telegram_token(docker_env.get("TELEGRAM_BOT_TOKEN", "").strip())
+    if token_ok:
+        print("[docker-health] ok    Telegram Bot Token 有效")
+    else:
+        print(f"[docker-health] fail  Telegram Bot Token 无效: {token_error}")
+
+    status = _docker_container_state(docker_bin)
+    if status == "running":
+        print("[docker-health] ok    openfish 容器运行中")
+    else:
+        print(f"[docker-health] fail  openfish 容器状态: {status or 'missing'}")
+
+    codex_ok = False
+    if status == "running":
+        codex_ok, codex_output = _docker_codex_login_status(docker_bin)
+        if codex_ok:
+            print("[docker-health] ok    Codex 已登录")
+        else:
+            print("[docker-health] fail  Codex 未登录")
+            if codex_output:
+                print("[docker-health] codex:")
+                print(codex_output)
+    else:
+        print("[docker-health] skip  容器未运行，跳过 Codex 登录检查")
+
+    if token_ok and status == "running" and codex_ok:
+        print("[docker-health] ready")
+        return 0
+
+    print("[docker-health] next:")
+    if not token_ok:
+        print("  openfish docker-configure")
+    if status != "running":
+        print("  openfish docker-up")
+        print("  openfish docker-logs")
+    elif not codex_ok:
+        print("  openfish docker-login-codex")
+    return 1
+
+
 def _import_codex_auth_into_container(docker_bin: str, auth_content: str) -> int:
     repo_root = _repo_root()
     cmd = [
@@ -1314,6 +1378,8 @@ def _run_docker_command(command: str, args: list[str]) -> int:
         return 1
     if command == "docker-login-codex":
         return _docker_login_codex(docker_bin, args)
+    if command == "docker-health":
+        return _docker_health(docker_bin)
     if command == "docker-codex-status" and not _docker_require_running(docker_bin, command_name="docker-codex-status"):
         return 1
 

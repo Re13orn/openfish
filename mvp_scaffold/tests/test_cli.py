@@ -320,6 +320,66 @@ def test_cli_docker_login_codex_requires_running_container(monkeypatch, capsys) 
     assert code == 1
 
 
+def test_cli_docker_health_reports_ready(monkeypatch, tmp_path, capsys) -> None:
+    repo_root = tmp_path
+    env_file = repo_root / ".openfish.docker.env"
+    env_file.write_text("TELEGRAM_BOT_TOKEN=token\n", encoding="utf-8")
+    (repo_root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(cli, "_validate_telegram_token", lambda token: (True, ""))
+    monkeypatch.setattr(cli, "_docker_container_state", lambda docker_bin: "running")
+    monkeypatch.setattr(cli, "_docker_codex_login_status", lambda docker_bin: (True, "Logged in"))
+
+    code = cli.main(["docker-health"])
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Telegram Bot Token 有效" in out
+    assert "openfish 容器运行中" in out
+    assert "Codex 已登录" in out
+    assert "[docker-health] ready" in out
+
+
+def test_cli_docker_health_reports_missing_config(monkeypatch, tmp_path, capsys) -> None:
+    repo_root = tmp_path
+    (repo_root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: repo_root / ".openfish.docker.env")
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+
+    code = cli.main(["docker-health"])
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "Docker 配置文件不存在" in out
+    assert "openfish docker-configure" in out
+
+
+def test_cli_docker_health_reports_codex_login_needed(monkeypatch, tmp_path, capsys) -> None:
+    repo_root = tmp_path
+    env_file = repo_root / ".openfish.docker.env"
+    env_file.write_text("TELEGRAM_BOT_TOKEN=token\n", encoding="utf-8")
+    (repo_root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cli, "_docker_env_file", lambda: env_file)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(cli, "_validate_telegram_token", lambda token: (True, ""))
+    monkeypatch.setattr(cli, "_docker_container_state", lambda docker_bin: "running")
+    monkeypatch.setattr(cli, "_docker_codex_login_status", lambda docker_bin: (False, "Not logged in"))
+
+    code = cli.main(["docker-health"])
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "Codex 未登录" in out
+    assert "openfish docker-login-codex" in out
+
+
 def test_cli_init_home_bootstraps_runtime_files(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("OPENFISH_HOME", str(tmp_path / "home"))
 
