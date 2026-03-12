@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: openfish
-    restart: unless-stopped
+    restart: on-failure:3
     environment:
       OPENFISH_HOME: /var/lib/openfish
       OPENFISH_DOCKER_MODE: "1"

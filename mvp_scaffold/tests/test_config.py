@@ -74,3 +74,19 @@ def test_load_config_defaults_to_bundled_schema_and_migrations(monkeypatch) -> N
     assert config.schema_path.name == "schema.sql"
     assert config.schema_path.as_posix().endswith("src/resources/schema.sql")
     assert config.migrations_dir.as_posix().endswith("src/resources/migrations")
+
+
+def test_load_config_resolves_runtime_paths_from_openfish_home(monkeypatch, tmp_path) -> None:
+    home = tmp_path / "openfish-home"
+    monkeypatch.setenv("OPENFISH_HOME", str(home))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
+    monkeypatch.setenv("PROJECTS_CONFIG_PATH", "./projects.yaml")
+    monkeypatch.setenv("SQLITE_PATH", "./data/app.db")
+    monkeypatch.setenv("OPENFISH_LOCK_PATH", "./data/openfish.lock")
+
+    config = load_config()
+
+    assert config.projects_config_path == home / "projects.yaml"
+    assert config.sqlite_path == home / "data/app.db"
+    assert config.process_lock_path == home / "data/openfish.lock"

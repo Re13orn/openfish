@@ -92,7 +92,12 @@ def load_config() -> AppConfig:
         raise ValueError("ALLOWED_TELEGRAM_USER_IDS must contain at least one user id.")
 
     repo_root = Path(__file__).resolve().parents[2]
-    app_root = Path(__file__).resolve().parents[1]
+    openfish_home = os.getenv("OPENFISH_HOME", "").strip()
+    app_root = (
+        Path(os.path.expanduser(openfish_home)).resolve()
+        if openfish_home
+        else Path(__file__).resolve().parents[1]
+    )
     allowed_upload_extensions = _split_csv(
         os.getenv(
             "ALLOWED_UPLOAD_EXTENSIONS",
