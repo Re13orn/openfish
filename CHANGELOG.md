@@ -8,6 +8,46 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - No unreleased changes yet.
 
+## [1.1.0] - 2026-03-12
+
+### Added
+
+- Telegram home dashboard and `/home` command for a single-entry control surface.
+- Telegram service dashboard and `/health` command with service controls and health summary.
+- `openfish` CLI promoted to the primary runtime entrypoint across install, configure, check, start, stop, restart, logs, version, and update-check flows.
+- `openfish uninstall` with optional runtime cleanup support.
+- Package-ready runtime resources bundled inside the installable distribution:
+  - `schema.sql`
+  - `env.example`
+  - `migrations/*.sql`
+- Home-runtime support with `OPENFISH_HOME` and `openfish init-home`.
+- PyPI distribution for `openfish`.
+- Docker-specific operational commands:
+  - `openfish docker-configure`
+  - `openfish docker-up`
+  - `openfish docker-health`
+  - `openfish docker-init`
+  - `openfish docker-login-codex`
+  - `openfish docker-codex-status`
+
+### Changed
+
+- README and installation flow now prefer `pip install openfish`.
+- Telegram `/start` now lands on the home dashboard instead of a simple welcome/help response.
+- Task and service operations are more discoverable through dedicated dashboard cards and panels.
+- Docker runtime moved toward an isolated model with dedicated volumes and fixed internal runtime paths.
+
+### Fixed
+
+- Project-creation wizard handling for quoted `默认` input and absolute paths.
+- Docker startup failures caused by:
+  - missing `docker` binary handling in CLI
+  - invalid Telegram bot tokens
+  - numeric choice parsing in Docker Codex login
+  - path resolution under `OPENFISH_HOME`
+- CLI uninstall flow that previously suggested a follow-up command after removing the CLI itself.
+- Telegram UI mode recovery by adding `/ui-reset`.
+
 ## [1.0.0] - 2026-03-08
 
 ### Added
