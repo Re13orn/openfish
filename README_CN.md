@@ -109,10 +109,10 @@ OpenFish 不做：
 
 ## ><> CLI 快速开始
 
-先安装 `><> openfish` 命令入口：
+先通过 PyPI 安装 `><> openfish`：
 
 ```bash
-pip install -e ./mvp_scaffold
+pip install openfish
 ```
 
 然后统一通过 `><> openfish` CLI 使用：
@@ -122,6 +122,12 @@ openfish install
 openfish configure
 openfish check
 openfish start
+```
+
+`><>` 如果你是在源码仓库里做开发，需要 editable 安装，再使用：
+
+```bash
+pip install -e ./mvp_scaffold
 ```
 
 `><>` 当前主生命周期命令已经是原生 CLI：

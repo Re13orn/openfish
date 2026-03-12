@@ -109,10 +109,10 @@ OpenFish is not:
 
 ## ><> CLI Quick Start
 
-Install the CLI entrypoint first:
+Install from PyPI:
 
 ```bash
-pip install -e ./mvp_scaffold
+pip install openfish
 ```
 
 Then run OpenFish through the `><> openfish` CLI:
@@ -149,6 +149,12 @@ openfish init-home
 export OPENFISH_HOME=~/.config/openfish
 openfish check
 openfish start
+```
+
+`><>` If you are developing from source and want editable installs instead:
+
+```bash
+pip install -e ./mvp_scaffold
 ```
 
 `><>` Uninstall the package:
