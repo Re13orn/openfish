@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any
 
 from src import audit_events
+from src.autopilot_store import AutopilotStore
 from src.approval_store import ApprovalStore
 from src.chat_state_store import ChatStateStore
 from src.db import Database
@@ -89,6 +90,7 @@ class TaskStore:
     def __init__(self, db: Database) -> None:
         self.db = db
         self.chat_state = ChatStateStore(db, record_project_use=self._record_project_use)
+        self.autopilot = AutopilotStore(db)
         self.approvals = ApprovalStore(db, insert_task_event=self._insert_task_event)
         self.schedules = ScheduleStore(db)
         self.project_state = ProjectStateStore(db)

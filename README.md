@@ -121,6 +121,7 @@ bash mvp_scaffold/scripts/install_start.sh start
 
 - Project lifecycle: list, select, add, disable, archive
 - Task lifecycle: ask, do, resume, retry, cancel
+- Autopilot lifecycle: create a long-running supervisor-worker run, inspect status/context, pause, resume, single-step, takeover, stop
 - Task controls: current task, task list, cancel, delete, bulk cleanup
 - Scheduling: add, list, run, pause, enable, delete periodic tasks
 - Approval flow: approve, reject, note/reason continuation
@@ -134,10 +135,19 @@ bash mvp_scaffold/scripts/install_start.sh start
 
 - High-frequency home keyboard for `Projects`, `Ask`, `Do`, `Status`, `Resume`, `Diff`, `Schedule`, `More`, `Help`
 - Button-first approvals and task controls
+- Autopilot cards with status/context views, pause/resume/stop controls, takeover prompts, and paused single-step execution
 - Persisted step-by-step wizards for project add, schedule add, and approval note/reason
 - Default `stream` UI mode with `/ui reset` to return to default behavior
 - Status, projects, schedule, approval, more, memory, and current-task cards prefer in-place updates
 - Short-window outbound dedup and recent message reference tracking for cleaner chats
+
+## What's New
+
+- `autopilot` supervisor-worker mode for long-running tasks that would otherwise keep stopping for another human “continue”
+- background autonomous loop with explicit stop conditions
+- `/autopilot-status` and `/autopilot-context` for observability
+- pause/resume/stop, human takeover, and paused single-step execution
+- Telegram buttons for Autopilot from the home/more/service surfaces
 
 ## ><> Docker
 
@@ -235,6 +245,9 @@ Core commands:
 
 - `/projects`, `/use <project>`, `/status`
 - `/ask <question>`, `/do <task>`, `/resume [task_id] [instruction]`
+- `/autopilot <goal>`, `/autopilot-status [id]`, `/autopilot-context [id]`
+- `/autopilot-step [id]`, `/autopilot-pause [id]`, `/autopilot-resume [id]`, `/autopilot-stop [id]`
+- `/autopilot-takeover <instruction>`
 - `/approve [note]`, `/reject [reason]`, `/cancel`
 - `/diff`, `/memory`, `/note <text>`, `/help`
 

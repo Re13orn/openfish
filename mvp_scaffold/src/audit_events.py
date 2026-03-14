@@ -48,6 +48,13 @@ SYSTEM_LOGS_VIEWED = "system.logs_viewed"
 SYSTEM_LOGS_CLEARED = "system.logs_cleared"
 SYSTEM_LOCAL_FILE_SENT = "system.local_file_sent"
 SYSTEM_GITHUB_CLONED = "system.github_cloned"
+AUTOPILOT_CREATED = "autopilot.created"
+AUTOPILOT_VIEWED = "autopilot.viewed"
+AUTOPILOT_STEPPED = "autopilot.stepped"
+AUTOPILOT_PAUSED = "autopilot.paused"
+AUTOPILOT_RESUMED = "autopilot.resumed"
+AUTOPILOT_STOPPED = "autopilot.stopped"
+AUTOPILOT_TAKEOVER = "autopilot.takeover"
 SCHEDULE_CREATED = "schedule.created"
 SCHEDULE_VIEWED = "schedule.viewed"
 SCHEDULE_DELETED = "schedule.deleted"
@@ -106,6 +113,13 @@ ALL_EVENTS = {
     SYSTEM_LOGS_CLEARED,
     SYSTEM_LOCAL_FILE_SENT,
     SYSTEM_GITHUB_CLONED,
+    AUTOPILOT_CREATED,
+    AUTOPILOT_VIEWED,
+    AUTOPILOT_STEPPED,
+    AUTOPILOT_PAUSED,
+    AUTOPILOT_RESUMED,
+    AUTOPILOT_STOPPED,
+    AUTOPILOT_TAKEOVER,
     SCHEDULE_CREATED,
     SCHEDULE_VIEWED,
     SCHEDULE_DELETED,

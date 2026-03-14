@@ -20,6 +20,7 @@ from src.formatters import format_upload_received
 from src.models import CommandContext, CommandResult
 from src.progress_reporter import ProgressReporter
 from src.telegram_sink import TelegramMessageSink, TelegramSendSpec
+from src.autopilot_store import AutopilotRunRecord
 from src.task_store import TaskRecord
 from src.telegram_views import TelegramReplySpec, TelegramViewFactory
 
@@ -95,6 +96,12 @@ class TelegramBotService:
         "logs": "/logs",
         "logs_clear": "/logs-clear",
         "task_current": "/task-current",
+        "autopilot_status": "/autopilot-status",
+        "autopilot_context": "/autopilot-context",
+        "autopilot_step": "/autopilot-step",
+        "autopilot_pause": "/autopilot-pause",
+        "autopilot_resume": "/autopilot-resume",
+        "autopilot_stop": "/autopilot-stop",
         "tasks": "/tasks",
         "tasks_clear": "/tasks-clear",
         "schedule_list": "/schedule-list",
@@ -135,6 +142,8 @@ class TelegramBotService:
         "reject": "/reject",
         "mcp": "/mcp",
         "model": "/model",
+        "autopilot": "/autopilot",
+        "autopilot_takeover": "/autopilot-takeover",
         "send_file": "/download-file",
         "github_clone": "/github-clone",
     }
@@ -154,6 +163,8 @@ class TelegramBotService:
         "reject": "请输入拒绝原因。下一条消息将按 /reject 执行。",
         "mcp": "请输入 MCP 名称（留空则查看列表）。下一条消息将按 /mcp 执行。",
         "model": "请输入模型名称。下一条消息将按 /model set 执行。",
+        "autopilot": "请输入长期任务目标。下一条消息将按 /autopilot 执行。",
+        "autopilot_takeover": "请输入新的高层指令。下一条消息将按 /autopilot-takeover 执行。",
         "send_file": "请输入本机文件绝对路径，或使用 ~ 开头。下一条消息将按 /download-file 执行。",
         "github_clone": "请输入公开 GitHub 仓库 URL 或 owner/repo，可选再跟一个相对目录名。下一条消息将按 /github-clone 执行。",
     }
@@ -1215,6 +1226,21 @@ class TelegramBotService:
             send_spec.edit_window_seconds = float(
                 getattr(self.config, "telegram_current_task_edit_window_seconds", 300.0)
             )
+        elif command in {
+            "/autopilot",
+            "/autopilot-status",
+            "/autopilot-context",
+            "/autopilot-takeover",
+            "/autopilot-step",
+            "/autopilot-pause",
+            "/autopilot-resume",
+            "/autopilot-stop",
+        }:
+            send_spec.context = "sending autopilot card"
+            send_spec.edit_context = "sending autopilot card"
+            send_spec.edit_window_seconds = float(
+                getattr(self.config, "telegram_autopilot_edit_window_seconds", 300.0)
+            )
         elif command == "/memory":
             send_spec.context = "sending memory panel"
             send_spec.edit_context = "sending memory panel"
@@ -1833,6 +1859,18 @@ class TelegramBotService:
         if command == "/task-current":
             task = (result.metadata or {}).get("current_task")
             return self.views.current_task_markup(task if isinstance(task, TaskRecord) else None)
+        if command in {
+            "/autopilot",
+            "/autopilot-status",
+            "/autopilot-context",
+            "/autopilot-takeover",
+            "/autopilot-step",
+            "/autopilot-pause",
+            "/autopilot-resume",
+            "/autopilot-stop",
+        }:
+            run = (result.metadata or {}).get("autopilot_run")
+            return self.views.autopilot_run_markup(run if isinstance(run, AutopilotRunRecord) else None)
         if command == "/memory":
             metadata = result.metadata or {}
             page = metadata.get("memory_page")

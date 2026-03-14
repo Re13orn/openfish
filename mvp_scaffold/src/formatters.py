@@ -1,5 +1,6 @@
 """Formatting helpers for concise Telegram-friendly replies."""
 
+from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.task_store import MemorySnapshot, StatusSnapshot, TaskPage, TaskRecord
 
@@ -56,6 +57,13 @@ def format_help(mode: str = "verbose") -> str:
             "/status\n"
             "/context\n"
             "/task-current\n"
+            "/autopilot <goal>\n"
+            "/autopilot-status [id]\n"
+            "/autopilot-context [id]\n"
+            "/autopilot-takeover <instruction>\n"
+            "/autopilot-pause [id]\n"
+            "/autopilot-resume [id]\n"
+            "/autopilot-stop [id]\n"
             "/resume [task_id] [instruction]\n"
             "/diff\n"
             "/model\n"
@@ -81,6 +89,14 @@ def format_help(mode: str = "verbose") -> str:
         "/status\n"
         "/context\n"
         "/task-current\n"
+        "/autopilot <goal>\n"
+        "/autopilot-status [id]\n"
+        "/autopilot-context [id]\n"
+        "/autopilot-takeover <instruction>\n"
+        "/autopilot-step [id]\n"
+        "/autopilot-pause [id]\n"
+        "/autopilot-resume [id]\n"
+        "/autopilot-stop [id]\n"
         "/resume [task_id] [instruction]\n"
         "/diff\n"
         "/model [show|set <name>|reset]\n"
@@ -313,6 +329,166 @@ def format_context(
             f"下一步: {next_step}",
         ],
     )
+
+
+def format_autopilot_status(
+    *,
+    run: AutopilotRunRecord,
+    events: list[AutopilotEventRecord],
+) -> str:
+    verdict, concerns, next_step = _autopilot_verdict(run)
+    latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
+    latest_supervisor = next((event for event in reversed(events) if event.actor == "supervisor"), None)
+    lines = [
+        f"Run: #{run.id}",
+        f"目标: {_clip(run.goal, 160)}",
+        f"状态: {run.status}",
+        f"阶段: {run.current_phase}",
+        f"轮次: {run.cycle_count}/{run.max_cycles}",
+        f"结论: {verdict}",
+        f"关注点: {concerns}",
+        f"A 会话: {run.supervisor_session_id or '暂无'}",
+        f"B 会话: {run.worker_session_id or '暂无'}",
+        f"最近判定: {run.last_decision or '暂无'}",
+        f"无进展计数: {run.no_progress_cycles}",
+        f"重复指令计数: {run.same_instruction_cycles}",
+    ]
+    if latest_worker is not None:
+        lines.append(f"B 最近摘要: {_clip(latest_worker.summary or '暂无', 120)}")
+    if latest_supervisor is not None:
+        lines.append(f"A 最近摘要: {_clip(latest_supervisor.summary or '暂无', 120)}")
+    lines.append(f"下一步: {next_step}")
+    return _card("Autopilot", lines)
+
+
+def format_autopilot_step_result(
+    *,
+    run: AutopilotRunRecord,
+    worker_summary: str,
+    supervisor_summary: str,
+) -> str:
+    return _card(
+        "Autopilot Step",
+        [
+            f"Run: #{run.id}",
+            f"状态: {run.status}",
+            f"阶段: {run.current_phase}",
+            f"轮次: {run.cycle_count}/{run.max_cycles}",
+            f"B: {_clip(worker_summary, 140)}",
+            f"A: {_clip(supervisor_summary, 140)}",
+            (
+                "下一步: 后台会继续自治推进；可查看 /autopilot-status。"
+                if run.status in {"running_worker", "running_supervisor"}
+                else "下一步: 已执行单轮并重新暂停；可再次 /autopilot-step 或 /autopilot-resume。"
+                if run.status == "paused"
+                else "下一步: 可查看 /autopilot-status。"
+            ),
+        ],
+    )
+
+
+def format_autopilot_action_result(
+    *,
+    run: AutopilotRunRecord,
+    action: str,
+    note: str | None = None,
+) -> str:
+    next_step = "下一步: 可继续查看 /autopilot-status。"
+    if action == "takeover":
+        next_step = "下一步: 后台会按新的高层指令继续自治推进；可查看 /autopilot-context。"
+    return _card(
+        "Autopilot",
+        [
+            f"Run: #{run.id}",
+            f"动作: {action}",
+            f"状态: {run.status}",
+            f"阶段: {run.current_phase}",
+            f"轮次: {run.cycle_count}/{run.max_cycles}",
+            f"最近判定: {run.last_decision or '暂无'}",
+            f"备注: {note or run.paused_reason or '暂无'}",
+            next_step,
+        ],
+    )
+
+
+def format_autopilot_context(
+    *,
+    run: AutopilotRunRecord,
+    events: list[AutopilotEventRecord],
+) -> str:
+    verdict, concerns, next_step = _autopilot_verdict(run)
+    latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
+    latest_supervisor = next((event for event in reversed(events) if event.actor == "supervisor"), None)
+    lines = [
+        f"Run: #{run.id}",
+        f"状态: {run.status}",
+        f"阶段: {run.current_phase}",
+        f"轮次: {run.cycle_count}/{run.max_cycles}",
+        f"结论: {verdict}",
+        f"关注点: {concerns}",
+        f"A 会话: {run.supervisor_session_id or '暂无'}",
+        f"B 会话: {run.worker_session_id or '暂无'}",
+        f"最近判定: {run.last_decision or '暂无'}",
+        f"无进展计数: {run.no_progress_cycles}",
+        f"重复指令计数: {run.same_instruction_cycles}",
+    ]
+    if latest_worker is not None:
+        lines.append(f"B 最近事件: {latest_worker.event_type}")
+        lines.append(f"B 最近摘要: {_clip(latest_worker.summary or '暂无', 120)}")
+        if latest_worker.payload:
+            blockers = latest_worker.payload.get("blockers")
+            if isinstance(blockers, str) and blockers.strip() and blockers.strip().lower() != "none":
+                lines.append(f"B 当前阻塞: {_clip(blockers.strip(), 120)}")
+            recommended_next = latest_worker.payload.get("recommended_next_step")
+            if isinstance(recommended_next, str) and recommended_next.strip():
+                lines.append(f"B 建议下一步: {_clip(recommended_next.strip(), 120)}")
+    if latest_supervisor is not None:
+        lines.append(f"A 最近事件: {latest_supervisor.event_type}")
+        lines.append(f"A 最近摘要: {_clip(latest_supervisor.summary or '暂无', 120)}")
+        if latest_supervisor.payload:
+            reason = latest_supervisor.payload.get("reason")
+            if isinstance(reason, str) and reason.strip():
+                lines.append(f"A 判定理由: {_clip(reason.strip(), 120)}")
+            next_instruction = latest_supervisor.payload.get("next_instruction_for_b")
+            if isinstance(next_instruction, str) and next_instruction.strip():
+                lines.append(f"A 给 B 的下一步: {_clip(next_instruction.strip(), 120)}")
+    recent_events = events[-4:]
+    if recent_events:
+        lines.append("最近事件:")
+        for event in recent_events:
+            lines.append(
+                f"- {event.cycle_no}:{event.actor}/{event.event_type} · {_clip(event.summary or '暂无', 80)}"
+            )
+    lines.append(f"下一步: {next_step}")
+    return _card("Autopilot Context", lines)
+
+
+def _autopilot_verdict(run: AutopilotRunRecord) -> tuple[str, str, str]:
+    if run.status == "completed":
+        return ("已完成", "任务已结束", "可查看 /autopilot-context，或创建新的 autopilot run。")
+    if run.status in {"blocked", "needs_human", "failed"}:
+        concern = "任务已停止推进"
+        if run.no_progress_cycles >= 2:
+            concern = "连续无进展，已停止推进"
+        elif run.same_instruction_cycles >= 2:
+            concern = "指令重复，已停止推进"
+        elif run.status == "needs_human":
+            concern = "需要人工判断"
+        elif run.status == "failed":
+            concern = "执行异常"
+        return ("阻塞", concern, "可查看 /autopilot-context，必要时人工接管或新建 run。")
+    if run.status == "paused":
+        return ("已暂停", run.paused_reason or "用户暂停", "可执行 /autopilot-resume 恢复，或执行 /autopilot-stop 停止。")
+    concerns: list[str] = []
+    if run.no_progress_cycles >= 1:
+        concerns.append("最近一轮无进展")
+    if run.same_instruction_cycles >= 1:
+        concerns.append("最近指令开始重复")
+    if run.cycle_count >= max(1, run.max_cycles - 5):
+        concerns.append("接近轮次上限")
+    if not concerns:
+        return ("正常推进", "暂无", "后台会继续自治推进；可执行 /autopilot-pause 或 /autopilot-stop。")
+    return ("接近阻塞", "；".join(concerns), "建议查看 /autopilot-context；必要时执行 /autopilot-pause 或 /autopilot-stop。")
 
 
 def format_health(

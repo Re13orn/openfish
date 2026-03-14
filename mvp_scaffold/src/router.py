@@ -14,10 +14,15 @@ from uuid import uuid4
 
 from src.approval import ApprovalService
 from src import audit_events
+from src.autopilot_service import AutopilotService
 from src.auth import is_allowed_user
 from src.codex_session_service import CodexSessionService
 from src.formatters import (
     format_approval_required,
+    format_autopilot_action_result,
+    format_autopilot_context,
+    format_autopilot_status,
+    format_autopilot_step_result,
     format_context,
     format_current_task,
     format_diff_card,
@@ -107,6 +112,7 @@ class CommandRouter:
         update_service: UpdateService | None = None,
         codex_sessions: CodexSessionService | None = None,
         github_repos: GitHubRepoService | None = None,
+        autopilot_service: AutopilotService | None = None,
     ) -> None:
         self.config = config
         self.projects = projects
@@ -120,6 +126,7 @@ class CommandRouter:
         self.update_service = update_service
         self.codex_sessions = codex_sessions
         self.github_repos = github_repos
+        self.autopilot = autopilot_service
         self._project_locks: dict[int, LockType] = {}
         self._project_locks_guard = Lock()
         self._active_task_executions: dict[int, ActiveTaskExecution] = {}
@@ -215,6 +222,22 @@ class CommandRouter:
             return self._handle_status(ctx)
         if command == "/task-current":
             return self._handle_task_current(ctx)
+        if command == "/autopilot":
+            return self._handle_autopilot(ctx, argument)
+        if command == "/autopilot-status":
+            return self._handle_autopilot_status(ctx, argument)
+        if command == "/autopilot-context":
+            return self._handle_autopilot_context(ctx, argument)
+        if command == "/autopilot-takeover":
+            return self._handle_autopilot_takeover(ctx, argument)
+        if command == "/autopilot-step":
+            return self._handle_autopilot_step(ctx, argument)
+        if command == "/autopilot-pause":
+            return self._handle_autopilot_pause(ctx, argument)
+        if command == "/autopilot-resume":
+            return self._handle_autopilot_resume(ctx, argument)
+        if command == "/autopilot-stop":
+            return self._handle_autopilot_stop(ctx, argument)
         if command == "/do":
             return self._handle_do(ctx, argument)
         if command == "/ask":
@@ -1545,6 +1568,255 @@ class CommandRouter:
             metadata={"current_task": task},
         )
 
+    def _handle_autopilot(self, ctx: CommandContext, goal: str) -> CommandResult:
+        if not goal.strip():
+            return CommandResult("用法: /autopilot <goal>")
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.autopilot is None:
+            return CommandResult("当前未启用 autopilot。")
+
+        run = self.autopilot.create_run(
+            project_id=active.project_id,
+            chat_id=ctx.telegram_chat_id,
+            created_by_user_id=active.user.id,
+            goal=goal.strip(),
+            max_cycles=100,
+        )
+        model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+        self.autopilot.start_run_loop(
+            project=active.project,
+            run_id=run.id,
+            model=model,
+            progress_callback=ctx.progress_callback,
+        )
+        run = self.autopilot.get_run(run_id=run.id) or run
+        self.audit.log(
+            action=audit_events.AUTOPILOT_CREATED,
+            message=f"创建 autopilot run #{run.id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"run_id": run.id},
+        )
+        events = self.autopilot.list_events(run_id=run.id, limit=10)
+        return CommandResult(
+            redact_text(format_autopilot_status(run=run, events=events)),
+            metadata={"autopilot_run_id": run.id, "autopilot_run": run},
+        )
+
+    def _handle_autopilot_status(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.autopilot is None:
+            return CommandResult("当前未启用 autopilot。")
+
+        run_or_result = self._resolve_autopilot_run(project_id=active.project_id, argument=argument)
+        if isinstance(run_or_result, CommandResult):
+            return run_or_result
+        if run_or_result is None:
+            return CommandResult("当前项目还没有 autopilot run。")
+        run = run_or_result
+        events = self.autopilot.list_events(run_id=run.id, limit=10)
+        self.audit.log(
+            action=audit_events.AUTOPILOT_VIEWED,
+            message=f"查看 autopilot run #{run.id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"run_id": run.id},
+        )
+        return CommandResult(
+            redact_text(format_autopilot_status(run=run, events=events)),
+            metadata={"autopilot_run_id": run.id, "autopilot_run": run},
+        )
+
+    def _handle_autopilot_context(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.autopilot is None:
+            return CommandResult("当前未启用 autopilot。")
+
+        run_or_result = self._resolve_autopilot_run(project_id=active.project_id, argument=argument)
+        if isinstance(run_or_result, CommandResult):
+            return run_or_result
+        if run_or_result is None:
+            return CommandResult("当前项目还没有 autopilot run。")
+        run = run_or_result
+        events = self.autopilot.list_events(run_id=run.id, limit=10)
+        self.audit.log(
+            action=audit_events.AUTOPILOT_VIEWED,
+            message=f"查看 autopilot context #{run.id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"run_id": run.id, "view": "context"},
+        )
+        return CommandResult(
+            redact_text(format_autopilot_context(run=run, events=events)),
+            metadata={"autopilot_run_id": run.id, "autopilot_run": run},
+        )
+
+    def _handle_autopilot_step(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.autopilot is None:
+            return CommandResult("当前未启用 autopilot。")
+
+        run_or_result = self._resolve_autopilot_run(project_id=active.project_id, argument=argument)
+        if isinstance(run_or_result, CommandResult):
+            return run_or_result
+        if run_or_result is None:
+            return CommandResult("当前项目还没有 autopilot run。请先执行 /autopilot <goal>。")
+        run = run_or_result
+        model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+        step = self.autopilot.step_run(
+            project=active.project,
+            run_id=run.id,
+            model=model,
+            progress_callback=ctx.progress_callback,
+        )
+        self.audit.log(
+            action=audit_events.AUTOPILOT_STEPPED,
+            message=f"推进 autopilot run #{run.id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"run_id": run.id, "status": step.run.status},
+        )
+        return CommandResult(
+            redact_text(
+                format_autopilot_step_result(
+                    run=step.run,
+                    worker_summary=step.worker_result.summary,
+                    supervisor_summary=step.supervisor_result.summary,
+                )
+            ),
+            metadata={"autopilot_run_id": run.id, "autopilot_run": step.run},
+        )
+
+    def _handle_autopilot_takeover(self, ctx: CommandContext, argument: str) -> CommandResult:
+        if not argument.strip():
+            return CommandResult("用法: /autopilot-takeover <instruction>")
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.autopilot is None:
+            return CommandResult("当前未启用 autopilot。")
+
+        run_or_result = self._resolve_autopilot_run(project_id=active.project_id, argument="")
+        if isinstance(run_or_result, CommandResult):
+            return run_or_result
+        if run_or_result is None:
+            return CommandResult("当前项目还没有 autopilot run。")
+        run = self.autopilot.takeover_run(
+            run_id=run_or_result.id,
+            instruction=argument.strip(),
+            taken_by_user_id=active.user.id,
+        )
+        model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+        self.autopilot.start_run_loop(
+            project=active.project,
+            run_id=run.id,
+            model=model,
+            progress_callback=ctx.progress_callback,
+        )
+        run = self.autopilot.get_run(run_id=run.id) or run
+        self.audit.log(
+            action=audit_events.AUTOPILOT_TAKEOVER,
+            message=f"人工接管 autopilot run #{run.id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"run_id": run.id, "instruction": argument.strip()},
+        )
+        return CommandResult(
+            redact_text(format_autopilot_action_result(run=run, action="takeover", note=argument.strip())),
+            metadata={"autopilot_run_id": run.id, "autopilot_run": run},
+        )
+
+    def _handle_autopilot_pause(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.autopilot is None:
+            return CommandResult("当前未启用 autopilot。")
+        run_or_result = self._resolve_autopilot_run(project_id=active.project_id, argument=argument)
+        if isinstance(run_or_result, CommandResult):
+            return run_or_result
+        if run_or_result is None:
+            return CommandResult("当前项目还没有 autopilot run。")
+        run = self.autopilot.pause_run(run_id=run_or_result.id)
+        self.audit.log(
+            action=audit_events.AUTOPILOT_PAUSED,
+            message=f"暂停 autopilot run #{run.id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"run_id": run.id},
+        )
+        return CommandResult(
+            redact_text(format_autopilot_action_result(run=run, action="pause")),
+            metadata={"autopilot_run_id": run.id, "autopilot_run": run},
+        )
+
+    def _handle_autopilot_resume(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.autopilot is None:
+            return CommandResult("当前未启用 autopilot。")
+        run_or_result = self._resolve_autopilot_run(project_id=active.project_id, argument=argument)
+        if isinstance(run_or_result, CommandResult):
+            return run_or_result
+        if run_or_result is None:
+            return CommandResult("当前项目还没有 autopilot run。")
+        run = self.autopilot.resume_run(run_id=run_or_result.id)
+        model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+        self.autopilot.start_run_loop(
+            project=active.project,
+            run_id=run.id,
+            model=model,
+            progress_callback=ctx.progress_callback,
+        )
+        run = self.autopilot.get_run(run_id=run.id) or run
+        self.audit.log(
+            action=audit_events.AUTOPILOT_RESUMED,
+            message=f"恢复 autopilot run #{run.id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"run_id": run.id},
+        )
+        return CommandResult(
+            redact_text(format_autopilot_action_result(run=run, action="resume")),
+            metadata={"autopilot_run_id": run.id, "autopilot_run": run},
+        )
+
+    def _handle_autopilot_stop(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.autopilot is None:
+            return CommandResult("当前未启用 autopilot。")
+        run_or_result = self._resolve_autopilot_run(project_id=active.project_id, argument=argument)
+        if isinstance(run_or_result, CommandResult):
+            return run_or_result
+        if run_or_result is None:
+            return CommandResult("当前项目还没有 autopilot run。")
+        run = self.autopilot.stop_run(
+            run_id=run_or_result.id,
+            stopped_by_user_id=active.user.id,
+        )
+        self.audit.log(
+            action=audit_events.AUTOPILOT_STOPPED,
+            message=f"停止 autopilot run #{run.id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"run_id": run.id},
+        )
+        return CommandResult(
+            redact_text(format_autopilot_action_result(run=run, action="stop")),
+            metadata={"autopilot_run_id": run.id, "autopilot_run": run},
+        )
+
     def _handle_last(self, ctx: CommandContext) -> CommandResult:
         active = self._resolve_active_project(ctx)
         if isinstance(active, CommandResult):
@@ -2298,6 +2570,24 @@ class CommandRouter:
         if ctx.telegram_message_id is None:
             return None
         return self.tasks.get_project_last_codex_session_id(project_id=active.project_id)
+
+    def _resolve_autopilot_run(
+        self,
+        *,
+        project_id: int,
+        argument: str,
+    ):
+        if self.autopilot is None:
+            return None
+        raw = argument.strip()
+        if not raw:
+            return self.autopilot.get_latest_run_for_project(project_id=project_id)
+        if not raw.isdigit():
+            return CommandResult("autopilot run id 必须是整数。")
+        run = self.autopilot.get_run(run_id=int(raw))
+        if run is None or run.project_id != project_id:
+            return CommandResult(f"autopilot run #{raw} 不存在或不属于当前项目。")
+        return run
 
     def _refresh_repo_state(self, *, project_id: int, project: ProjectConfig) -> None:
         repo_state = self.repo.inspect(project.path)

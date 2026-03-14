@@ -6,6 +6,7 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from src.codex_session_service import CodexSessionRecord
+from src.autopilot_store import AutopilotRunRecord
 from src.task_store import ScheduledTaskRecord, StatusSnapshot, TaskRecord
 
 
@@ -146,6 +147,10 @@ class TelegramViewFactory:
                 [
                     [InlineKeyboardButton(text="首页控制台", callback_data="cmd:home")],
                     [InlineKeyboardButton(text="当前上下文", callback_data="cmd:context")],
+                    [
+                        InlineKeyboardButton(text="Autopilot", callback_data="prompt:autopilot"),
+                        InlineKeyboardButton(text="Autopilot 状态", callback_data="cmd:autopilot_status"),
+                    ],
                     [InlineKeyboardButton(text="服务面板", callback_data="panel:service")],
                     [
                         InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
@@ -219,7 +224,10 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="清空日志", callback_data="cmd:logs_clear"),
                         InlineKeyboardButton(text="首页控制台", callback_data="cmd:home"),
                     ],
-                    [InlineKeyboardButton(text="当前上下文", callback_data="cmd:context")],
+                    [
+                        InlineKeyboardButton(text="当前上下文", callback_data="cmd:context"),
+                        InlineKeyboardButton(text="Autopilot 状态", callback_data="cmd:autopilot_status"),
+                    ],
                     [InlineKeyboardButton(text="更多操作", callback_data="panel:more")],
                 ]
             ),
@@ -350,6 +358,7 @@ class TelegramViewFactory:
                 [
                     InlineKeyboardButton(text="项目", callback_data="status:projects"),
                     InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
+                    InlineKeyboardButton(text="Autopilot", callback_data="prompt:autopilot"),
                 ],
                 [
                     InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
@@ -563,6 +572,50 @@ class TelegramViewFactory:
         rows.append(
             [
                 InlineKeyboardButton(text="查看状态", callback_data="cmd:status"),
+                InlineKeyboardButton(text="更多操作", callback_data="panel:more"),
+            ]
+        )
+        return InlineKeyboardMarkup(rows)
+
+    def autopilot_run_markup(self, run: AutopilotRunRecord | None) -> InlineKeyboardMarkup:
+        rows: list[list[InlineKeyboardButton]] = []
+        if run is not None and run.status in {"created", "running_worker", "running_supervisor"}:
+            rows.append(
+                [
+                    InlineKeyboardButton(text="当前上下文", callback_data="cmd:autopilot_context"),
+                    InlineKeyboardButton(text="人工接管", callback_data="prompt:autopilot_takeover"),
+                ]
+            )
+            rows.append(
+                [
+                    InlineKeyboardButton(text="暂停", callback_data="cmd:autopilot_pause"),
+                    InlineKeyboardButton(text="停止", callback_data="cmd:autopilot_stop"),
+                ]
+            )
+        elif run is not None and run.status == "paused":
+            rows.append(
+                [
+                    InlineKeyboardButton(text="当前上下文", callback_data="cmd:autopilot_context"),
+                    InlineKeyboardButton(text="人工接管", callback_data="prompt:autopilot_takeover"),
+                ]
+            )
+            rows.append(
+                [
+                    InlineKeyboardButton(text="只跑一轮", callback_data="cmd:autopilot_step"),
+                    InlineKeyboardButton(text="恢复", callback_data="cmd:autopilot_resume"),
+                    InlineKeyboardButton(text="停止", callback_data="cmd:autopilot_stop"),
+                ]
+            )
+        else:
+            rows.append(
+                [
+                    InlineKeyboardButton(text="Autopilot 状态", callback_data="cmd:autopilot_status"),
+                    InlineKeyboardButton(text="Autopilot", callback_data="prompt:autopilot"),
+                ]
+            )
+        rows.append(
+            [
+                InlineKeyboardButton(text="首页控制台", callback_data="cmd:home"),
                 InlineKeyboardButton(text="更多操作", callback_data="panel:more"),
             ]
         )

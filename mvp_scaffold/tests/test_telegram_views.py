@@ -5,6 +5,7 @@ pytest.importorskip("telegram")
 from src.codex_session_service import CodexSessionRecord
 from src.task_store import StatusSnapshot, TaskRecord
 from src.telegram_views import TelegramViewFactory
+from src.autopilot_store import AutopilotRunRecord
 
 
 def test_projects_panel_marks_active_and_recent() -> None:
@@ -86,6 +87,16 @@ def test_more_panel_contains_download_file_prompt() -> None:
         for button in row
     )
     assert any(
+        button.callback_data == "prompt:autopilot" and button.text == "Autopilot"
+        for row in spec.reply_markup.inline_keyboard
+        for button in row
+    )
+    assert any(
+        button.callback_data == "cmd:autopilot_status" and button.text == "Autopilot 状态"
+        for row in spec.reply_markup.inline_keyboard
+        for button in row
+    )
+    assert any(
         button.callback_data == "panel:service" and button.text == "服务面板"
         for row in spec.reply_markup.inline_keyboard
         for button in row
@@ -111,6 +122,7 @@ def test_service_panel_contains_health_and_logs_actions() -> None:
     assert rows[0][0].callback_data == "cmd:health"
     assert rows[0][1].callback_data == "cmd:version"
     assert any(button.callback_data == "cmd:context" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_status" for row in rows for button in row)
     assert any(button.callback_data == "cmd:restart" for row in rows for button in row)
     assert any(button.callback_data == "cmd:logs" for row in rows for button in row)
 
@@ -311,3 +323,91 @@ def test_home_markup_for_active_task_exposes_current_task_and_cancel() -> None:
     assert rows[0][0].callback_data == "cmd:context"
     assert rows[0][1].callback_data == "cmd:task_current"
     assert rows[1][0].callback_data == "task:cancel:12"
+
+
+def test_home_markup_idle_exposes_autopilot_prompt() -> None:
+    factory = TelegramViewFactory()
+    snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id="sess-1",
+        most_recent_task_summary=None,
+        recent_failed_summary=None,
+        pending_approval=False,
+        next_schedule_id=None,
+        next_schedule_hhmm=None,
+        next_step=None,
+        active_task=None,
+    )
+
+    markup = factory.home_markup(snapshot=snapshot, recent_projects=["demo"])
+
+    rows = markup.inline_keyboard
+    assert any(button.callback_data == "prompt:autopilot" for row in rows for button in row)
+
+
+def test_autopilot_run_markup_exposes_pause_and_stop_for_running_run() -> None:
+    factory = TelegramViewFactory()
+    run = AutopilotRunRecord(
+        id=1,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="running_worker",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="worker",
+        cycle_count=1,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="run tests next",
+        last_decision="continue",
+        last_worker_summary="已修改支付回调",
+        last_supervisor_summary="继续测试",
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+
+    markup = factory.autopilot_run_markup(run)
+
+    rows = markup.inline_keyboard
+    assert any(button.callback_data == "cmd:autopilot_context" for row in rows for button in row)
+    assert any(button.callback_data == "prompt:autopilot_takeover" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_pause" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_stop" for row in rows for button in row)
+
+
+def test_autopilot_run_markup_exposes_single_step_when_paused() -> None:
+    factory = TelegramViewFactory()
+    run = AutopilotRunRecord(
+        id=1,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="paused",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="idle",
+        cycle_count=1,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="run tests next",
+        last_decision="continue",
+        last_worker_summary="已修改支付回调",
+        last_supervisor_summary="继续测试",
+        paused_reason="manual pause",
+        stopped_by_user_id=None,
+    )
+
+    markup = factory.autopilot_run_markup(run)
+
+    rows = markup.inline_keyboard
+    assert any(button.callback_data == "cmd:autopilot_step" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_resume" for row in rows for button in row)

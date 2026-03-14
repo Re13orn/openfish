@@ -1,5 +1,8 @@
+from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.formatters import (
+    format_autopilot_context,
+    format_autopilot_status,
     format_context,
     format_current_task,
     format_do_result,
@@ -328,6 +331,127 @@ def test_format_health_card_surfaces_blockers() -> None:
     assert "结论: 阻塞" in text
     assert "关注点: Codex CLI 不可用；还没有已注册项目" in text
     assert "下一步: 先确认 codex 可执行，再重新运行 /health。" in text
+
+
+def test_format_autopilot_status_surfaces_near_blocked_signals() -> None:
+    run = AutopilotRunRecord(
+        id=1,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="running_worker",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="worker",
+        cycle_count=98,
+        max_cycles=100,
+        no_progress_cycles=1,
+        same_instruction_cycles=1,
+        last_instruction_fingerprint="run tests next",
+        last_decision="continue",
+        last_worker_summary="已修改支付回调",
+        last_supervisor_summary="继续测试",
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+    events = [
+        AutopilotEventRecord(
+            id=1,
+            run_id=1,
+            cycle_no=98,
+            actor="worker",
+            event_type="stage_completed",
+            summary="已修改支付回调",
+            payload=None,
+        ),
+        AutopilotEventRecord(
+            id=2,
+            run_id=1,
+            cycle_no=98,
+            actor="supervisor",
+            event_type="decision_made",
+            summary="继续测试",
+            payload=None,
+        ),
+    ]
+
+    text = format_autopilot_status(run=run, events=events)
+
+    assert "【Autopilot】" in text
+    assert "结论: 接近阻塞" in text
+    assert "关注点: 最近一轮无进展；最近指令开始重复；接近轮次上限" in text
+
+
+def test_format_autopilot_context_includes_recent_event_timeline() -> None:
+    run = AutopilotRunRecord(
+        id=1,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="paused",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="idle",
+        cycle_count=3,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="run tests next",
+        last_decision="continue",
+        last_worker_summary="已修改支付回调",
+        last_supervisor_summary="继续测试",
+        paused_reason="用户暂停",
+        stopped_by_user_id=None,
+    )
+    events = [
+        AutopilotEventRecord(
+            id=1,
+            run_id=1,
+            cycle_no=2,
+            actor="worker",
+            event_type="stage_completed",
+            summary="worker 2",
+            payload={
+                "blockers": "pytest still failing on auth flow",
+                "recommended_next_step": "fix auth tests and rerun pytest",
+            },
+        ),
+        AutopilotEventRecord(
+            id=2,
+            run_id=1,
+            cycle_no=2,
+            actor="supervisor",
+            event_type="decision_made",
+            summary="supervisor 2",
+            payload={
+                "reason": "worker made progress but auth tests still fail",
+                "next_instruction_for_b": "fix auth tests and rerun targeted pytest",
+            },
+        ),
+        AutopilotEventRecord(
+            id=3,
+            run_id=1,
+            cycle_no=3,
+            actor="human",
+            event_type="paused",
+            summary="用户暂停",
+            payload=None,
+        ),
+    ]
+
+    text = format_autopilot_context(run=run, events=events)
+
+    assert "【Autopilot Context】" in text
+    assert "结论: 已暂停" in text
+    assert "B 当前阻塞: pytest still failing on auth flow" in text
+    assert "B 建议下一步: fix auth tests and rerun pytest" in text
+    assert "A 判定理由: worker made progress but auth tests still fail" in text
+    assert "A 给 B 的下一步: fix auth tests and rerun targeted pytest" in text
+    assert "最近事件:" in text
+    assert "- 2:worker/stage_completed · worker 2" in text
+    assert "- 3:human/paused · 用户暂停" in text
 
 
 def test_help_summary_mode_is_shorter() -> None:

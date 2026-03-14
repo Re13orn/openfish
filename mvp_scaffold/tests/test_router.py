@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from src import audit_events
 from src.approval import ApprovalService
+from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.codex_runner import CodexRunResult
 from src.github_repo_service import GitHubCloneResult, GitHubRepoService
@@ -929,6 +930,251 @@ class GitHubReposStub:
         )
 
 
+class AutopilotStub:
+    def __init__(self) -> None:
+        self.run = AutopilotRunRecord(
+            id=1,
+            project_id=101,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="持续推进支付修复",
+            status="created",
+            supervisor_session_id=None,
+            worker_session_id=None,
+            current_phase="idle",
+            cycle_count=0,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint=None,
+            last_decision=None,
+            last_worker_summary=None,
+            last_supervisor_summary=None,
+            paused_reason=None,
+            stopped_by_user_id=None,
+        )
+        self.events = [
+            AutopilotEventRecord(
+                id=1,
+                run_id=1,
+                cycle_no=0,
+                actor="system",
+                event_type="run_created",
+                summary="已创建 autopilot 任务。",
+                payload={"goal": self.run.goal},
+            )
+        ]
+        self.created_goals: list[str] = []
+        self.stepped_run_ids: list[int] = []
+        self.started_run_ids: list[int] = []
+        self.takeover_instructions: list[str] = []
+
+    def create_run(self, *, project_id: int, chat_id: str, created_by_user_id: int, goal: str, max_cycles: int = 100):  # noqa: ANN001
+        _ = project_id
+        _ = chat_id
+        _ = created_by_user_id
+        self.created_goals.append(goal)
+        self.run = AutopilotRunRecord(
+            id=self.run.id,
+            project_id=self.run.project_id,
+            chat_id=self.run.chat_id,
+            created_by_user_id=self.run.created_by_user_id,
+            goal=goal,
+            status="created",
+            supervisor_session_id=None,
+            worker_session_id=None,
+            current_phase="idle",
+            cycle_count=0,
+            max_cycles=max_cycles,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint=None,
+            last_decision=None,
+            last_worker_summary=None,
+            last_supervisor_summary=None,
+            paused_reason=None,
+            stopped_by_user_id=None,
+        )
+        return self.run
+
+    def get_run(self, *, run_id: int):  # noqa: ANN201
+        return self.run if run_id == self.run.id else None
+
+    def get_latest_run_for_project(self, *, project_id: int):  # noqa: ANN201
+        _ = project_id
+        return self.run
+
+    def list_events(self, *, run_id: int, limit: int = 20):  # noqa: ANN201
+        _ = run_id
+        _ = limit
+        return self.events
+
+    def step_run(self, *, project, run_id: int, model: str | None = None, progress_callback=None):  # noqa: ANN001, ANN201
+        _ = project
+        _ = model
+        _ = progress_callback
+        self.stepped_run_ids.append(run_id)
+        self.run = AutopilotRunRecord(
+            id=self.run.id,
+            project_id=self.run.project_id,
+            chat_id=self.run.chat_id,
+            created_by_user_id=self.run.created_by_user_id,
+            goal=self.run.goal,
+            status="running_worker",
+            supervisor_session_id="sess-a",
+            worker_session_id="sess-b",
+            current_phase="worker",
+            cycle_count=1,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="continue next step",
+            last_decision="continue",
+            last_worker_summary="已修改支付回调",
+            last_supervisor_summary="继续执行测试与验证",
+            paused_reason=None,
+            stopped_by_user_id=None,
+        )
+        worker_result = _codex_result("已修改支付回调")
+        supervisor_result = _codex_result('{"decision":"continue","progress_summary":"继续执行测试与验证"}')
+        return SimpleNamespace(
+            run=self.run,
+            worker_result=worker_result,
+            supervisor_result=supervisor_result,
+        )
+
+    def start_run_loop(self, *, project, run_id: int, model: str | None = None, progress_callback=None):  # noqa: ANN001, ANN201
+        _ = project
+        _ = model
+        _ = progress_callback
+        self.started_run_ids.append(run_id)
+        if self.run.status == "created":
+            self.run = AutopilotRunRecord(
+                id=self.run.id,
+                project_id=self.run.project_id,
+                chat_id=self.run.chat_id,
+                created_by_user_id=self.run.created_by_user_id,
+                goal=self.run.goal,
+                status="running_worker",
+                supervisor_session_id=self.run.supervisor_session_id,
+                worker_session_id=self.run.worker_session_id,
+                current_phase="worker",
+                cycle_count=self.run.cycle_count,
+                max_cycles=self.run.max_cycles,
+                no_progress_cycles=self.run.no_progress_cycles,
+                same_instruction_cycles=self.run.same_instruction_cycles,
+                last_instruction_fingerprint=self.run.last_instruction_fingerprint,
+                last_decision=self.run.last_decision,
+                last_worker_summary=self.run.last_worker_summary,
+                last_supervisor_summary=self.run.last_supervisor_summary,
+                paused_reason=self.run.paused_reason,
+                stopped_by_user_id=self.run.stopped_by_user_id,
+            )
+        return True
+
+    def pause_run(self, *, run_id: int, reason: str | None = None):  # noqa: ANN201
+        _ = run_id
+        self.run = AutopilotRunRecord(
+            id=self.run.id,
+            project_id=self.run.project_id,
+            chat_id=self.run.chat_id,
+            created_by_user_id=self.run.created_by_user_id,
+            goal=self.run.goal,
+            status="paused",
+            supervisor_session_id=self.run.supervisor_session_id,
+            worker_session_id=self.run.worker_session_id,
+            current_phase="idle",
+            cycle_count=self.run.cycle_count,
+            max_cycles=self.run.max_cycles,
+            no_progress_cycles=self.run.no_progress_cycles,
+            same_instruction_cycles=self.run.same_instruction_cycles,
+            last_instruction_fingerprint=self.run.last_instruction_fingerprint,
+            last_decision=self.run.last_decision,
+            last_worker_summary=self.run.last_worker_summary,
+            last_supervisor_summary=self.run.last_supervisor_summary,
+            paused_reason=reason or "用户暂停",
+            stopped_by_user_id=None,
+        )
+        return self.run
+
+    def resume_run(self, *, run_id: int):  # noqa: ANN201
+        _ = run_id
+        self.run = AutopilotRunRecord(
+            id=self.run.id,
+            project_id=self.run.project_id,
+            chat_id=self.run.chat_id,
+            created_by_user_id=self.run.created_by_user_id,
+            goal=self.run.goal,
+            status="running_worker",
+            supervisor_session_id=self.run.supervisor_session_id,
+            worker_session_id=self.run.worker_session_id,
+            current_phase="worker",
+            cycle_count=self.run.cycle_count,
+            max_cycles=self.run.max_cycles,
+            no_progress_cycles=self.run.no_progress_cycles,
+            same_instruction_cycles=self.run.same_instruction_cycles,
+            last_instruction_fingerprint=self.run.last_instruction_fingerprint,
+            last_decision=self.run.last_decision,
+            last_worker_summary=self.run.last_worker_summary,
+            last_supervisor_summary=self.run.last_supervisor_summary,
+            paused_reason=self.run.paused_reason,
+            stopped_by_user_id=None,
+        )
+        return self.run
+
+    def stop_run(self, *, run_id: int, stopped_by_user_id: int | None = None, reason: str | None = None):  # noqa: ANN201
+        _ = run_id
+        self.run = AutopilotRunRecord(
+            id=self.run.id,
+            project_id=self.run.project_id,
+            chat_id=self.run.chat_id,
+            created_by_user_id=self.run.created_by_user_id,
+            goal=self.run.goal,
+            status="stopped",
+            supervisor_session_id=self.run.supervisor_session_id,
+            worker_session_id=self.run.worker_session_id,
+            current_phase="idle",
+            cycle_count=self.run.cycle_count,
+            max_cycles=self.run.max_cycles,
+            no_progress_cycles=self.run.no_progress_cycles,
+            same_instruction_cycles=self.run.same_instruction_cycles,
+            last_instruction_fingerprint=self.run.last_instruction_fingerprint,
+            last_decision=self.run.last_decision,
+            last_worker_summary=self.run.last_worker_summary,
+            last_supervisor_summary=self.run.last_supervisor_summary,
+            paused_reason=reason or "用户停止",
+            stopped_by_user_id=stopped_by_user_id,
+        )
+        return self.run
+
+    def takeover_run(self, *, run_id: int, instruction: str, taken_by_user_id: int | None = None):  # noqa: ANN201
+        _ = run_id
+        _ = taken_by_user_id
+        self.takeover_instructions.append(instruction)
+        self.run = AutopilotRunRecord(
+            id=self.run.id,
+            project_id=self.run.project_id,
+            chat_id=self.run.chat_id,
+            created_by_user_id=self.run.created_by_user_id,
+            goal=self.run.goal,
+            status="running_worker",
+            supervisor_session_id=self.run.supervisor_session_id,
+            worker_session_id=self.run.worker_session_id,
+            current_phase="worker",
+            cycle_count=self.run.cycle_count,
+            max_cycles=self.run.max_cycles,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="",
+            last_decision="continue",
+            last_worker_summary=self.run.last_worker_summary,
+            last_supervisor_summary=instruction,
+            paused_reason="",
+            stopped_by_user_id=None,
+        )
+        return self.run
+
+
 def _build_router(
     tasks: TasksStub,
     audit: AuditStub,
@@ -938,6 +1184,7 @@ def _build_router(
     updates: UpdateStub | None = None,
     sessions: SessionsStub | None = None,
     github_repos: GitHubReposStub | None = None,
+    autopilot: AutopilotStub | None = None,
 ) -> CommandRouter:
     config = SimpleNamespace(
         allowed_telegram_user_ids={"123"},
@@ -960,6 +1207,7 @@ def _build_router(
         update_service=updates,
         codex_sessions=sessions,
         github_repos=github_repos or GitHubReposStub(),
+        autopilot_service=autopilot,
     )
 
 
@@ -994,6 +1242,151 @@ def test_health_returns_service_snapshot() -> None:
     assert "版本: v1.0.0-rc1" in result.reply_text
     assert "当前模型: o3" in result.reply_text
     assert "当前项目: demo" in result.reply_text
+
+
+def test_autopilot_creates_run_and_returns_status_card() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilot 持续推进支付修复"))
+
+    assert "【Autopilot】" in result.reply_text
+    assert "目标: 持续推进支付修复" in result.reply_text
+    assert "状态: running_worker" in result.reply_text
+    assert autopilot.created_goals == ["持续推进支付修复"]
+    assert autopilot.started_run_ids == [1]
+    assert audit.events[-1][0] == audit_events.AUTOPILOT_CREATED
+
+
+def test_autopilot_status_uses_latest_run_when_id_missing() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilot-status"))
+
+    assert "【Autopilot】" in result.reply_text
+    assert "Run: #1" in result.reply_text
+    assert audit.events[-1][0] == audit_events.AUTOPILOT_VIEWED
+
+
+def test_autopilot_context_returns_sessions_and_counters() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    autopilot.run = AutopilotRunRecord(
+        id=1,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="running_worker",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="worker",
+        cycle_count=3,
+        max_cycles=100,
+        no_progress_cycles=1,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="run tests next",
+        last_decision="continue",
+        last_worker_summary="已修改支付回调",
+        last_supervisor_summary="继续执行测试与验证",
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+    autopilot.events.extend(
+        [
+            AutopilotEventRecord(
+                id=2,
+                run_id=1,
+                cycle_no=3,
+                actor="worker",
+                event_type="stage_completed",
+                summary="已修改支付回调",
+                payload=None,
+            ),
+            AutopilotEventRecord(
+                id=3,
+                run_id=1,
+                cycle_no=3,
+                actor="supervisor",
+                event_type="decision_made",
+                summary="继续执行测试与验证",
+                payload=None,
+            ),
+        ]
+    )
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilot-context"))
+
+    assert "【Autopilot Context】" in result.reply_text
+    assert "A 会话: sess-a" in result.reply_text
+    assert "B 会话: sess-b" in result.reply_text
+    assert "无进展计数: 1" in result.reply_text
+    assert audit.events[-1][0] == audit_events.AUTOPILOT_VIEWED
+
+
+def test_autopilot_step_advances_one_round() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilot-step"))
+
+    assert "【Autopilot Step】" in result.reply_text
+    assert "状态: running_worker" in result.reply_text
+    assert autopilot.stepped_run_ids == [1]
+    assert audit.events[-1][0] == audit_events.AUTOPILOT_STEPPED
+
+
+def test_autopilot_pause_resume_and_stop_commands() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    paused = router.handle(_ctx("/autopilot-pause"))
+    resumed = router.handle(_ctx("/autopilot-resume"))
+    stopped = router.handle(_ctx("/autopilot-stop"))
+
+    assert "动作: pause" in paused.reply_text
+    assert "状态: paused" in paused.reply_text
+    assert "动作: resume" in resumed.reply_text
+    assert "状态: running_worker" in resumed.reply_text
+    assert autopilot.started_run_ids == [1]
+    assert "动作: stop" in stopped.reply_text
+    assert "状态: stopped" in stopped.reply_text
+    codes = [event[0] for event in audit.events]
+    assert audit_events.AUTOPILOT_PAUSED in codes
+    assert audit_events.AUTOPILOT_RESUMED in codes
+    assert audit_events.AUTOPILOT_STOPPED in codes
+
+
+def test_autopilot_takeover_restarts_loop_with_new_instruction() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilot-takeover 不要再分析，直接修 auth tests 并跑定向 pytest"))
+
+    assert "动作: takeover" in result.reply_text
+    assert "状态: running_worker" in result.reply_text
+    assert autopilot.takeover_instructions == ["不要再分析，直接修 auth tests 并跑定向 pytest"]
+    assert autopilot.started_run_ids == [1]
+    assert audit.events[-1][0] == audit_events.AUTOPILOT_TAKEOVER
 
 
 def test_tasks_lists_project_tasks() -> None:

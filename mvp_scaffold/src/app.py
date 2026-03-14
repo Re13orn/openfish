@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.audit import AuditLogger
 from src.approval import ApprovalService
+from src.autopilot_service import AutopilotService
 from src.codex_runner import CodexRunner
 from src.codex_session_service import CodexSessionService
 from src.config import AppConfig, load_config
@@ -55,6 +56,7 @@ class Application:
         )
         self.github_repos = GitHubRepoService()
         self.repo = RepoInspector()
+        self.autopilot = AutopilotService(tasks=self.tasks, codex=self.codex)
         self.router = CommandRouter(
             config=config,
             projects=self.projects,
@@ -68,6 +70,7 @@ class Application:
             update_service=self.updates,
             codex_sessions=self.codex_sessions,
             github_repos=self.github_repos,
+            autopilot_service=self.autopilot,
         )
         self.scheduler = ScheduledTaskService(
             tasks=self.tasks,

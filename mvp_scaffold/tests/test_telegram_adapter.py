@@ -9,6 +9,7 @@ pytest.importorskip("telegram")
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 from telegram.request import HTTPXRequest
 
+from src.autopilot_store import AutopilotRunRecord
 from src.models import CommandResult
 from src.telegram_adapter import TelegramBotService
 
@@ -870,6 +871,8 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
     markup = captured["markup"]
     rows = markup.inline_keyboard
     assert any(button.callback_data == "panel:service" for row in rows for button in row)
+    assert any(button.callback_data == "prompt:autopilot" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_status" for row in rows for button in row)
     assert any(button.callback_data == "cmd:sessions" for row in rows for button in row)
     assert any(button.callback_data == "cmd:tasks" for row in rows for button in row)
     assert any(button.callback_data == "cmd:task_current" for row in rows for button in row)
@@ -1774,3 +1777,46 @@ def test_send_more_panel_marks_panel_for_editing(monkeypatch) -> None:
     assert spec.context == "sending more panel"
     assert spec.edit_context == "sending more panel"
     assert spec.edit_window_seconds == 300.0
+
+
+def test_reply_markup_for_autopilot_result_uses_autopilot_controls() -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    run = AutopilotRunRecord(
+        id=1,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="running_worker",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="worker",
+        cycle_count=1,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="run tests next",
+        last_decision="continue",
+        last_worker_summary="已修改支付回调",
+        last_supervisor_summary="继续测试",
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+
+    markup = service._reply_markup_for_result(
+        "/autopilot-status",
+        SimpleNamespace(telegram_chat_id="1"),
+        CommandResult("ok", metadata={"autopilot_run": run}),
+    )
+
+    rows = markup.inline_keyboard
+    assert any(button.callback_data == "prompt:autopilot_takeover" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_pause" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_stop" for row in rows for button in row)
