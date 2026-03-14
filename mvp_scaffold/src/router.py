@@ -18,6 +18,7 @@ from src.auth import is_allowed_user
 from src.codex_session_service import CodexSessionService
 from src.formatters import (
     format_approval_required,
+    format_context,
     format_current_task,
     format_diff_card,
     format_do_result,
@@ -140,6 +141,8 @@ class CommandRouter:
             return self._handle_start(ctx)
         if command == "/home":
             return self._handle_home(ctx)
+        if command == "/context":
+            return self._handle_context(ctx)
         if command == "/help":
             return self._handle_help(ctx, argument)
         if command == "/projects":
@@ -313,6 +316,24 @@ class CommandRouter:
                 "recent_projects": recent_projects,
                 "home_snapshot": snapshot,
                 "current_model": current_model,
+            },
+        )
+
+    def _handle_context(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        snapshot = self.tasks.get_status_snapshot(user.id, ctx.telegram_chat_id)
+        current_model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+        ui_mode = self._chat_ui_mode(chat_id=ctx.telegram_chat_id)
+        return CommandResult(
+            format_context(
+                snapshot=snapshot,
+                current_model=current_model,
+                ui_mode=ui_mode,
+            ),
+            metadata={
+                "context_snapshot": snapshot,
+                "current_model": current_model,
+                "ui_mode": ui_mode,
             },
         )
 

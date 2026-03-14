@@ -1,5 +1,6 @@
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.formatters import (
+    format_context,
     format_current_task,
     format_do_result,
     format_health,
@@ -130,6 +131,31 @@ def test_format_home_uses_dashboard_layout() -> None:
     assert "模型: o3" in text
     assert "会话: sess-1" in text
     assert "最近项目: ops" in text
+
+
+def test_format_context_explains_continuation_session() -> None:
+    snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id="sess-1",
+        most_recent_task_summary="修复支付回调问题",
+        recent_failed_summary=None,
+        pending_approval=False,
+        next_schedule_id=None,
+        next_schedule_hhmm=None,
+        next_step=None,
+    )
+
+    text = format_context(snapshot=snapshot, current_model="o3", ui_mode="stream")
+
+    assert "【当前上下文】" in text
+    assert "项目: demo" in text
+    assert "会话: sess-1" in text
+    assert "界面: stream" in text
+    assert "新的 /ask /do 会续接会话 sess-1" in text
 
 
 def test_format_memory_snapshot() -> None:

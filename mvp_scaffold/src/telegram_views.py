@@ -145,6 +145,7 @@ class TelegramViewFactory:
             reply_markup=InlineKeyboardMarkup(
                 [
                     [InlineKeyboardButton(text="首页控制台", callback_data="cmd:home")],
+                    [InlineKeyboardButton(text="当前上下文", callback_data="cmd:context")],
                     [InlineKeyboardButton(text="服务面板", callback_data="panel:service")],
                     [
                         InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
@@ -218,10 +219,58 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="清空日志", callback_data="cmd:logs_clear"),
                         InlineKeyboardButton(text="首页控制台", callback_data="cmd:home"),
                     ],
+                    [InlineKeyboardButton(text="当前上下文", callback_data="cmd:context")],
                     [InlineKeyboardButton(text="更多操作", callback_data="panel:more")],
                 ]
             ),
         )
+
+    def context_markup(self, *, snapshot: StatusSnapshot) -> InlineKeyboardMarkup:
+        if snapshot.active_project_key is None:
+            return InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(text="项目", callback_data="cmd:projects")],
+                    [
+                        InlineKeyboardButton(text="提问", callback_data="status:ask"),
+                        InlineKeyboardButton(text="执行", callback_data="status:do"),
+                    ],
+                    [InlineKeyboardButton(text="首页控制台", callback_data="cmd:home")],
+                    [InlineKeyboardButton(text="更多", callback_data="status:more")],
+                ]
+            )
+
+        rows: list[list[InlineKeyboardButton]] = []
+        if snapshot.active_task is not None:
+            rows.append(
+                [
+                    InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
+                    InlineKeyboardButton(
+                        text=f"取消 #{snapshot.active_task.id}",
+                        callback_data=f"task:cancel:{snapshot.active_task.id}",
+                    ),
+                ]
+            )
+        else:
+            rows.append(
+                [
+                    InlineKeyboardButton(text="提问", callback_data="status:ask"),
+                    InlineKeyboardButton(text="执行", callback_data="status:do"),
+                ]
+            )
+        rows.extend(
+            [
+                [
+                    InlineKeyboardButton(text="项目", callback_data="status:projects"),
+                    InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
+                ],
+                [
+                    InlineKeyboardButton(text="模型", callback_data="panel:model"),
+                    InlineKeyboardButton(text="首页控制台", callback_data="cmd:home"),
+                ],
+                [InlineKeyboardButton(text="更多", callback_data="status:more")],
+            ]
+        )
+        return InlineKeyboardMarkup(rows)
 
     def home_markup(
         self,
@@ -255,14 +304,17 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="拒绝", callback_data=reject_callback),
                     ],
                     [
+                        InlineKeyboardButton(text="当前上下文", callback_data="cmd:context"),
                         InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
-                        InlineKeyboardButton(text="项目", callback_data="status:projects"),
                     ],
                     [
+                        InlineKeyboardButton(text="项目", callback_data="status:projects"),
                         InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
                         InlineKeyboardButton(text="模型", callback_data="panel:model"),
                     ],
-                    [InlineKeyboardButton(text="更多", callback_data="status:more")],
+                    [
+                        InlineKeyboardButton(text="更多", callback_data="status:more"),
+                    ],
                 ]
             )
 
@@ -270,13 +322,14 @@ class TelegramViewFactory:
             return InlineKeyboardMarkup(
                 [
                     [
+                        InlineKeyboardButton(text="当前上下文", callback_data="cmd:context"),
                         InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
+                    ],
+                    [
                         InlineKeyboardButton(
                             text=f"取消 #{snapshot.active_task.id}",
                             callback_data=f"task:cancel:{snapshot.active_task.id}",
                         ),
-                    ],
-                    [
                         InlineKeyboardButton(text="项目", callback_data="status:projects"),
                         InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
                     ],
@@ -290,6 +343,7 @@ class TelegramViewFactory:
         return InlineKeyboardMarkup(
             [
                 [
+                    InlineKeyboardButton(text="当前上下文", callback_data="cmd:context"),
                     InlineKeyboardButton(text="提问", callback_data="status:ask"),
                     InlineKeyboardButton(text="执行", callback_data="status:do"),
                 ],

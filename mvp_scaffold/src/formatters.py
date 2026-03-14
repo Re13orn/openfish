@@ -54,6 +54,7 @@ def format_help(mode: str = "verbose") -> str:
             "/ask <question>\n"
             "/do <task>\n"
             "/status\n"
+            "/context\n"
             "/task-current\n"
             "/resume [task_id] [instruction]\n"
             "/diff\n"
@@ -78,6 +79,7 @@ def format_help(mode: str = "verbose") -> str:
         "/ask <question>\n"
         "/do <task>\n"
         "/status\n"
+        "/context\n"
         "/task-current\n"
         "/resume [task_id] [instruction]\n"
         "/diff\n"
@@ -252,6 +254,65 @@ def format_home(
     if recent:
         lines.append("最近项目: " + ", ".join(recent[:4]))
     return _card("控制台", lines)
+
+
+def format_context(
+    *,
+    snapshot: StatusSnapshot,
+    current_model: str | None,
+    ui_mode: str | None,
+) -> str:
+    """Render a focused card that explains the current continuation context."""
+
+    if snapshot.active_project_key is None:
+        return _card(
+            "当前上下文",
+            [
+                "项目: 未选择",
+                "任务: 暂无",
+                "会话: 暂无",
+                f"模型: {current_model or '默认'}",
+                f"界面: {ui_mode or 'stream'}",
+                "续接: 当前没有可续接上下文。",
+                "下一步: 先切换项目，再直接提问或执行任务。",
+            ],
+        )
+
+    if snapshot.active_task is not None:
+        task_line = (
+            f"#{snapshot.active_task.id} · "
+            f"{STATUS_LABELS.get(snapshot.active_task.status, snapshot.active_task.status)}"
+        )
+    elif snapshot.most_recent_task_summary:
+        task_line = _clip(snapshot.most_recent_task_summary, 80)
+    else:
+        task_line = "空闲"
+
+    if snapshot.last_codex_session_id:
+        continuation = f"新的 /ask /do 会续接会话 {snapshot.last_codex_session_id}。"
+    else:
+        continuation = "当前没有历史会话，新的 /ask /do 会新建上下文。"
+
+    if snapshot.active_task is not None:
+        next_step = "当前任务仍在运行，完成后会继续绑定到这个项目上下文。"
+    elif snapshot.pending_approval:
+        next_step = "当前任务在等待审批，审批后会继续使用这个上下文。"
+    else:
+        next_step = "可以直接继续提问或执行任务。"
+
+    return _card(
+        "当前上下文",
+        [
+            f"项目: {snapshot.active_project_key}",
+            f"路径: {snapshot.project_path or '未知'}",
+            f"任务: {task_line}",
+            f"会话: {snapshot.last_codex_session_id or '暂无'}",
+            f"模型: {current_model or '默认'}",
+            f"界面: {ui_mode or 'stream'}",
+            f"续接: {continuation}",
+            f"下一步: {next_step}",
+        ],
+    )
 
 
 def format_health(

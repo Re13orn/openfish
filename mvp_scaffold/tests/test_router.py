@@ -612,7 +612,7 @@ class TasksStub:
             project_path="/tmp/demo",
             current_branch=None,
             repo_dirty=None,
-            last_codex_session_id=None,
+            last_codex_session_id=self.last_project_session_id,
             most_recent_task_summary=None,
             recent_failed_summary=None,
             pending_approval=False,
@@ -1482,6 +1482,21 @@ def test_start_and_upload_policy_commands() -> None:
     codes = [event[0] for event in audit.events]
     assert audit_events.START_VIEWED in codes
     assert audit_events.UPLOAD_POLICY_VIEWED in codes
+
+
+def test_context_command_reports_current_continuation_state() -> None:
+    tasks = TasksStub()
+    tasks.codex_model = "o3"
+    tasks.last_project_session_id = "sess-project-1"
+    router = _build_router(tasks, AuditStub(), CodexStub(_codex_result("unused", ok=True)))
+
+    result = router.handle(_ctx("/context"))
+
+    assert "【当前上下文】" in result.reply_text
+    assert "项目: demo" in result.reply_text
+    assert "模型: o3" in result.reply_text
+    assert result.metadata["current_model"] == "o3"
+    assert result.metadata["ui_mode"] == "stream"
 
 
 def test_send_file_requires_absolute_path() -> None:

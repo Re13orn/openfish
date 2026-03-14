@@ -246,6 +246,7 @@ def test_resolve_callback_command_supports_home() -> None:
     service = _service()
 
     assert service._resolve_callback_command("home") == "/home"
+    assert service._resolve_callback_command("context") == "/context"
 
 
 def test_safe_reply_retries_after_timeout(monkeypatch) -> None:

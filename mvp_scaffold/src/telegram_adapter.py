@@ -79,6 +79,7 @@ class TelegramBotService:
     _CALLBACK_COMMANDS = {
         "start": "/start",
         "home": "/home",
+        "context": "/context",
         "help": "/help",
         "status": "/status",
         "projects": "/projects",
@@ -1799,6 +1800,10 @@ class TelegramBotService:
                     snapshot=snapshot,
                     recent_projects=(result.metadata or {}).get("recent_projects"),
                 )
+        if command == "/context":
+            snapshot = (result.metadata or {}).get("context_snapshot")
+            if snapshot is not None:
+                return self.views.context_markup(snapshot=snapshot)
         if command == "/status":
             user = self.router.tasks.ensure_user(ctx)
             snapshot = self.router.tasks.get_status_snapshot(user.id, ctx.telegram_chat_id)
