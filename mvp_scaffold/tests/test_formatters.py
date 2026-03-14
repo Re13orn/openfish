@@ -303,10 +303,31 @@ def test_format_health_card() -> None:
     )
 
     assert "【服务】" in text
+    assert "结论: 良好" in text
     assert "版本: v1.1.0" in text
     assert "Codex: 可用" in text
     assert "项目数: 3" in text
     assert "当前项目: demo" in text
+    assert "关注点: 暂无" in text
+
+
+def test_format_health_card_surfaces_blockers() -> None:
+    text = format_health(
+        version="v1.1.0",
+        branch="main",
+        commit="abc1234",
+        codex_available=False,
+        project_count=0,
+        active_project_key=None,
+        active_task_summary=None,
+        pending_approval=False,
+        current_model=None,
+        session_id=None,
+    )
+
+    assert "结论: 阻塞" in text
+    assert "关注点: Codex CLI 不可用；还没有已注册项目" in text
+    assert "下一步: 先确认 codex 可执行，再重新运行 /health。" in text
 
 
 def test_help_summary_mode_is_shorter() -> None:

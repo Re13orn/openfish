@@ -990,6 +990,7 @@ def test_health_returns_service_snapshot() -> None:
     result = router.handle(_ctx("/health"))
 
     assert "【服务】" in result.reply_text
+    assert "结论:" in result.reply_text
     assert "版本: v1.0.0-rc1" in result.reply_text
     assert "当前模型: o3" in result.reply_text
     assert "当前项目: demo" in result.reply_text

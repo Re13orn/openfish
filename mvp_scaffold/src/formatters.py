@@ -328,8 +328,39 @@ def format_health(
     current_model: str | None,
     session_id: str | None,
 ) -> str:
+    issues: list[str] = []
+    if not codex_available:
+        issues.append("Codex CLI 不可用")
+    if project_count == 0:
+        issues.append("还没有已注册项目")
+    if active_project_key is None and project_count > 0:
+        issues.append("当前未选择项目")
+    if pending_approval:
+        issues.append("有待处理审批")
+
+    if not issues:
+        verdict = "良好"
+    elif not codex_available:
+        verdict = "阻塞"
+    else:
+        verdict = "需处理"
+
+    if not codex_available:
+        next_step = "先确认 codex 可执行，再重新运行 /health。"
+    elif project_count == 0:
+        next_step = "先创建或导入项目，再开始使用。"
+    elif active_project_key is None:
+        next_step = "先切换项目，再直接提问或执行任务。"
+    elif pending_approval:
+        next_step = "先处理审批，再继续当前任务。"
+    elif active_task_summary:
+        next_step = "可查看当前任务，或等待执行完成。"
+    else:
+        next_step = "服务正常，可直接提问、执行任务或查看日志。"
+
     lines = [
         "服务: 在线",
+        f"结论: {verdict}",
         f"版本: {version}",
         f"分支: {branch}",
         f"提交: {commit}",
@@ -340,8 +371,12 @@ def format_health(
         f"当前模型: {current_model or '默认'}",
         f"当前会话: {session_id or '暂无'}",
         f"审批: {'待处理' if pending_approval else '无'}",
-        "下一步: 可查看版本、日志、更新，或直接重启服务。",
     ]
+    if issues:
+        lines.append("关注点: " + "；".join(issues))
+    else:
+        lines.append("关注点: 暂无")
+    lines.append(f"下一步: {next_step}")
     return _card("服务", lines)
 
 
