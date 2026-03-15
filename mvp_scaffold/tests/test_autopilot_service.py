@@ -1,5 +1,6 @@
 from pathlib import Path
 import time
+from types import SimpleNamespace
 
 from src.autopilot_service import AutopilotService
 from src.codex_runner import CodexRunResult
@@ -32,7 +33,9 @@ class CodexStub:
         self.last_worker_instruction = prompt
         _ = model
         _ = progress_callback
-        _ = process_callback
+        if process_callback is not None:
+            process_callback(SimpleNamespace(pid=1001))
+            process_callback(None)
         self.calls.append("run")
         return _codex_result(
             "worker round 1",
@@ -46,7 +49,9 @@ class CodexStub:
         self.last_worker_instruction = instruction
         _ = model
         _ = progress_callback
-        _ = process_callback
+        if process_callback is not None:
+            process_callback(SimpleNamespace(pid=1002))
+            process_callback(None)
         self.calls.append("resume_session")
         return _codex_result(
             "worker round resumed",
@@ -59,7 +64,9 @@ class CodexStub:
         _ = question
         _ = model
         _ = progress_callback
-        _ = process_callback
+        if process_callback is not None:
+            process_callback(SimpleNamespace(pid=2001))
+            process_callback(None)
         self.calls.append("ask")
         return _codex_result(
             "supervisor continue",
@@ -73,7 +80,9 @@ class CodexStub:
         _ = question
         _ = model
         _ = progress_callback
-        _ = process_callback
+        if process_callback is not None:
+            process_callback(SimpleNamespace(pid=2002))
+            process_callback(None)
         self.calls.append("ask_in_session")
         return _codex_result(
             "supervisor followup",
@@ -99,13 +108,20 @@ class CompletingCodexStub(CodexStub):
 
 class SlowCompletingCodexStub(CompletingCodexStub):
     def run(self, project, prompt: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+        _ = project
+        _ = prompt
+        _ = model
+        _ = progress_callback
+        if process_callback is not None:
+            process_callback(SimpleNamespace(pid=1001))
         time.sleep(0.2)
-        return super().run(
-            project,
-            prompt,
-            model=model,
-            progress_callback=progress_callback,
-            process_callback=process_callback,
+        if process_callback is not None:
+            process_callback(None)
+        self.calls.append("run")
+        return _codex_result(
+            "worker round 1",
+            session_id="sess-worker-1",
+            stdout='{"completed_work":"done","current_state":"worker round 1","remaining_work":"tests","blockers":"none","recommended_next_step":"run tests","progress_made":true,"task_complete":false}',
         )
 
 
@@ -172,7 +188,14 @@ def test_step_run_executes_worker_then_supervisor(tmp_path: Path) -> None:
     assert result.run.worker_session_id == "sess-worker-1"
     assert result.run.supervisor_session_id == "sess-supervisor-1"
     events = tasks.autopilot.list_events(run_id=run.id)
-    assert [event.actor for event in events][-2:] == ["worker", "supervisor"]
+    assert [event.event_type for event in events][-4:] == [
+        "stage_started",
+        "stage_completed",
+        "decision_started",
+        "decision_made",
+    ]
+    assert events[-4].payload == {"pid": 1001}
+    assert events[-2].payload == {"pid": 2001}
 
 
 def test_pause_resume_and_stop_run(tmp_path: Path) -> None:
@@ -298,11 +321,15 @@ def test_start_run_loop_completes_in_background(tmp_path: Path) -> None:
     service.wait_for_run_loop(run_id=run.id, timeout=2.0)
 
     updated = service.get_run(run_id=run.id)
+    events = tasks.autopilot.list_events(run_id=run.id)
     assert started is True
     assert updated is not None
     assert updated.status == "completed"
     assert updated.current_phase == "idle"
     assert updated.cycle_count == 1
+    event_types = [event.event_type for event in events]
+    assert "loop_started" in event_types
+    assert "cycle_started" in event_types
 
 
 def test_start_run_loop_does_not_duplicate_alive_thread(tmp_path: Path) -> None:
@@ -327,3 +354,34 @@ def test_start_run_loop_does_not_duplicate_alive_thread(tmp_path: Path) -> None:
 
     assert started is True
     assert started_again is False
+
+
+def test_start_run_loop_records_scheduler_progress_before_worker_finishes(tmp_path: Path) -> None:
+    tasks, _ = _setup_service(tmp_path)
+    service = AutopilotService(tasks=tasks, codex=SlowCompletingCodexStub())
+    run = service.create_run(
+        project_id=1,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+    )
+
+    started = service.start_run_loop(
+        project=ProjectConfig(key="demo", name="Demo", path=Path("/tmp")),
+        run_id=run.id,
+    )
+    time.sleep(0.05)
+
+    events = tasks.autopilot.list_events(run_id=run.id)
+    runtime = service.get_runtime_snapshot(run_id=run.id)
+    event_types = [event.event_type for event in events]
+    assert started is True
+    assert "loop_started" in event_types
+    assert "cycle_started" in event_types
+    assert runtime is not None
+    assert runtime.thread_alive is True
+    assert runtime.actor == "worker"
+    assert runtime.pid == 1001
+    assert runtime.process_started_at is not None
+
+    service.wait_for_run_loop(run_id=run.id, timeout=2.0)

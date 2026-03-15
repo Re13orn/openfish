@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from src import audit_events
 from src.approval import ApprovalService
+from src.autopilot_service import AutopilotRuntimeSnapshot
 from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.codex_runner import CodexRunResult
@@ -969,6 +970,13 @@ class AutopilotStub:
         self.started_run_ids: list[int] = []
         self.takeover_instructions: list[str] = []
         self.runs = [self.run]
+        self.runtime = AutopilotRuntimeSnapshot(
+            run_id=self.run.id,
+            actor="worker",
+            pid=4321,
+            process_started_at=1.0,
+            thread_alive=True,
+        )
 
     def create_run(self, *, project_id: int, chat_id: str, created_by_user_id: int, goal: str, max_cycles: int = 100):  # noqa: ANN001
         _ = project_id
@@ -1013,6 +1021,10 @@ class AutopilotStub:
         _ = run_id
         _ = limit
         return self.events
+
+    def get_runtime_snapshot(self, *, run_id: int):  # noqa: ANN201
+        _ = run_id
+        return self.runtime
 
     def step_run(self, *, project, run_id: int, model: str | None = None, progress_callback=None):  # noqa: ANN001, ANN201
         _ = project
@@ -1374,6 +1386,7 @@ def test_autopilot_context_returns_sessions_and_counters() -> None:
     assert "【Autopilot Context】" in result.reply_text
     assert "A 会话: sess-a" in result.reply_text
     assert "B 会话: sess-b" in result.reply_text
+    assert "当前 PID: 4321" in result.reply_text
     assert "无进展计数: 1" in result.reply_text
     assert audit.events[-1][0] == audit_events.AUTOPILOT_VIEWED
 

@@ -8,6 +8,40 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - No unreleased changes yet.
 
+## [1.2.0] - 2026-03-15
+
+### Added
+
+- Autopilot supervisor-worker mode for long-running tasks:
+  - `/autopilot <goal>`
+  - `/autopilots`
+  - `/autopilot-status [id]`
+  - `/autopilot-context [id]`
+  - `/autopilot-step [id]`
+  - `/autopilot-pause [id]`
+  - `/autopilot-resume [id]`
+  - `/autopilot-stop [id]`
+  - `/autopilot-takeover <instruction>`
+- Dedicated `autopilot_runs` and `autopilot_events` persistence model.
+- Telegram Autopilot list/panel management for recent runs with direct action buttons.
+- Autopilot workflow documentation and README workflow diagram.
+
+### Changed
+
+- Telegram status and context cards now make Autopilot progress more observable.
+- Autopilot context now exposes:
+  - recent event timeline
+  - supervisor reasoning
+  - worker blockers and suggested next step
+  - current actor / PID / elapsed runtime while a worker or supervisor process is active
+- Autopilot status/context now distinguish bootstrap and runtime stages instead of treating a fresh run as already making progress.
+
+### Fixed
+
+- False impression that a fresh Autopilot run was idle or required another human prompt before it had actually started.
+- Missing run-management affordances for multiple Autopilot runs in the same project.
+- Gaps in diagnosing whether Autopilot had only been created, had entered the run loop, or had already launched the Codex subprocess.
+
 ## [1.1.0] - 2026-03-12
 
 ### Added

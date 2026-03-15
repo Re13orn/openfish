@@ -1,3 +1,6 @@
+import time
+
+from src.autopilot_service import AutopilotRuntimeSnapshot
 from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.formatters import (
@@ -472,9 +475,19 @@ def test_format_autopilot_context_includes_recent_event_timeline() -> None:
         ),
     ]
 
-    text = format_autopilot_context(run=run, events=events)
+    runtime = AutopilotRuntimeSnapshot(
+        run_id=1,
+        actor="worker",
+        pid=4321,
+        process_started_at=time.monotonic() - 5,
+        thread_alive=True,
+    )
+
+    text = format_autopilot_context(run=run, events=events, runtime=runtime)
 
     assert "【Autopilot Context】" in text
+    assert "当前执行者: worker" in text
+    assert "当前 PID: 4321" in text
     assert "结论: 已暂停" in text
     assert "B 当前阻塞: pytest still failing on auth flow" in text
     assert "B 建议下一步: fix auth tests and rerun pytest" in text

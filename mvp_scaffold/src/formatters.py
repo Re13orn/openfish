@@ -1,5 +1,8 @@
 """Formatting helpers for concise Telegram-friendly replies."""
 
+import time
+
+from src.autopilot_service import AutopilotRuntimeSnapshot
 from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.task_store import MemorySnapshot, StatusSnapshot, TaskPage, TaskRecord
@@ -337,6 +340,7 @@ def format_autopilot_status(
     *,
     run: AutopilotRunRecord,
     events: list[AutopilotEventRecord],
+    runtime: AutopilotRuntimeSnapshot | None = None,
 ) -> str:
     verdict, concerns, next_step = _autopilot_verdict(run, events)
     latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
@@ -355,6 +359,14 @@ def format_autopilot_status(
         f"无进展计数: {run.no_progress_cycles}",
         f"重复指令计数: {run.same_instruction_cycles}",
     ]
+    if runtime is not None and runtime.thread_alive:
+        lines.append(f"运行线程: {'存活' if runtime.thread_alive else '未运行'}")
+        if runtime.actor:
+            lines.append(f"当前执行者: {runtime.actor}")
+        if runtime.pid is not None:
+            lines.append(f"当前 PID: {runtime.pid}")
+        if runtime.process_started_at is not None:
+            lines.append(f"已运行时长: {_format_elapsed(runtime.process_started_at)}")
     if latest_worker is not None:
         lines.append(f"B 最近摘要: {_clip(latest_worker.summary or '暂无', 120)}")
     if latest_supervisor is not None:
@@ -434,6 +446,7 @@ def format_autopilot_context(
     *,
     run: AutopilotRunRecord,
     events: list[AutopilotEventRecord],
+    runtime: AutopilotRuntimeSnapshot | None = None,
 ) -> str:
     verdict, concerns, next_step = _autopilot_verdict(run, events)
     latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
@@ -451,6 +464,14 @@ def format_autopilot_context(
         f"无进展计数: {run.no_progress_cycles}",
         f"重复指令计数: {run.same_instruction_cycles}",
     ]
+    if runtime is not None and runtime.thread_alive:
+        lines.append(f"运行线程: {'存活' if runtime.thread_alive else '未运行'}")
+        if runtime.actor:
+            lines.append(f"当前执行者: {runtime.actor}")
+        if runtime.pid is not None:
+            lines.append(f"当前 PID: {runtime.pid}")
+        if runtime.process_started_at is not None:
+            lines.append(f"已运行时长: {_format_elapsed(runtime.process_started_at)}")
     if latest_worker is not None:
         lines.append(f"B 最近事件: {latest_worker.event_type}")
         lines.append(f"B 最近摘要: {_clip(latest_worker.summary or '暂无', 120)}")
@@ -523,6 +544,19 @@ def _autopilot_verdict(
     if not concerns:
         return ("正常推进", "暂无", "后台会继续自治推进；可执行 /autopilot-pause 或 /autopilot-stop。")
     return ("接近阻塞", "；".join(concerns), "建议查看 /autopilot-context；必要时执行 /autopilot-pause 或 /autopilot-stop。")
+
+
+def _format_elapsed(started_at: float) -> str:
+    elapsed = max(0.0, time.monotonic() - started_at)
+    if elapsed < 1:
+        return "<1s"
+    if elapsed < 60:
+        return f"{int(elapsed)}s"
+    minutes, seconds = divmod(int(elapsed), 60)
+    if minutes < 60:
+        return f"{minutes}m{seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
 
 
 def format_health(

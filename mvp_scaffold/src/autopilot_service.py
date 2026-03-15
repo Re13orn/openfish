@@ -6,6 +6,7 @@ import re
 import signal
 import subprocess
 from threading import Lock, Thread
+import time
 from typing import Any
 
 from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
@@ -32,6 +33,16 @@ class _RunExecutionState:
     process: subprocess.Popen[str] | None = None
     actor: str | None = None
     thread: Thread | None = None
+    process_started_at: float | None = None
+
+
+@dataclass(slots=True)
+class AutopilotRuntimeSnapshot:
+    run_id: int
+    actor: str | None
+    pid: int | None
+    process_started_at: float | None
+    thread_alive: bool
 
 
 class AutopilotService:
@@ -88,6 +99,21 @@ class AutopilotService:
 
     def list_events(self, *, run_id: int, limit: int = 20) -> list[AutopilotEventRecord]:
         return self.tasks.autopilot.list_events(run_id=run_id, limit=limit)
+
+    def get_runtime_snapshot(self, *, run_id: int) -> AutopilotRuntimeSnapshot | None:
+        with self._run_state_guard:
+            state = self._run_states.get(run_id)
+            if state is None:
+                return None
+            pid = state.process.pid if state.process is not None else None
+            thread_alive = state.thread.is_alive() if state.thread is not None else False
+            return AutopilotRuntimeSnapshot(
+                run_id=run_id,
+                actor=state.actor,
+                pid=pid,
+                process_started_at=state.process_started_at,
+                thread_alive=thread_alive,
+            )
 
     def start_run_loop(
         self,
@@ -373,6 +399,14 @@ class AutopilotService:
         progress_callback=None,  # noqa: ANN001
     ) -> None:
         try:
+            self.tasks.autopilot.append_event(
+                run_id=run_id,
+                cycle_no=self.tasks.autopilot.get_run(run_id=run_id).cycle_count if self.tasks.autopilot.get_run(run_id=run_id) else 0,
+                actor="system",
+                event_type="loop_started",
+                summary="后台自治循环已启动。",
+                payload=None,
+            )
             while True:
                 run = self.tasks.autopilot.get_run(run_id=run_id)
                 if run is None:
@@ -381,6 +415,14 @@ class AutopilotService:
                     return
                 if self._should_stop(run_id):
                     return
+                self.tasks.autopilot.append_event(
+                    run_id=run_id,
+                    cycle_no=run.cycle_count + 1,
+                    actor="system",
+                    event_type="cycle_started",
+                    summary=f"开始第 {run.cycle_count + 1} 轮。",
+                    payload={"phase": run.current_phase or "worker"},
+                )
                 self.step_run(
                     project=project,
                     run_id=run_id,
@@ -444,6 +486,13 @@ class AutopilotService:
         model: str | None,
         progress_callback=None,  # noqa: ANN001
     ) -> CodexRunResult:
+        process_callback = self._make_actor_process_callback(
+            run_id=run.id,
+            actor="worker",
+            cycle_no=run.cycle_count + 1,
+            event_type="stage_started",
+            summary="B 已启动本轮执行。",
+        )
         if run.worker_session_id:
             return self.codex.resume_session(
                 project,
@@ -451,14 +500,14 @@ class AutopilotService:
                 instruction,
                 model=model,
                 progress_callback=progress_callback,
-                process_callback=lambda proc, run_id=run.id: self._set_active_process(run_id, "worker", proc),
+                process_callback=process_callback,
             )
         return self.codex.run(
             project,
             instruction,
             model=model,
             progress_callback=progress_callback,
-            process_callback=lambda proc, run_id=run.id: self._set_active_process(run_id, "worker", proc),
+            process_callback=process_callback,
         )
 
     def _run_supervisor(
@@ -476,6 +525,13 @@ class AutopilotService:
             worker_summary=worker_summary,
             worker_payload=worker_payload,
         )
+        process_callback = self._make_actor_process_callback(
+            run_id=run.id,
+            actor="supervisor",
+            cycle_no=run.cycle_count,
+            event_type="decision_started",
+            summary="A 已开始评估本轮结果。",
+        )
         if run.supervisor_session_id:
             return self.codex.ask_in_session(
                 project,
@@ -483,14 +539,14 @@ class AutopilotService:
                 prompt,
                 model=model,
                 progress_callback=progress_callback,
-                process_callback=lambda proc, run_id=run.id: self._set_active_process(run_id, "supervisor", proc),
+                process_callback=process_callback,
             )
         return self.codex.ask(
             project,
             prompt,
             model=model,
             progress_callback=progress_callback,
-            process_callback=lambda proc, run_id=run.id: self._set_active_process(run_id, "supervisor", proc),
+            process_callback=process_callback,
         )
 
     def _apply_supervisor_decision(
@@ -625,10 +681,42 @@ class AutopilotService:
         actor: str,
         proc: subprocess.Popen[str] | None,
     ) -> None:
+        now = time.monotonic()
         with self._run_state_guard:
             state = self._run_states.setdefault(run_id, _RunExecutionState())
             state.process = proc
             state.actor = actor
+            state.process_started_at = now if proc is not None else None
+
+    def _make_actor_process_callback(
+        self,
+        *,
+        run_id: int,
+        actor: str,
+        cycle_no: int,
+        event_type: str,
+        summary: str,
+    ):
+        emitted = False
+
+        def _callback(proc: subprocess.Popen[str] | None) -> None:
+            nonlocal emitted
+            self._set_active_process(run_id, actor, proc)
+            if proc is None or emitted:
+                return
+            emitted = True
+            pid = getattr(proc, "pid", None)
+            payload = {"pid": pid} if pid is not None else None
+            self.tasks.autopilot.append_event(
+                run_id=run_id,
+                cycle_no=cycle_no,
+                actor=actor,
+                event_type=event_type,
+                summary=summary,
+                payload=payload,
+            )
+
+        return _callback
 
     def _request_stop(self, *, run_id: int, terminate_process: bool) -> None:
         with self._run_state_guard:
