@@ -57,7 +57,7 @@ from src.formatters import (
 )
 from src.github_repo_service import GitHubRepoService
 from src.mcp_service import McpService
-from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
+from src.models import CommandContext, CommandResult, ProjectAddRequest, ProjectConfig, ProjectTemplatePreset, UserRecord
 from src.project_registry import ProjectRegistry
 from src.redaction import redact_text
 from src.repo_inspector import RepoInspector
@@ -69,6 +69,14 @@ from src.update_service import UpdateService
 
 PROJECT_ADD_KEY_PATTERN = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
 MODEL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _clip_text(text: str | None, limit: int = 120) -> str:
+    if text is None:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
 
 
 @dataclass(slots=True)
@@ -157,6 +165,10 @@ class CommandRouter:
             return self._handle_projects(ctx)
         if command == "/project-root":
             return self._handle_project_root(ctx, argument)
+        if command == "/project-template-root":
+            return self._handle_project_template_root(ctx, argument)
+        if command == "/project-templates":
+            return self._handle_project_templates(ctx)
         if command == "/project-add":
             return self._handle_project_add(ctx, argument)
         if command == "/project-disable":
@@ -729,13 +741,38 @@ class CommandRouter:
         parsed = self._parse_project_add_argument(argument)
         if parsed is None:
             return CommandResult(
-                "用法: /project-add <key> [abs_path] [name]\n也可以直接按引导逐步填写。",
+                "用法: /project-add <key> [abs_path] [name] "
+                "[--template <name>] [--mode normal|autopilot] [--autopilot-goal <text>]\n"
+                "也可以直接按引导逐步填写。",
                 metadata={"wizard": "project_add"},
             )
-        key, path, name = parsed
+        key = parsed.key
+        path = parsed.path
+        name = parsed.name
 
         if not PROJECT_ADD_KEY_PATTERN.match(key):
             return CommandResult("项目 key 非法。只允许字母数字/._-，长度 1-64。")
+        if parsed.default_run_mode not in {None, "normal", "autopilot"}:
+            return CommandResult("项目运行模式非法，只允许 normal 或 autopilot。")
+        if parsed.default_run_mode == "autopilot" and self.autopilot is None:
+            return CommandResult("当前未启用 autopilot，无法创建 Autopilot 项目。")
+
+        template: ProjectTemplatePreset | None = None
+        if parsed.template_name:
+            template = self.projects.get_project_template(parsed.template_name)
+            if template is None:
+                return CommandResult(f"项目模板不存在: {parsed.template_name}")
+
+        autopilot_goal = parsed.autopilot_goal.strip() if parsed.autopilot_goal else None
+        if parsed.default_run_mode == "autopilot" and not autopilot_goal:
+            autopilot_goal = template.default_autopilot_goal if template is not None else None
+        if autopilot_goal == "":
+            autopilot_goal = None
+        if parsed.default_run_mode == "autopilot" and not autopilot_goal:
+            return CommandResult(
+                "Autopilot 项目需要目标描述。\n"
+                "请使用 --autopilot-goal <text>，或在模板元数据里设置 default_autopilot_goal。"
+            )
         existing = self.projects.get_any(key)
         if existing is not None:
             if existing.is_active:
@@ -784,11 +821,16 @@ class CommandRouter:
         resolved_path, used_default_root = resolved_path_or_error
 
         try:
+            if template is not None:
+                self.projects.apply_project_template(template_key=template.key, target_path=resolved_path)
             self.projects.add_project(
                 key=key,
                 path=resolved_path,
                 name=name,
                 create_if_missing=True,
+                template_name=template.key if template is not None else None,
+                default_run_mode=parsed.default_run_mode,
+                default_autopilot_goal=autopilot_goal,
             )
         except ValueError as exc:
             return CommandResult(str(exc))
@@ -809,13 +851,28 @@ class CommandRouter:
                 project_id=project_id,
                 project=project,
             )
-        return CommandResult(
+        reply_lines = [
             "项目已新增并切换。\n"
             f"项目: {key}\n"
             f"路径: {resolved_path}\n"
-            f"目录来源: {'默认根目录' if used_default_root else '指定目录'}\n"
-            "可用 /status 查看状态。"
-        )
+            f"目录来源: {'默认根目录' if used_default_root else '指定目录'}",
+            f"模板: {template.name if template is not None else '未使用'}",
+            f"默认模式: {parsed.default_run_mode or 'normal'}",
+        ]
+        if parsed.default_run_mode == "autopilot" and project is not None and self.autopilot is not None:
+            run = self._start_project_autopilot(
+                ctx=ctx,
+                user=user,
+                project=project,
+                project_id=project_id,
+                goal=autopilot_goal or "",
+            )
+            reply_lines.append(f"Autopilot: 已启动 run #{run.id}")
+            reply_lines.append("可用 /autopilot-status 查看自治状态。")
+            return CommandResult("\n".join(reply_lines), metadata={"autopilot_run_id": run.id, "autopilot_run": run})
+
+        reply_lines.append("可用 /status 查看状态。")
+        return CommandResult("\n".join(reply_lines))
 
     def _handle_project_root(self, ctx: CommandContext, argument: str) -> CommandResult:
         user = self.tasks.ensure_user(ctx)
@@ -847,6 +904,65 @@ class CommandRouter:
             f"默认项目根目录已设置: {resolved}\n"
             "后续可用 /project-add <key> [name] 自动创建目录并新增项目。"
         )
+
+    def _handle_project_template_root(self, ctx: CommandContext, argument: str) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        text = argument.strip()
+        if not text:
+            current = getattr(self.projects, "project_template_root", None)
+            if current is None:
+                return CommandResult(
+                    "当前未设置项目模板根目录。\n"
+                    "请使用 /project-template-root <abs_path> 设置后，再用 /project-templates 查看可用模板。"
+                )
+            return CommandResult(f"项目模板根目录: {current}")
+
+        path = Path(text).expanduser()
+        if not path.is_absolute():
+            return CommandResult("项目模板根目录必须是绝对路径。")
+        try:
+            resolved = self.projects.set_project_template_root(path)
+        except ValueError as exc:
+            return CommandResult(str(exc))
+
+        self.audit.log(
+            action=audit_events.PROJECT_ROOT_UPDATED,
+            message="更新项目模板根目录",
+            user_id=user.id,
+            details={"path": str(resolved), "kind": "template_root"},
+        )
+        return CommandResult(
+            f"项目模板根目录已设置: {resolved}\n"
+            "后续可用 /project-templates 查看可用模板。"
+        )
+
+    def _handle_project_templates(self, ctx: CommandContext) -> CommandResult:
+        user = self.tasks.ensure_user(ctx)
+        templates = self.projects.list_project_templates()
+        current = getattr(self.projects, "project_template_root", None)
+        lines = ["【项目模板】"]
+        lines.append(f"模板根目录: {current or '未设置'}")
+        if not templates:
+            lines.append("当前没有可用模板。")
+            lines.append("下一步: 执行 /project-template-root <abs_path>，并在该目录下放置模板子目录。")
+        else:
+            lines.append("可用模板:")
+            for preset in templates[:20]:
+                description = f" · {preset.description}" if preset.description else ""
+                goal = (
+                    f" · 默认 Autopilot: {_clip_text(preset.default_autopilot_goal, 60)}"
+                    if preset.default_autopilot_goal
+                    else ""
+                )
+                lines.append(f"- {preset.key} ({preset.name}){description}{goal}")
+            lines.append("下一步: /project-add <key> --template <模板名> [--mode autopilot]")
+        self.audit.log(
+            action=audit_events.TEMPLATES_VIEWED,
+            message="查看项目模板列表",
+            user_id=user.id,
+            details={"count": len(templates)},
+        )
+        return CommandResult("\n".join(lines), metadata={"project_templates": templates})
 
     def _handle_project_disable(self, ctx: CommandContext, argument: str) -> CommandResult:
         user = self.tasks.ensure_user(ctx)
@@ -2754,23 +2870,65 @@ class CommandRouter:
             return int(first), tail.strip()
         return None, text
 
-    def _parse_project_add_argument(self, argument: str) -> tuple[str, Path | None, str] | None:
+    def _parse_project_add_argument(self, argument: str) -> ProjectAddRequest | None:
         text = argument.strip()
         if not text:
             return None
-        parts = text.split()
+        try:
+            parts = shlex.split(text)
+        except ValueError:
+            return None
+        if not parts:
+            return None
         key = parts[0].strip()
-        if len(parts) == 1:
-            return key, None, key
+        positionals: list[str] = []
+        template_name: str | None = None
+        default_run_mode: str | None = None
+        autopilot_goal: str | None = None
+        index = 1
+        while index < len(parts):
+            token = parts[index].strip()
+            if token == "--template":
+                index += 1
+                if index >= len(parts):
+                    return None
+                template_name = parts[index].strip() or None
+            elif token == "--mode":
+                index += 1
+                if index >= len(parts):
+                    return None
+                default_run_mode = parts[index].strip().lower() or None
+            elif token == "--autopilot-goal":
+                index += 1
+                if index >= len(parts):
+                    return None
+                autopilot_goal = parts[index].strip() or None
+            elif token.startswith("--"):
+                return None
+            else:
+                positionals.append(token)
+            index += 1
 
-        second = parts[1].strip()
-        if second.startswith("/") or second.startswith("~"):
-            path = Path(second)
-            display_name = " ".join(parts[2:]).strip() if len(parts) > 2 else key
-            return key, path, display_name
-
-        display_name = " ".join(parts[1:]).strip() or key
-        return key, None, display_name
+        path: Path | None = None
+        display_name = key
+        if positionals:
+            first = positionals[0].strip()
+            if first.startswith("/") or first.startswith("~"):
+                path = Path(first)
+                if len(positionals) > 1:
+                    display_name = " ".join(positionals[1:]).strip() or key
+            else:
+                display_name = " ".join(positionals).strip() or key
+        if autopilot_goal and default_run_mode is None:
+            default_run_mode = "autopilot"
+        return ProjectAddRequest(
+            key=key,
+            path=path,
+            name=display_name,
+            template_name=template_name,
+            default_run_mode=default_run_mode,
+            autopilot_goal=autopilot_goal,
+        )
 
     def _parse_github_clone_argument(self, argument: str) -> tuple[str | None, str | None]:
         text = argument.strip()
@@ -2804,6 +2962,40 @@ class CommandRouter:
                 "请先执行 /project-root <abs_path>，或使用 /project-add <key> <abs_path> [name]。"
             )
         return (default_root / key).expanduser().resolve(), True
+
+    def _start_project_autopilot(
+        self,
+        *,
+        ctx: CommandContext,
+        user: UserRecord,
+        project: ProjectConfig,
+        project_id: int,
+        goal: str,
+    ):
+        if self.autopilot is None:
+            raise ValueError("当前未启用 autopilot。")
+        run = self.autopilot.create_run(
+            project_id=project_id,
+            chat_id=ctx.telegram_chat_id,
+            created_by_user_id=user.id,
+            goal=goal.strip(),
+            max_cycles=100,
+        )
+        model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+        self.autopilot.start_run_loop(
+            project=project,
+            run_id=run.id,
+            model=model,
+            progress_callback=ctx.progress_callback,
+        )
+        self.audit.log(
+            action=audit_events.AUTOPILOT_CREATED,
+            message=f"创建 autopilot run #{run.id}",
+            user_id=user.id,
+            project_id=project_id,
+            details={"run_id": run.id, "source": "project_add"},
+        )
+        return self.autopilot.get_run(run_id=run.id) or run
 
     def _get_default_project_root(self) -> Path | None:
         if self.projects.default_project_root is not None:

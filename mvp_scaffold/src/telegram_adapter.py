@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 import random
+import shlex
 from threading import Lock
 import time
 
@@ -17,7 +18,7 @@ from telegram.request import HTTPXRequest
 
 from src import telegram_messages
 from src.formatters import format_upload_received
-from src.models import CommandContext, CommandResult
+from src.models import CommandContext, CommandResult, ProjectTemplatePreset
 from src.progress_reporter import ProgressReporter
 from src.telegram_sink import TelegramMessageSink, TelegramSendSpec
 from src.autopilot_store import AutopilotRunRecord
@@ -115,6 +116,7 @@ class TelegramBotService:
         "reject": "/reject",
         "resume": "/resume",
         "project_root_show": "/project-root",
+        "project_templates": "/project-templates",
         "project_disable_current": "/project-disable",
         "project_archive_current": "/project-archive",
         "ui_show": "/ui",
@@ -136,6 +138,7 @@ class TelegramBotService:
         "resume": "/resume",
         "skill_install": "/skill-install",
         "project_root": "/project-root",
+        "project_template_root": "/project-template-root",
         "use": "/use",
         "project_disable": "/project-disable",
         "project_archive": "/project-archive",
@@ -157,6 +160,7 @@ class TelegramBotService:
         "resume": "请输入恢复指令（示例: 12 继续修复测试）。下一条消息将按 /resume 执行。",
         "skill_install": "请输入 skill 来源。下一条消息将按 /skill-install 执行。",
         "project_root": "请输入默认项目根目录（示例: /Users/you/workspace/projects）。下一条消息将按 /project-root 执行。",
+        "project_template_root": "请输入项目模板根目录（示例: /Users/you/workspace/project_templates）。下一条消息将按 /project-template-root 执行。",
         "use": "请输入项目 key。下一条消息将按 /use 执行。",
         "project_disable": "请输入要停用的项目 key。下一条消息将按 /project-disable 执行。",
         "project_archive": "请输入要归档的项目 key。下一条消息将按 /project-archive 执行。",
@@ -1483,6 +1487,10 @@ class TelegramBotService:
             await self._handle_wizard_input(message, ctx, state, data.rsplit(":", 1)[1])
             await self._clear_inline_keyboard(message)
             return
+        if data.startswith("wizard:template:"):
+            await self._handle_wizard_input(message, ctx, state, data.split(":", 2)[2])
+            await self._clear_inline_keyboard(message)
+            return
         if data.startswith("wizard:preset:"):
             await self._handle_wizard_input(message, ctx, state, data.split(":", 2)[2])
             await self._clear_inline_keyboard(message)
@@ -1580,6 +1588,7 @@ class TelegramBotService:
                 step=step,
                 data=data,
                 default_root=getattr(self.router.projects, "default_project_root", None),
+                templates=self._project_template_presets(),
             )
 
         if kind == "schedule_add":
@@ -1602,6 +1611,39 @@ class TelegramBotService:
                         InlineKeyboardButton(text="默认目录", callback_data="wizard:default"),
                         InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
                     ]]
+                )
+            if step == "template":
+                templates = self._project_template_presets()
+                rows: list[list[InlineKeyboardButton]] = []
+                row: list[InlineKeyboardButton] = []
+                for preset in templates[:6]:
+                    row.append(
+                        InlineKeyboardButton(
+                            text=preset.key,
+                            callback_data=f"wizard:template:{preset.key}",
+                        )
+                    )
+                    if len(row) == 2:
+                        rows.append(row)
+                        row = []
+                if row:
+                    rows.append(row)
+                rows.append(
+                    [
+                        InlineKeyboardButton(text="跳过模板", callback_data="wizard:skip"),
+                        InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
+                    ]
+                )
+                return InlineKeyboardMarkup(rows)
+            if step == "mode":
+                return InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(text="normal", callback_data="wizard:mode:normal"),
+                            InlineKeyboardButton(text="autopilot", callback_data="wizard:mode:autopilot"),
+                        ],
+                        [InlineKeyboardButton(text="取消", callback_data="wizard:cancel")],
+                    ]
                 )
             if step == "name":
                 return InlineKeyboardMarkup(
@@ -1777,11 +1819,34 @@ class TelegramBotService:
                     if getattr(self.router.projects, "default_project_root", None) is None:
                         return None
                     data["path"] = ""
-                    return {"kind": kind, "step": "name", "data": data}
+                    return {"kind": kind, "step": "template", "data": data}
                 if text.startswith("/") or text.startswith("~"):
                     data["path"] = text
-                    return {"kind": kind, "step": "name", "data": data}
+                    return {"kind": kind, "step": "template", "data": data}
                 return None
+            if step == "template":
+                if lowered in {item.lower() for item in self._WIZARD_SKIP_TOKENS}:
+                    data["template_name"] = ""
+                    return {"kind": kind, "step": "mode", "data": data}
+                preset = self._find_project_template(text)
+                if preset is None:
+                    return None
+                data["template_name"] = preset.key
+                if preset.default_autopilot_goal and not data.get("autopilot_goal"):
+                    data["autopilot_goal"] = preset.default_autopilot_goal
+                return {"kind": kind, "step": "mode", "data": data}
+            if step == "mode":
+                if lowered not in {"normal", "autopilot"}:
+                    return None
+                data["default_run_mode"] = lowered
+                if lowered == "autopilot" and not data.get("autopilot_goal"):
+                    return {"kind": kind, "step": "goal", "data": data}
+                return {"kind": kind, "step": "name", "data": data}
+            if step == "goal":
+                if not text.strip():
+                    return None
+                data["autopilot_goal"] = text.strip()
+                return {"kind": kind, "step": "name", "data": data}
             if step == "name":
                 data["name"] = "" if lowered in {item.lower() for item in self._WIZARD_SKIP_TOKENS} else text
                 return {"kind": kind, "step": "confirm", "data": data}
@@ -1833,9 +1898,18 @@ class TelegramBotService:
         if kind == "project_add":
             parts = ["/project-add", str(data["key"])]
             if data.get("path"):
-                parts.append(str(data["path"]))
+                parts.append(shlex.quote(str(data["path"])))
+            if data.get("template_name"):
+                parts.append("--template")
+                parts.append(shlex.quote(str(data["template_name"])))
+            if data.get("default_run_mode"):
+                parts.append("--mode")
+                parts.append(str(data["default_run_mode"]))
+            if data.get("autopilot_goal"):
+                parts.append("--autopilot-goal")
+                parts.append(shlex.quote(str(data["autopilot_goal"])))
             if data.get("name"):
-                parts.append(str(data["name"]))
+                parts.append(shlex.quote(str(data["name"])))
             return " ".join(parts)
         if kind == "schedule_add":
             return f"/schedule-add {data['hhmm']} {data['mode']} {data['text']}"
@@ -1848,6 +1922,21 @@ class TelegramBotService:
             note = str(data.get("note") or "用户拒绝").strip() or "用户拒绝"
             return f"/reject {data['approval_id']} {note}"
         return ""
+
+    def _project_template_presets(self) -> list[ProjectTemplatePreset]:
+        projects = getattr(self.router, "projects", None)
+        if projects is None or not hasattr(projects, "list_project_templates"):
+            return []
+        return list(projects.list_project_templates())
+
+    def _find_project_template(self, text: str) -> ProjectTemplatePreset | None:
+        normalized = text.strip()
+        if not normalized:
+            return None
+        for preset in self._project_template_presets():
+            if preset.key == normalized or preset.name == normalized:
+                return preset
+        return None
 
     def _project_shortcuts_markup(self, recent_projects: list[str] | None) -> InlineKeyboardMarkup | ReplyKeyboardMarkup:
         return self.views.project_shortcuts_markup(recent_projects)

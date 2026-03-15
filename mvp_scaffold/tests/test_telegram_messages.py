@@ -9,5 +9,5 @@ def test_prompt_mode_hint_appends_help() -> None:
 
 def test_project_add_prompt_uses_default_root_when_present() -> None:
     text = telegram_messages.project_add_prompt("key", {}, Path("/tmp/projects"))
-    assert "项目新增向导 1/4" in text
+    assert "项目新增向导 1/7" in text
     assert "默认根目录: /tmp/projects" in text

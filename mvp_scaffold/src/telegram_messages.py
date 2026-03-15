@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from src.models import ProjectTemplatePreset
+
 
 def internal_request_error() -> str:
     return "Internal error while handling request."
@@ -63,27 +65,64 @@ def wizard_project_requirement() -> str:
     return "请先选择项目，再使用这个向导。"
 
 
-def project_add_prompt(step: str, data: dict, default_root: Path | None) -> str:
+def project_add_prompt(
+    step: str,
+    data: dict,
+    default_root: Path | None,
+    templates: list[ProjectTemplatePreset] | None = None,
+) -> str:
+    template_map = {preset.key: preset for preset in (templates or [])}
     if step == "key":
         root_hint = f"\n默认根目录: {default_root}" if default_root else "\n当前未设置默认根目录。"
         return (
-            "项目新增向导 1/4\n"
+            "项目新增向导 1/7\n"
             "请输入项目 key。\n"
             "要求: 仅字母数字/._-，长度 1-64。"
             f"{root_hint}\n"
             "发送“取消”可退出。"
         )
     if step == "path":
-        return "项目新增向导 2/4\n请输入项目绝对路径。\n如果要使用默认根目录，请回复“默认”。"
+        return "项目新增向导 2/7\n请输入项目绝对路径。\n如果要使用默认根目录，请回复“默认”。"
+    if step == "template":
+        if templates:
+            template_lines = [f"- {preset.key}: {preset.description or preset.name}" for preset in templates[:8]]
+            return (
+                "项目新增向导 3/7\n"
+                "请选择项目模板。\n"
+                "可直接输入模板 key，或点下面按钮；如果不需要模板，请回复“跳过”。\n"
+                + "\n".join(template_lines)
+            )
+        return (
+            "项目新增向导 3/7\n"
+            "当前没有可用项目模板。\n"
+            "请回复“跳过”，或先设置 /project-template-root。"
+        )
+    if step == "mode":
+        return (
+            "项目新增向导 4/7\n"
+            "请选择项目模式：\n"
+            "- normal: 普通项目，仅创建并切换\n"
+            "- autopilot: 创建后自动启动长期任务"
+        )
+    if step == "goal":
+        return "项目新增向导 5/7\n请输入 Autopilot 目标。\n创建完成后会立即按这个目标启动。"
     if step == "name":
-        return "项目新增向导 3/4\n请输入项目显示名称。\n如果要直接使用 key，请回复“跳过”。"
+        return "项目新增向导 6/7\n请输入项目显示名称。\n如果要直接使用 key，请回复“跳过”。"
 
     path_text = data.get("path") or "默认根目录"
     name_text = data.get("name") or data.get("key") or "未设置"
+    template_name = data.get("template_name") or "未使用"
+    if template_name in template_map:
+        template_name = f"{template_name} ({template_map[template_name].name})"
+    mode_text = data.get("default_run_mode") or "normal"
+    goal_text = data.get("autopilot_goal") or "未设置"
     return (
-        "项目新增向导 4/4\n"
+        "项目新增向导 7/7\n"
         f"key: {data.get('key')}\n"
         f"路径: {path_text}\n"
+        f"模板: {template_name}\n"
+        f"模式: {mode_text}\n"
+        f"Autopilot 目标: {goal_text}\n"
         f"名称: {name_text}\n"
         "回复“确认”执行，回复“取消”放弃。"
     )

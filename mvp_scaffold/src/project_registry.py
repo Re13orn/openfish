@@ -3,9 +3,10 @@
 from datetime import datetime
 from pathlib import Path
 import re
+import shutil
 import yaml
 
-from src.models import ProjectConfig
+from src.models import ProjectConfig, ProjectTemplatePreset
 
 
 PROJECT_KEY_PATTERN = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
@@ -18,15 +19,20 @@ class ProjectRegistry:
         self.config_path = config_path
         self.projects: dict[str, ProjectConfig] = {}
         self.default_project_root: Path | None = None
+        self.project_template_root: Path | None = None
 
     def load(self) -> None:
         data = self._read_config()
         raw_projects = data.get("projects", {})
         self.projects = {}
         self.default_project_root = None
+        self.project_template_root = None
         default_root_raw = data.get("default_project_root")
         if isinstance(default_root_raw, str) and default_root_raw.strip():
             self.default_project_root = self._resolve_project_path(default_root_raw.strip())
+        template_root_raw = data.get("project_template_root")
+        if isinstance(template_root_raw, str) and template_root_raw.strip():
+            self.project_template_root = self._resolve_project_path(template_root_raw.strip())
 
         for key, value in raw_projects.items():
             if not isinstance(value, dict):
@@ -50,6 +56,9 @@ class ProjectRegistry:
                 allowed_directories=allowed_directories,
                 memory_seed_summary=str(summary_seed).strip() if summary_seed else None,
                 seed_notes=[str(item).strip() for item in notes_seed if str(item).strip()],
+                template_name=self._normalize_optional_text(value.get("template_name")),
+                default_run_mode=self._normalize_optional_text(value.get("default_run_mode")),
+                default_autopilot_goal=self._normalize_optional_text(value.get("default_autopilot_goal")),
                 is_active=is_active,
             )
 
@@ -96,6 +105,9 @@ class ProjectRegistry:
         path: Path,
         name: str | None = None,
         create_if_missing: bool = False,
+        template_name: str | None = None,
+        default_run_mode: str | None = None,
+        default_autopilot_goal: str | None = None,
     ) -> None:
         normalized_key = key.strip()
         if not PROJECT_KEY_PATTERN.match(normalized_key):
@@ -121,6 +133,9 @@ class ProjectRegistry:
             "name": name or normalized_key,
             "path": str(resolved_path),
             "allowed_directories": [str(resolved_path)],
+            "template_name": self._normalize_optional_text(template_name),
+            "default_run_mode": self._normalize_optional_text(default_run_mode),
+            "default_autopilot_goal": self._normalize_optional_text(default_autopilot_goal),
             "is_active": True,
         }
         self._write_config(data)
@@ -141,6 +156,73 @@ class ProjectRegistry:
         self._write_config(data)
         self.load()
         return resolved
+
+    def set_project_template_root(self, root_path: Path) -> Path:
+        normalized = root_path.expanduser()
+        if not normalized.is_absolute():
+            raise ValueError("项目模板根目录必须是绝对路径。")
+        resolved = normalized.resolve()
+        try:
+            resolved.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ValueError(f"无法创建项目模板根目录: {resolved} ({exc})") from exc
+
+        data = self._read_config()
+        data["project_template_root"] = str(resolved)
+        self._write_config(data)
+        self.load()
+        return resolved
+
+    def list_project_templates(self) -> list[ProjectTemplatePreset]:
+        root = self.project_template_root
+        if root is None or not root.exists() or not root.is_dir():
+            return []
+        presets: list[ProjectTemplatePreset] = []
+        for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+            if not child.is_dir():
+                continue
+            metadata = self._read_template_metadata(child)
+            key = self._normalize_optional_text(metadata.get("key")) or child.name
+            presets.append(
+                ProjectTemplatePreset(
+                    key=key,
+                    name=self._normalize_optional_text(metadata.get("name")) or child.name,
+                    path=child.resolve(),
+                    description=self._normalize_optional_text(metadata.get("description")),
+                    default_autopilot_goal=self._normalize_optional_text(metadata.get("default_autopilot_goal")),
+                )
+            )
+        return presets
+
+    def get_project_template(self, key: str) -> ProjectTemplatePreset | None:
+        normalized = key.strip()
+        if not normalized:
+            return None
+        for preset in self.list_project_templates():
+            if preset.key == normalized or preset.name == normalized:
+                return preset
+        return None
+
+    def apply_project_template(self, *, template_key: str, target_path: Path) -> ProjectTemplatePreset:
+        preset = self.get_project_template(template_key)
+        if preset is None:
+            raise ValueError(f"项目模板不存在: {template_key}")
+        resolved_target = target_path.expanduser()
+        if not resolved_target.is_absolute():
+            raise ValueError("项目路径必须是绝对路径。")
+        resolved_target = resolved_target.resolve()
+        resolved_target.mkdir(parents=True, exist_ok=True)
+        if any(resolved_target.iterdir()):
+            raise ValueError(f"项目目录非空，无法套用模板: {resolved_target}")
+        for child in preset.path.iterdir():
+            if child.name == ".openfish-template.yaml":
+                continue
+            destination = resolved_target / child.name
+            if child.is_dir():
+                shutil.copytree(child, destination)
+            else:
+                shutil.copy2(child, destination)
+        return preset
 
     def set_project_active(self, *, key: str, is_active: bool) -> bool:
         data = self._read_config()
@@ -177,6 +259,21 @@ class ProjectRegistry:
         if not isinstance(data, dict):
             raise ValueError("projects config 必须是 YAML 对象。")
         return data
+
+    def _read_template_metadata(self, template_dir: Path) -> dict:
+        metadata_path = template_dir / ".openfish-template.yaml"
+        if not metadata_path.exists():
+            return {}
+        data = yaml.safe_load(metadata_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            raise ValueError(f"模板元数据必须是 YAML 对象: {metadata_path}")
+        return data
+
+    def _normalize_optional_text(self, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
 
     def _write_config(self, data: dict) -> None:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)

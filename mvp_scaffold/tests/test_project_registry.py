@@ -89,3 +89,72 @@ def test_project_registry_add_project_can_create_missing_directory(tmp_path: Pat
     loaded = registry.get("demo_new")
     assert loaded is not None
     assert loaded.path == target.resolve()
+
+
+def test_project_registry_loads_template_root_and_project_metadata(tmp_path: Path) -> None:
+    config_path = tmp_path / "projects.yaml"
+    template_root = tmp_path / "templates"
+    project_dir = tmp_path / "demo"
+    template_root.mkdir()
+    project_dir.mkdir()
+    config_path.write_text(
+        f"""
+default_project_root: {tmp_path / "workspace"}
+project_template_root: {template_root}
+projects:
+  demo:
+    path: {project_dir}
+    allowed_directories:
+      - {project_dir}
+    template_name: recon
+    default_run_mode: autopilot
+    default_autopilot_goal: 收集信息
+""".strip(),
+        encoding="utf-8",
+    )
+
+    registry = ProjectRegistry(config_path)
+    registry.load()
+    project = registry.get("demo")
+
+    assert project is not None
+    assert registry.project_template_root == template_root.resolve()
+    assert project.template_name == "recon"
+    assert project.default_run_mode == "autopilot"
+    assert project.default_autopilot_goal == "收集信息"
+
+
+def test_project_registry_lists_and_applies_templates(tmp_path: Path) -> None:
+    config_path = tmp_path / "projects.yaml"
+    config_path.write_text("projects: {}\n", encoding="utf-8")
+    template_root = tmp_path / "templates"
+    preset_dir = template_root / "recon"
+    nested_dir = preset_dir / "notes"
+    nested_dir.mkdir(parents=True)
+    (preset_dir / ".openfish-template.yaml").write_text(
+        """
+name: 自动化信息收集
+description: 收集域名、子域名和 URL
+default_autopilot_goal: 对目标进行自动化信息收集
+""".strip(),
+        encoding="utf-8",
+    )
+    (preset_dir / "README.md").write_text("preset", encoding="utf-8")
+    (nested_dir / "targets.txt").write_text("example.com", encoding="utf-8")
+
+    registry = ProjectRegistry(config_path)
+    registry.load()
+    updated = registry.set_project_template_root(template_root)
+    assert updated == template_root.resolve()
+
+    presets = registry.list_project_templates()
+    assert [preset.key for preset in presets] == ["recon"]
+    assert presets[0].default_autopilot_goal == "对目标进行自动化信息收集"
+
+    target = tmp_path / "workspace" / "demo"
+    applied = registry.apply_project_template(template_key="recon", target_path=target)
+
+    assert applied.key == "recon"
+    assert (target / "README.md").read_text(encoding="utf-8") == "preset"
+    assert (target / "notes" / "targets.txt").read_text(encoding="utf-8") == "example.com"
+    assert not (target / ".openfish-template.yaml").exists()

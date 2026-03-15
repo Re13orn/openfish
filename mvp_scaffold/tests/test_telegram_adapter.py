@@ -10,7 +10,7 @@ from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 from telegram.request import HTTPXRequest
 
 from src.autopilot_store import AutopilotRunRecord
-from src.models import CommandResult
+from src.models import CommandResult, ProjectTemplatePreset
 from src.telegram_adapter import TelegramBotService
 
 
@@ -132,7 +132,18 @@ class WizardTasksStub:
 class WizardRouterStub:
     def __init__(self) -> None:
         self.tasks = WizardTasksStub()
-        self.projects = SimpleNamespace(default_project_root=Path("/tmp/projects"))
+        self.projects = SimpleNamespace(
+            default_project_root=Path("/tmp/projects"),
+            list_project_templates=lambda: [
+                ProjectTemplatePreset(
+                    key="recon",
+                    name="自动化信息收集",
+                    path=Path("/tmp/project_templates/recon"),
+                    description="信息收集目录模板",
+                    default_autopilot_goal="对目标进行自动化信息收集",
+                )
+            ],
+        )
         latest_run = AutopilotRunRecord(
             id=1,
             project_id=101,
@@ -511,7 +522,7 @@ def test_activate_project_add_wizard_persists_state(monkeypatch) -> None:
     asyncio.run(service._activate_prompt(object(), ctx, "project_add"))
 
     assert router.tasks.state == {"kind": "project_add", "step": "key", "data": {}}
-    assert any("项目新增向导 1/4" in text for text in sent_texts)
+    assert any("项目新增向导 1/7" in text for text in sent_texts)
 
 
 def test_activate_approve_prompt_starts_approval_note_wizard(monkeypatch) -> None:
@@ -672,11 +683,11 @@ def test_wizard_default_callback_advances_project_add(monkeypatch) -> None:
 
     assert router.tasks.state == {
         "kind": "project_add",
-        "step": "name",
+        "step": "template",
         "data": {"key": "demo", "path": ""},
     }
     assert message.edit_reply_markup_calls == [None]
-    assert any("项目新增向导 3/4" in text for text in sent_texts)
+    assert any("项目新增向导 3/7" in text for text in sent_texts)
 
 
 def test_project_add_path_step_accepts_quoted_default(monkeypatch) -> None:
@@ -714,10 +725,10 @@ def test_project_add_path_step_accepts_quoted_default(monkeypatch) -> None:
     assert handled is True
     assert router.tasks.state == {
         "kind": "project_add",
-        "step": "name",
+        "step": "template",
         "data": {"key": "demo", "path": ""},
     }
-    assert any("项目新增向导 3/4" in text for text in sent_texts)
+    assert any("项目新增向导 3/7" in text for text in sent_texts)
 
 
 def test_on_text_message_treats_absolute_path_as_project_wizard_input(monkeypatch) -> None:
@@ -753,10 +764,101 @@ def test_on_text_message_treats_absolute_path_as_project_wizard_input(monkeypatc
 
     assert router.tasks.state == {
         "kind": "project_add",
-        "step": "name",
+        "step": "template",
         "data": {"key": "demo", "path": "/workspace/projects/test1"},
     }
-    assert any("项目新增向导 3/4" in text for text in sent_texts)
+    assert any("项目新增向导 3/7" in text for text in sent_texts)
+
+
+def test_project_add_template_step_accepts_template_key() -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+
+    next_state = service._advance_wizard_state(
+        {"kind": "project_add", "step": "template", "data": {"key": "demo", "path": ""}},
+        "recon",
+    )
+
+    assert next_state == {
+        "kind": "project_add",
+        "step": "mode",
+        "data": {
+            "key": "demo",
+            "path": "",
+            "template_name": "recon",
+            "autopilot_goal": "对目标进行自动化信息收集",
+        },
+    }
+
+
+def test_project_add_mode_autopilot_skips_goal_when_template_has_default_goal() -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+
+    next_state = service._advance_wizard_state(
+        {
+            "kind": "project_add",
+            "step": "mode",
+            "data": {
+                "key": "demo",
+                "path": "",
+                "template_name": "recon",
+                "autopilot_goal": "对目标进行自动化信息收集",
+            },
+        },
+        "autopilot",
+    )
+
+    assert next_state == {
+        "kind": "project_add",
+        "step": "name",
+        "data": {
+            "key": "demo",
+            "path": "",
+            "template_name": "recon",
+            "autopilot_goal": "对目标进行自动化信息收集",
+            "default_run_mode": "autopilot",
+        },
+    }
+
+
+def test_project_add_wizard_command_includes_template_and_autopilot_flags() -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+
+    command = service._wizard_command(
+        {
+            "kind": "project_add",
+            "data": {
+                "key": "demo",
+                "path": "/workspace/projects/demo",
+                "template_name": "recon",
+                "default_run_mode": "autopilot",
+                "autopilot_goal": "收集域名和子域名",
+                "name": "Demo Recon",
+            },
+        }
+    )
+
+    assert command.startswith("/project-add demo ")
+    assert "--template recon" in command
+    assert "--mode autopilot" in command
+    assert "--autopilot-goal '收集域名和子域名'" in command or '--autopilot-goal "收集域名和子域名"' in command
 
 
 def test_reject_note_wizard_preset_advances_to_confirm(monkeypatch) -> None:

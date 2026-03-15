@@ -117,6 +117,8 @@ def format_help(mode: str = "verbose") -> str:
         "\n"
         "项目：\n"
         "/project-root [abs_path]\n"
+        "/project-template-root [abs_path]\n"
+        "/project-templates\n"
         "/project-add <key> [abs_path] [name]\n"
         "/project-disable <key>\n"
         "/project-archive <key>\n"

@@ -19,7 +19,33 @@ class ProjectConfig:
     allowed_directories: list[Path] | None = None
     memory_seed_summary: str | None = None
     seed_notes: list[str] | None = None
+    template_name: str | None = None
+    default_run_mode: str | None = None
+    default_autopilot_goal: str | None = None
     is_active: bool = True
+
+
+@dataclass(slots=True)
+class ProjectTemplatePreset:
+    """Project directory preset loaded from the template root."""
+
+    key: str
+    name: str
+    path: Path
+    description: str | None = None
+    default_autopilot_goal: str | None = None
+
+
+@dataclass(slots=True)
+class ProjectAddRequest:
+    """Normalized /project-add arguments."""
+
+    key: str
+    path: Path | None
+    name: str
+    template_name: str | None = None
+    default_run_mode: str | None = None
+    autopilot_goal: str | None = None
 
 
 @dataclass(slots=True)

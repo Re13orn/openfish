@@ -9,7 +9,7 @@ from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.codex_runner import CodexRunResult
 from src.github_repo_service import GitHubCloneResult, GitHubRepoService
 from src.mcp_service import McpDetailResult, McpListResult, McpServerDetail, McpServerSummary
-from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
+from src.models import CommandContext, CommandResult, ProjectConfig, ProjectTemplatePreset, UserRecord
 from src.repo_inspector import RepoState
 from src.router import CommandRouter
 from src.skills_service import SkillInstallResult, SkillsListResult
@@ -53,6 +53,7 @@ class AuditStub:
 class ProjectsStub:
     def __init__(self) -> None:
         self.default_project_root = Path("/tmp/openfish_projects")
+        self.project_template_root = Path("/tmp/project_templates")
         self.projects = {
             "demo": ProjectConfig(
                 key="demo",
@@ -61,6 +62,15 @@ class ProjectsStub:
                 allowed_directories=[Path("/tmp")],
             )
         }
+        self.templates = [
+            ProjectTemplatePreset(
+                key="recon",
+                name="自动化信息收集",
+                path=Path("/tmp/project_templates/recon"),
+                description="信息收集目录模板",
+                default_autopilot_goal="对目标进行自动化信息收集",
+            )
+        ]
 
     def get(self, key: str) -> ProjectConfig | None:
         return self.projects.get(key)
@@ -84,6 +94,9 @@ class ProjectsStub:
         path: Path,
         name: str | None = None,
         create_if_missing: bool = False,
+        template_name: str | None = None,
+        default_run_mode: str | None = None,
+        default_autopilot_goal: str | None = None,
     ) -> None:
         _ = create_if_missing
         self.projects[key] = ProjectConfig(
@@ -91,12 +104,35 @@ class ProjectsStub:
             name=name or key,
             path=path,
             allowed_directories=[path],
+            template_name=template_name,
+            default_run_mode=default_run_mode,
+            default_autopilot_goal=default_autopilot_goal,
         )
 
     def set_default_project_root(self, root_path: Path) -> Path:
         resolved = root_path.expanduser().resolve()
         self.default_project_root = resolved
         return resolved
+
+    def set_project_template_root(self, root_path: Path) -> Path:
+        resolved = root_path.expanduser().resolve()
+        self.project_template_root = resolved
+        return resolved
+
+    def list_project_templates(self) -> list[ProjectTemplatePreset]:
+        return list(self.templates)
+
+    def get_project_template(self, key: str) -> ProjectTemplatePreset | None:
+        for preset in self.templates:
+            if preset.key == key or preset.name == key:
+                return preset
+        return None
+
+    def apply_project_template(self, *, template_key: str, target_path: Path) -> ProjectTemplatePreset:
+        _ = target_path
+        preset = self.get_project_template(template_key)
+        assert preset is not None
+        return preset
 
     def set_project_active(self, *, key: str, is_active: bool) -> bool:
         project = self.projects.get(key)
@@ -2424,6 +2460,54 @@ def test_project_root_show_and_set() -> None:
     assert "new_projects_root" in updated.reply_text
     codes = [event[0] for event in audit.events]
     assert audit_events.PROJECT_ROOT_UPDATED in codes
+
+
+def test_project_template_root_show_and_set() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    show = router.handle(_ctx("/project-template-root"))
+    updated = router.handle(_ctx("/project-template-root /tmp/new_project_templates"))
+
+    assert "项目模板根目录:" in show.reply_text
+    assert "项目模板根目录已设置:" in updated.reply_text
+    assert "new_project_templates" in updated.reply_text
+
+
+def test_project_templates_lists_available_presets() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    result = router.handle(_ctx("/project-templates"))
+
+    assert "【项目模板】" in result.reply_text
+    assert "recon" in result.reply_text
+    assert "自动化信息收集" in result.reply_text
+
+
+def test_project_add_can_create_autopilot_project_from_template() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(
+        _ctx("/project-add target_wallet --template recon --mode autopilot \"OneKey Wallet\"")
+    )
+
+    assert "Autopilot: 已启动 run #1" in result.reply_text
+    created = router.projects.get("target_wallet")
+    assert created is not None
+    assert created.template_name == "recon"
+    assert created.default_run_mode == "autopilot"
+    assert created.default_autopilot_goal == "对目标进行自动化信息收集"
+    assert autopilot.created_goals == ["对目标进行自动化信息收集"]
+    assert autopilot.started_run_ids == [1]
 
 
 def test_memory_supports_pagination_argument() -> None:

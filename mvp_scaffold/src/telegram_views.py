@@ -89,6 +89,10 @@ class TelegramViewFactory:
                     InlineKeyboardButton(text="设置默认根目录", callback_data="prompt:project_root"),
                 ],
                 [
+                    InlineKeyboardButton(text="模板列表", callback_data="cmd:project_templates"),
+                    InlineKeyboardButton(text="设置模板目录", callback_data="prompt:project_template_root"),
+                ],
+                [
                     InlineKeyboardButton(text="查看默认根目录", callback_data="cmd:project_root_show"),
                     InlineKeyboardButton(text="手输切换", callback_data="prompt:use"),
                 ],
@@ -199,6 +203,10 @@ class TelegramViewFactory:
                     [
                         InlineKeyboardButton(text="查看根目录", callback_data="cmd:project_root_show"),
                         InlineKeyboardButton(text="设置根目录", callback_data="prompt:project_root"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="项目模板", callback_data="cmd:project_templates"),
+                        InlineKeyboardButton(text="模板目录", callback_data="prompt:project_template_root"),
                     ],
                     [InlineKeyboardButton(text="清除输入引导", callback_data="prompt:clear")],
                 ]

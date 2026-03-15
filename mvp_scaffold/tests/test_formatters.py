@@ -287,6 +287,8 @@ def test_help_contains_last_and_retry() -> None:
     assert "/last" in text
     assert "/retry [附加说明]" in text
     assert "/project-root [abs_path]" in text
+    assert "/project-template-root [abs_path]" in text
+    assert "/project-templates" in text
     assert "/skills" in text
     assert "/skill-install <source>" in text
     assert "/mcp [name]" in text
