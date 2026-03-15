@@ -65,6 +65,18 @@ class _StreamProgressState:
             return list(self._output_lines), self._output_version
 
 
+@dataclass(slots=True)
+class _ChatTarget:
+    chat_id: str
+    bot: object
+
+    def get_bot(self):  # noqa: ANN201
+        return self.bot
+
+    async def reply_text(self, text: str, **kwargs):  # noqa: ANN003, ANN201
+        return await self.bot.send_message(chat_id=self.chat_id, text=text, **kwargs)
+
+
 class TelegramBotService:
     """Runs Telegram long polling and forwards text messages to the router."""
 
@@ -202,7 +214,12 @@ class TelegramBotService:
             delivery_tracker=delivery_tracker,
         )
         self._app: Application | None = None
+        self._app_loop: asyncio.AbstractEventLoop | None = None
         self._pending_command_by_chat: dict[str, str] = {}
+        self._autopilot_stream_tasks: dict[int, asyncio.Task[None]] = {}
+        autopilot = getattr(router, "autopilot", None)
+        if autopilot is not None and hasattr(autopilot, "set_raw_output_observer"):
+            autopilot.set_raw_output_observer(self._on_autopilot_raw_output)
 
     def run_polling(self) -> None:
         retry_delay = float(getattr(self.config, "telegram_reconnect_initial_delay_seconds", 2.0))
@@ -280,6 +297,7 @@ class TelegramBotService:
         app.add_error_handler(self._on_application_error)
 
     async def _on_post_init(self, app: Application) -> None:
+        self._app_loop = asyncio.get_running_loop()
         await self._deliver_pending_system_notifications(app)
 
     async def _deliver_pending_system_notifications(self, app: Application) -> None:
@@ -973,6 +991,9 @@ class TelegramBotService:
     def _should_stream_progress(self, chat_id: str, command: str) -> bool:
         if not self._should_send_typing(command):
             return False
+        return self._chat_uses_stream_mode(chat_id)
+
+    def _chat_uses_stream_mode(self, chat_id: str) -> bool:
         if not hasattr(self.router, "tasks"):
             return False
         return self.router.tasks.get_chat_ui_mode(chat_id=chat_id) == "stream"
@@ -1045,6 +1066,77 @@ class TelegramBotService:
                 edit_window_seconds=float(getattr(self.config, "telegram_stream_edit_window_seconds", 3600.0)),
             ),
         )
+
+    def _on_autopilot_raw_output(self, run_id: int) -> None:
+        if self._app is None or self._app_loop is None:
+            return
+        run = getattr(self.router, "autopilot", None)
+        if run is None:
+            return
+        record = run.get_run(run_id=run_id)
+        if record is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._schedule_autopilot_stream_update(run_id=run_id, chat_id=record.chat_id),
+                self._app_loop,
+            )
+        except RuntimeError:
+            return
+
+    async def _schedule_autopilot_stream_update(self, *, run_id: int, chat_id: str) -> None:
+        existing = self._autopilot_stream_tasks.get(run_id)
+        if existing is not None and not existing.done():
+            return
+        task = asyncio.create_task(self._flush_autopilot_stream_update(run_id=run_id, chat_id=chat_id))
+        self._autopilot_stream_tasks[run_id] = task
+
+    async def _flush_autopilot_stream_update(self, *, run_id: int, chat_id: str) -> None:
+        try:
+            await asyncio.sleep(0.8)
+            if not self._chat_uses_stream_mode(chat_id):
+                return
+            autopilot = getattr(self.router, "autopilot", None)
+            if autopilot is None or self._app is None:
+                return
+            run = autopilot.get_run(run_id=run_id)
+            if run is None:
+                return
+            runtime = autopilot.get_runtime_snapshot(run_id=run_id)
+            raw_output_lines = autopilot.get_recent_output(run_id=run_id, limit=10)
+            if not raw_output_lines:
+                return
+            target = _ChatTarget(chat_id=chat_id, bot=self._app.bot)
+            context = f"autopilot raw {chat_id}:{run_id}"
+            lines = [
+                "Autopilot 原始流",
+                f"Run: #{run.id}",
+                f"状态: {run.status}",
+            ]
+            if runtime is not None and runtime.actor:
+                lines.append(f"当前执行者: {runtime.actor}")
+            lines.extend(raw_output_lines[-8:])
+            text = "\n".join(lines)
+            if await self.sink.send_message_draft(
+                target,
+                draft_id=self.sink.build_draft_id(context=context),
+                text=text,
+                context=context,
+            ):
+                return
+            await self.sink.send(
+                target,
+                TelegramSendSpec(
+                    text=text,
+                    context=context,
+                    edit_context=context,
+                    edit_window_seconds=float(
+                        getattr(self.config, "telegram_autopilot_edit_window_seconds", 300.0)
+                    ),
+                ),
+            )
+        finally:
+            self._autopilot_stream_tasks.pop(run_id, None)
 
     async def _send_projects_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
         user = self.router.tasks.ensure_user(ctx)

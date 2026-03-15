@@ -1,5 +1,6 @@
 """Autopilot supervisor-worker orchestration for long-running tasks."""
 
+from collections import deque
 from dataclasses import dataclass
 import json
 import re
@@ -16,6 +17,10 @@ from src.task_store import TaskStore
 
 
 JSON_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+COMPLETION_CLAIM_PATTERN = re.compile(
+    r"\b(done|complete|completed|finished|nothing left|ready to ship|verified)\b|已完成|完成了|做完了|搞定了|全部完成|没有更多",
+    re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -34,6 +39,13 @@ class _RunExecutionState:
     actor: str | None = None
     thread: Thread | None = None
     process_started_at: float | None = None
+    raw_output_lines: deque[str] | None = None
+    output_version: int = 0
+    last_output_at: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.raw_output_lines is None:
+            self.raw_output_lines = deque(maxlen=40)
 
 
 @dataclass(slots=True)
@@ -43,6 +55,8 @@ class AutopilotRuntimeSnapshot:
     pid: int | None
     process_started_at: float | None
     thread_alive: bool
+    output_version: int
+    last_output_at: float | None
 
 
 class AutopilotService:
@@ -55,6 +69,10 @@ class AutopilotService:
         self.codex = codex
         self._run_state_guard = Lock()
         self._run_states: dict[int, _RunExecutionState] = {}
+        self._raw_output_observer = None
+
+    def set_raw_output_observer(self, observer) -> None:  # noqa: ANN001
+        self._raw_output_observer = observer
 
     def create_run(
         self,
@@ -113,7 +131,17 @@ class AutopilotService:
                 pid=pid,
                 process_started_at=state.process_started_at,
                 thread_alive=thread_alive,
+                output_version=state.output_version,
+                last_output_at=state.last_output_at,
             )
+
+    def get_recent_output(self, *, run_id: int, limit: int = 12) -> list[str]:
+        with self._run_state_guard:
+            state = self._run_states.get(run_id)
+            if state is None or state.raw_output_lines is None:
+                return []
+            lines = list(state.raw_output_lines)
+        return lines[-limit:] if limit > 0 else lines
 
     def start_run_loop(
         self,
@@ -343,11 +371,19 @@ class AutopilotService:
             project=project,
             run=refreshed,
             worker_summary=worker_result.summary,
+            worker_stdout=worker_result.stdout,
             worker_payload=worker_payload,
             model=model,
             progress_callback=progress_callback,
         )
         supervisor_payload = self._parse_supervisor_payload(supervisor_result)
+        supervisor_payload = self._apply_supervision_policy(
+            run=refreshed,
+            worker_summary=worker_result.summary,
+            worker_stdout=worker_result.stdout,
+            worker_payload=worker_payload,
+            supervisor_payload=supervisor_payload,
+        )
         interrupted_run = self.tasks.autopilot.get_run(run_id=run.id)
         if interrupted_run is not None and interrupted_run.status in {"paused", "stopped"}:
             return AutopilotStepResult(
@@ -474,7 +510,7 @@ class AutopilotService:
                     )
         return self._build_followup_worker_prompt(
             goal=run.goal,
-            instruction="继续推进任务，并输出本轮结构化状态。",
+            instruction="继续推进任务。",
         )
 
     def _run_worker(
@@ -493,20 +529,24 @@ class AutopilotService:
             event_type="stage_started",
             summary="B 已启动本轮执行。",
         )
+        combined_progress_callback = self._combine_progress_callbacks(
+            progress_callback,
+            self._make_actor_output_callback(run_id=run.id, actor="worker"),
+        )
         if run.worker_session_id:
             return self.codex.resume_session(
                 project,
                 run.worker_session_id,
                 instruction,
                 model=model,
-                progress_callback=progress_callback,
+                progress_callback=combined_progress_callback,
                 process_callback=process_callback,
             )
         return self.codex.run(
             project,
             instruction,
             model=model,
-            progress_callback=progress_callback,
+            progress_callback=combined_progress_callback,
             process_callback=process_callback,
         )
 
@@ -516,14 +556,26 @@ class AutopilotService:
         project: ProjectConfig,
         run: AutopilotRunRecord,
         worker_summary: str,
+        worker_stdout: str,
         worker_payload: dict[str, Any] | None,
         model: str | None,
         progress_callback=None,  # noqa: ANN001
     ) -> CodexRunResult:
+        completion_claim_count = self._count_worker_completion_claims(run_id=run.id)
+        verification_rounds = self._count_supervisor_verification_rounds(run_id=run.id)
+        supervision_mode = self._determine_supervision_mode(
+            completion_claim_count=completion_claim_count,
+            verification_rounds=verification_rounds,
+        )
         prompt = self._build_supervisor_prompt(
             goal=run.goal,
+            project_snapshot=self._build_project_snapshot(project),
             worker_summary=worker_summary,
+            worker_stdout=worker_stdout,
             worker_payload=worker_payload,
+            supervision_mode=supervision_mode,
+            completion_claim_count=completion_claim_count,
+            verification_rounds=verification_rounds,
         )
         process_callback = self._make_actor_process_callback(
             run_id=run.id,
@@ -532,20 +584,24 @@ class AutopilotService:
             event_type="decision_started",
             summary="A 已开始评估本轮结果。",
         )
+        combined_progress_callback = self._combine_progress_callbacks(
+            progress_callback,
+            self._make_actor_output_callback(run_id=run.id, actor="supervisor"),
+        )
         if run.supervisor_session_id:
             return self.codex.ask_in_session(
                 project,
                 run.supervisor_session_id,
                 prompt,
                 model=model,
-                progress_callback=progress_callback,
+                progress_callback=combined_progress_callback,
                 process_callback=process_callback,
             )
         return self.codex.ask(
             project,
             prompt,
             model=model,
-            progress_callback=progress_callback,
+            progress_callback=combined_progress_callback,
             process_callback=process_callback,
         )
 
@@ -605,19 +661,11 @@ class AutopilotService:
         assert updated is not None
         return updated
 
-    def _parse_worker_payload(self, result: CodexRunResult) -> dict[str, Any]:
+    def _parse_worker_payload(self, result: CodexRunResult) -> dict[str, Any] | None:
         parsed = self._extract_json_object(result.stdout) or self._extract_json_object(result.summary)
         if isinstance(parsed, dict):
             return parsed
-        return {
-            "completed_work": result.summary,
-            "current_state": result.summary,
-            "remaining_work": "unknown",
-            "blockers": result.stderr or "none",
-            "recommended_next_step": "继续推进任务，并输出下一轮结构化状态。",
-            "progress_made": bool(result.ok),
-            "task_complete": False,
-        }
+        return None
 
     def _parse_supervisor_payload(self, result: CodexRunResult) -> dict[str, Any]:
         parsed = self._extract_json_object(result.stdout) or self._extract_json_object(result.summary)
@@ -631,6 +679,55 @@ class AutopilotService:
             "confidence": "low",
             "next_instruction_for_b": "",
         }
+
+    def _apply_supervision_policy(
+        self,
+        *,
+        run: AutopilotRunRecord,
+        worker_summary: str,
+        worker_stdout: str,
+        worker_payload: dict[str, Any] | None,
+        supervisor_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        completion_claim_count = self._count_worker_completion_claims(run_id=run.id) + int(
+            self._worker_claims_completion(
+                summary=worker_summary,
+                stdout=worker_stdout,
+                payload=worker_payload,
+            )
+        )
+        verification_rounds = self._count_supervisor_verification_rounds(run_id=run.id)
+        supervision_mode = self._determine_supervision_mode(
+            completion_claim_count=completion_claim_count,
+            verification_rounds=verification_rounds,
+        )
+        enriched = dict(supervisor_payload)
+        enriched["supervision_mode"] = supervision_mode
+        enriched["completion_claim_count"] = completion_claim_count
+        enriched["verification_rounds"] = verification_rounds
+
+        decision = str(enriched.get("decision") or "needs_human").strip()
+        required_verification_rounds = 2 if completion_claim_count >= 2 else 0
+        if decision == "complete" and verification_rounds < required_verification_rounds:
+            forced_round = verification_rounds + 1
+            enriched.update(
+                {
+                    "decision": "continue",
+                    "reason": (
+                        f"{enriched.get('reason') or 'Worker claimed completion.'} "
+                        f"Entering strict verification round {forced_round}/{required_verification_rounds} before allowing completion."
+                    ).strip(),
+                    "progress_summary": enriched.get("progress_summary") or worker_summary,
+                    "progress_made": True,
+                    "next_instruction_for_b": (
+                        "Do not assume the task is complete. Re-check the project directory, inspect the latest changes, "
+                        "run the most relevant verification step, and report concrete completion evidence or remaining gaps."
+                    ),
+                    "verification_round": forced_round,
+                    "decision_overridden": True,
+                }
+            )
+        return enriched
 
     def _extract_json_object(self, text: str) -> dict[str, Any] | None:
         normalized = text.strip()
@@ -659,6 +756,86 @@ class AutopilotService:
             if isinstance(value, str) and value.strip():
                 return value.strip()
         return None
+
+    def _worker_claims_completion(
+        self,
+        *,
+        summary: str,
+        stdout: str,
+        payload: dict[str, Any] | None,
+    ) -> bool:
+        if payload and payload.get("task_complete") is True:
+            return True
+        haystack = "\n".join(part for part in (summary, stdout) if part).strip()
+        return bool(haystack and COMPLETION_CLAIM_PATTERN.search(haystack))
+
+    def _count_worker_completion_claims(self, *, run_id: int) -> int:
+        count = 0
+        for event in self.tasks.autopilot.list_events(run_id=run_id, limit=200):
+            if event.actor != "worker":
+                continue
+            payload = event.payload if isinstance(event.payload, dict) else None
+            if self._worker_claims_completion(
+                summary=event.summary or "",
+                stdout=(payload or {}).get("raw_output", "") if payload else "",
+                payload=payload,
+            ):
+                count += 1
+        return count
+
+    def _count_supervisor_verification_rounds(self, *, run_id: int) -> int:
+        count = 0
+        for event in self.tasks.autopilot.list_events(run_id=run_id, limit=200):
+            if event.actor != "supervisor" or not isinstance(event.payload, dict):
+                continue
+            if event.payload.get("verification_round"):
+                count += 1
+        return count
+
+    def _determine_supervision_mode(
+        self,
+        *,
+        completion_claim_count: int,
+        verification_rounds: int,
+    ) -> str:
+        if completion_claim_count >= 3 or verification_rounds >= 1:
+            return "hard_verify"
+        if completion_claim_count >= 2:
+            return "skeptical"
+        return "normal"
+
+    def _build_project_snapshot(self, project: ProjectConfig) -> str:
+        project_path = project.path
+        lines = [f"path={project_path}"]
+        try:
+            entries = sorted(project_path.iterdir(), key=lambda entry: (not entry.is_dir(), entry.name.lower()))
+            top_entries = []
+            for entry in entries[:12]:
+                suffix = "/" if entry.is_dir() else ""
+                top_entries.append(f"{entry.name}{suffix}")
+            if top_entries:
+                lines.append("top_level=" + ", ".join(top_entries))
+        except OSError as exc:
+            lines.append(f"top_level_error={exc}")
+
+        git_dir = project_path / ".git"
+        if git_dir.exists():
+            try:
+                completed = subprocess.run(  # noqa: S603
+                    ["git", "status", "--short"],
+                    cwd=str(project_path),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                status_lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+                if status_lines:
+                    lines.append("git_status=" + " | ".join(status_lines[:10]))
+                else:
+                    lines.append("git_status=clean")
+            except OSError as exc:
+                lines.append(f"git_status_error={exc}")
+        return "\n".join(lines)
 
     def _instruction_fingerprint(self, value: str) -> str:
         return " ".join(value.strip().lower().split())[:200]
@@ -718,6 +895,40 @@ class AutopilotService:
 
         return _callback
 
+    def _make_actor_output_callback(self, *, run_id: int, actor: str):
+        actor_label = "A" if actor == "supervisor" else "B"
+
+        def _callback(channel: str, text: str) -> None:
+            _ = channel
+            line = text.strip()
+            if not line:
+                return
+            rendered = f"{actor_label}> {line}"
+            observer = None
+            with self._run_state_guard:
+                state = self._run_states.setdefault(run_id, _RunExecutionState())
+                if state.raw_output_lines and state.raw_output_lines[-1] == rendered:
+                    return
+                state.raw_output_lines.append(rendered)
+                state.output_version += 1
+                state.last_output_at = time.monotonic()
+                observer = self._raw_output_observer
+            if observer is not None:
+                observer(run_id)
+
+        return _callback
+
+    def _combine_progress_callbacks(self, *callbacks):
+        valid_callbacks = [callback for callback in callbacks if callback is not None]
+        if not valid_callbacks:
+            return None
+
+        def _callback(channel: str, text: str) -> None:
+            for callback in valid_callbacks:
+                callback(channel, text)
+
+        return _callback
+
     def _request_stop(self, *, run_id: int, terminate_process: bool) -> None:
         with self._run_state_guard:
             state = self._run_states.setdefault(run_id, _RunExecutionState())
@@ -742,48 +953,37 @@ class AutopilotService:
             return state.stop_requested
 
     def _build_initial_worker_prompt(self, *, goal: str) -> str:
-        return (
-            "You are the worker in OpenFish autopilot mode.\n"
-            "Your job is to push the task forward and avoid handing control back to the human too early.\n"
-            "Make practical progress on the task, then end with JSON only using this schema:\n"
-            "{"
-            '"completed_work":"...",'
-            '"current_state":"...",'
-            '"remaining_work":"...",'
-            '"blockers":"...",'
-            '"recommended_next_step":"...",'
-            '"progress_made":true,'
-            '"task_complete":false'
-            "}\n\n"
-            f"Goal:\n{goal}"
-        )
+        return goal.strip()
 
     def _build_followup_worker_prompt(self, *, goal: str, instruction: str) -> str:
-        return (
-            "You are the worker in OpenFish autopilot mode.\n"
-            "Continue the same long-running task. Execute the instruction, keep pushing forward, and end with JSON only.\n"
-            "Required JSON schema:\n"
-            "{"
-            '"completed_work":"...",'
-            '"current_state":"...",'
-            '"remaining_work":"...",'
-            '"blockers":"...",'
-            '"recommended_next_step":"...",'
-            '"progress_made":true,'
-            '"task_complete":false'
-            "}\n\n"
-            f"Goal:\n{goal}\n\n"
-            f"Supervisor instruction:\n{instruction}"
-        )
+        _ = goal
+        return instruction.strip()
 
     def _build_supervisor_prompt(
         self,
         *,
         goal: str,
+        project_snapshot: str,
         worker_summary: str,
+        worker_stdout: str,
         worker_payload: dict[str, Any] | None,
+        supervision_mode: str,
+        completion_claim_count: int,
+        verification_rounds: int,
     ) -> str:
         payload_text = json.dumps(worker_payload or {}, ensure_ascii=True)
+        worker_output_excerpt = worker_stdout.strip() or worker_summary.strip()
+        mode_instructions = {
+            "normal": "Use normal supervision. Continue pushing the task forward with practical next steps.",
+            "skeptical": (
+                "The worker has claimed or implied completion multiple times. Be skeptical. "
+                "Do not accept completion without concrete evidence from the project state, outputs, or validation results."
+            ),
+            "hard_verify": (
+                "You are in strict verification mode. The worker has repeatedly implied completion. "
+                "Do not accept completion unless there is concrete completion evidence. Prefer verification-focused next instructions."
+            ),
+        }[supervision_mode]
         return (
             "You are the supervisor in OpenFish autopilot mode.\n"
             "Do not execute the task yourself. Judge whether the worker should continue, stop, or escalate.\n"
@@ -799,6 +999,12 @@ class AutopilotService:
             "Valid decisions: continue, complete, blocked, needs_human.\n"
             "If decision is not continue, next_instruction_for_b should be empty.\n\n"
             f"Goal:\n{goal}\n\n"
+            f"Project snapshot:\n{project_snapshot}\n\n"
+            f"Supervision mode: {supervision_mode}\n"
+            f"Completion claim count: {completion_claim_count}\n"
+            f"Previous verification rounds: {verification_rounds}\n"
+            f"Mode instruction: {mode_instructions}\n\n"
             f"Worker summary:\n{worker_summary}\n\n"
+            f"Worker raw output:\n{worker_output_excerpt}\n\n"
             f"Worker payload:\n{payload_text}"
         )

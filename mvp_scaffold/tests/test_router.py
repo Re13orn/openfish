@@ -1005,6 +1005,7 @@ class AutopilotStub:
         self.stepped_run_ids: list[int] = []
         self.started_run_ids: list[int] = []
         self.takeover_instructions: list[str] = []
+        self.raw_output_lines: list[str] = ["B> opening scope page", "B> extracting urls"]
         self.runs = [self.run]
         self.runtime = AutopilotRuntimeSnapshot(
             run_id=self.run.id,
@@ -1012,6 +1013,8 @@ class AutopilotStub:
             pid=4321,
             process_started_at=1.0,
             thread_alive=True,
+            output_version=1,
+            last_output_at=2.0,
         )
 
     def create_run(self, *, project_id: int, chat_id: str, created_by_user_id: int, goal: str, max_cycles: int = 100):  # noqa: ANN001
@@ -1061,6 +1064,10 @@ class AutopilotStub:
     def get_runtime_snapshot(self, *, run_id: int):  # noqa: ANN201
         _ = run_id
         return self.runtime
+
+    def get_recent_output(self, *, run_id: int, limit: int = 12):  # noqa: ANN201
+        _ = run_id
+        return self.raw_output_lines[-limit:]
 
     def step_run(self, *, project, run_id: int, model: str | None = None, progress_callback=None):  # noqa: ANN001, ANN201
         _ = project

@@ -1719,8 +1719,9 @@ class CommandRouter:
             details={"run_id": run.id},
         )
         events = self.autopilot.list_events(run_id=run.id, limit=10)
+        raw_output_lines = self.autopilot.get_recent_output(run_id=run.id, limit=6)
         return CommandResult(
-            redact_text(format_autopilot_status(run=run, events=events)),
+            redact_text(format_autopilot_status(run=run, events=events, raw_output_lines=raw_output_lines)),
             metadata={"autopilot_run_id": run.id, "autopilot_run": run},
         )
 
@@ -1760,6 +1761,7 @@ class CommandRouter:
         run = run_or_result
         events = self.autopilot.list_events(run_id=run.id, limit=10)
         runtime = self.autopilot.get_runtime_snapshot(run_id=run.id)
+        raw_output_lines = self.autopilot.get_recent_output(run_id=run.id, limit=6)
         self.audit.log(
             action=audit_events.AUTOPILOT_VIEWED,
             message=f"查看 autopilot run #{run.id}",
@@ -1768,7 +1770,14 @@ class CommandRouter:
             details={"run_id": run.id},
         )
         return CommandResult(
-            redact_text(format_autopilot_status(run=run, events=events, runtime=runtime)),
+            redact_text(
+                format_autopilot_status(
+                    run=run,
+                    events=events,
+                    runtime=runtime,
+                    raw_output_lines=raw_output_lines,
+                )
+            ),
             metadata={"autopilot_run_id": run.id, "autopilot_run": run},
         )
 
@@ -1787,6 +1796,7 @@ class CommandRouter:
         run = run_or_result
         events = self.autopilot.list_events(run_id=run.id, limit=10)
         runtime = self.autopilot.get_runtime_snapshot(run_id=run.id)
+        raw_output_lines = self.autopilot.get_recent_output(run_id=run.id, limit=8)
         self.audit.log(
             action=audit_events.AUTOPILOT_VIEWED,
             message=f"查看 autopilot context #{run.id}",
@@ -1795,7 +1805,14 @@ class CommandRouter:
             details={"run_id": run.id, "view": "context"},
         )
         return CommandResult(
-            redact_text(format_autopilot_context(run=run, events=events, runtime=runtime)),
+            redact_text(
+                format_autopilot_context(
+                    run=run,
+                    events=events,
+                    runtime=runtime,
+                    raw_output_lines=raw_output_lines,
+                )
+            ),
             metadata={"autopilot_run_id": run.id, "autopilot_run": run},
         )
 

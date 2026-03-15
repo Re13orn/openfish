@@ -27,6 +27,7 @@ class CodexStub:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.last_worker_instruction: str | None = None
+        self.last_supervisor_prompt: str | None = None
 
     def run(self, project, prompt: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
@@ -40,7 +41,7 @@ class CodexStub:
         return _codex_result(
             "worker round 1",
             session_id="sess-worker-1",
-            stdout='{"completed_work":"done","current_state":"worker round 1","remaining_work":"tests","blockers":"none","recommended_next_step":"run tests","progress_made":true,"task_complete":false}',
+            stdout="opened policy scopes page\nfound target domains\ncollecting public urls",
         )
 
     def resume_session(self, project, session_id: str, instruction: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
@@ -56,12 +57,12 @@ class CodexStub:
         return _codex_result(
             "worker round resumed",
             session_id="sess-worker-1",
-            stdout='{"completed_work":"more","current_state":"worker round resumed","remaining_work":"verify","blockers":"none","recommended_next_step":"verify","progress_made":true,"task_complete":false}',
+            stdout="continuing from supervisor instruction\nrunning targeted verification",
         )
 
     def ask(self, project, question: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
-        _ = question
+        self.last_supervisor_prompt = question
         _ = model
         _ = progress_callback
         if process_callback is not None:
@@ -77,7 +78,7 @@ class CodexStub:
     def ask_in_session(self, project, session_id: str, question: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
         _ = session_id
-        _ = question
+        self.last_supervisor_prompt = question
         _ = model
         _ = progress_callback
         if process_callback is not None:
@@ -94,7 +95,7 @@ class CodexStub:
 class CompletingCodexStub(CodexStub):
     def ask(self, project, question: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
-        _ = question
+        self.last_supervisor_prompt = question
         _ = model
         _ = progress_callback
         _ = process_callback
@@ -121,7 +122,37 @@ class SlowCompletingCodexStub(CompletingCodexStub):
         return _codex_result(
             "worker round 1",
             session_id="sess-worker-1",
-            stdout='{"completed_work":"done","current_state":"worker round 1","remaining_work":"tests","blockers":"none","recommended_next_step":"run tests","progress_made":true,"task_complete":false}',
+            stdout="opened policy scopes page\nfound target domains\ncollecting public urls",
+        )
+
+
+class CompletionClaimCodexStub(CodexStub):
+    def run(self, project, prompt: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+        _ = project
+        self.last_worker_instruction = prompt
+        _ = model
+        _ = progress_callback
+        if process_callback is not None:
+            process_callback(SimpleNamespace(pid=1001))
+            process_callback(None)
+        self.calls.append("run")
+        return _codex_result(
+            "done",
+            session_id="sess-worker-1",
+            stdout="all done, finished, nothing left",
+        )
+
+    def ask(self, project, question: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+        _ = project
+        self.last_supervisor_prompt = question
+        _ = model
+        _ = progress_callback
+        _ = process_callback
+        self.calls.append("ask")
+        return _codex_result(
+            "supervisor complete",
+            session_id="sess-supervisor-1",
+            stdout='{"decision":"complete","reason":"worker says done","progress_summary":"task complete","progress_made":true,"confidence":"medium","next_instruction_for_b":""}',
         )
 
 
@@ -187,6 +218,13 @@ def test_step_run_executes_worker_then_supervisor(tmp_path: Path) -> None:
     assert result.run.cycle_count == 1
     assert result.run.worker_session_id == "sess-worker-1"
     assert result.run.supervisor_session_id == "sess-supervisor-1"
+    assert service.codex.last_worker_instruction == "持续推进支付修复"
+    assert service.codex.last_supervisor_prompt is not None
+    assert "Project snapshot:" in service.codex.last_supervisor_prompt
+    assert "path=/tmp" in service.codex.last_supervisor_prompt
+    assert "Supervision mode: normal" in service.codex.last_supervisor_prompt
+    assert "Worker raw output:" in service.codex.last_supervisor_prompt
+    assert "opened policy scopes page" in service.codex.last_supervisor_prompt
     events = tasks.autopilot.list_events(run_id=run.id)
     assert [event.event_type for event in events][-4:] == [
         "stage_started",
@@ -276,7 +314,90 @@ def test_step_run_prefers_latest_human_takeover_instruction(tmp_path: Path) -> N
         run_id=first.id,
     )
 
-    assert "不要再分析，直接修 auth tests 并跑定向 pytest" in service.codex.last_worker_instruction
+    assert service.codex.last_worker_instruction == "不要再分析，直接修 auth tests 并跑定向 pytest"
+
+
+def test_step_run_uses_supervisor_instruction_as_plain_followup_prompt(tmp_path: Path) -> None:
+    _, service = _setup_service(tmp_path)
+    run = service.create_run(
+        project_id=1,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+    )
+
+    first = service.step_run(
+        project=ProjectConfig(key="demo", name="Demo", path=Path("/tmp")),
+        run_id=run.id,
+    ).run
+    second = service.step_run(
+        project=ProjectConfig(key="demo", name="Demo", path=Path("/tmp")),
+        run_id=first.id,
+    ).run
+
+    assert second.cycle_count == 2
+    assert service.codex.last_worker_instruction == "run tests next"
+
+
+def test_step_run_fallback_followup_prompt_does_not_require_structured_output(tmp_path: Path) -> None:
+    _, service = _setup_service(tmp_path)
+    run = service.create_run(
+        project_id=1,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+    )
+
+    service.tasks.autopilot.update_run(
+        run_id=run.id,
+        status="running_worker",
+        current_phase="worker",
+        cycle_count=1,
+    )
+
+    instruction = service._resolve_worker_instruction(run=service.get_run(run_id=run.id))  # type: ignore[arg-type]
+    assert instruction == "继续推进任务。"
+
+
+def test_supervisor_forces_verification_rounds_after_repeated_completion_claims(tmp_path: Path) -> None:
+    tasks, _ = _setup_service(tmp_path)
+    service = AutopilotService(tasks=tasks, codex=CompletionClaimCodexStub())
+    run = service.create_run(
+        project_id=1,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+    )
+
+    tasks.autopilot.append_event(
+        run_id=run.id,
+        cycle_no=1,
+        actor="worker",
+        event_type="stage_completed",
+        summary="done",
+        payload=None,
+    )
+    tasks.autopilot.append_event(
+        run_id=run.id,
+        cycle_no=2,
+        actor="worker",
+        event_type="stage_completed",
+        summary="finished",
+        payload=None,
+    )
+
+    result = service.step_run(
+        project=ProjectConfig(key="demo", name="Demo", path=Path("/tmp")),
+        run_id=run.id,
+    )
+
+    assert result.run.status == "running_worker"
+    assert result.run.last_decision == "continue"
+    assert result.supervisor_payload is not None
+    assert result.supervisor_payload["supervision_mode"] == "hard_verify"
+    assert result.supervisor_payload["decision_overridden"] is True
+    assert result.supervisor_payload["verification_round"] == 1
+    assert "Do not assume the task is complete" in result.supervisor_payload["next_instruction_for_b"]
 
 
 def test_step_run_allows_single_step_from_paused_and_returns_to_paused(tmp_path: Path) -> None:

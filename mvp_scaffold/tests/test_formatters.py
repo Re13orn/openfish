@@ -483,9 +483,16 @@ def test_format_autopilot_context_includes_recent_event_timeline() -> None:
         pid=4321,
         process_started_at=time.monotonic() - 5,
         thread_alive=True,
+        output_version=1,
+        last_output_at=time.monotonic() - 1,
     )
 
-    text = format_autopilot_context(run=run, events=events, runtime=runtime)
+    text = format_autopilot_context(
+        run=run,
+        events=events,
+        runtime=runtime,
+        raw_output_lines=["B> pytest -q", "A> continue with auth fix"],
+    )
 
     assert "【Autopilot Context】" in text
     assert "当前执行者: worker" in text
@@ -498,6 +505,43 @@ def test_format_autopilot_context_includes_recent_event_timeline() -> None:
     assert "最近事件:" in text
     assert "- 2:worker/stage_completed · worker 2" in text
     assert "- 3:human/paused · 用户暂停" in text
+    assert "原始输出:" in text
+    assert "- B> pytest -q" in text
+    assert "- A> continue with auth fix" in text
+
+
+def test_format_autopilot_status_includes_recent_raw_output() -> None:
+    run = AutopilotRunRecord(
+        id=5,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="running_worker",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="worker",
+        cycle_count=1,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="continue next step",
+        last_decision="continue",
+        last_worker_summary="已修改支付回调",
+        last_supervisor_summary="继续执行测试与验证",
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+
+    text = format_autopilot_status(
+        run=run,
+        events=[],
+        raw_output_lines=["B> scanning targets", "B> collecting urls"],
+    )
+
+    assert "原始输出:" in text
+    assert "- B> scanning targets" in text
+    assert "- B> collecting urls" in text
 
 
 def test_format_autopilot_runs_lists_recent_runs() -> None:

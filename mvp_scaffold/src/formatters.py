@@ -343,6 +343,7 @@ def format_autopilot_status(
     run: AutopilotRunRecord,
     events: list[AutopilotEventRecord],
     runtime: AutopilotRuntimeSnapshot | None = None,
+    raw_output_lines: list[str] | None = None,
 ) -> str:
     verdict, concerns, next_step = _autopilot_verdict(run, events)
     latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
@@ -373,6 +374,9 @@ def format_autopilot_status(
         lines.append(f"B 最近摘要: {_clip(latest_worker.summary or '暂无', 120)}")
     if latest_supervisor is not None:
         lines.append(f"A 最近摘要: {_clip(latest_supervisor.summary or '暂无', 120)}")
+    if raw_output_lines:
+        lines.append("原始输出:")
+        lines.extend(f"- {_clip(line, 140)}" for line in raw_output_lines[-6:])
     lines.append(f"下一步: {next_step}")
     return _card("Autopilot", lines)
 
@@ -449,6 +453,7 @@ def format_autopilot_context(
     run: AutopilotRunRecord,
     events: list[AutopilotEventRecord],
     runtime: AutopilotRuntimeSnapshot | None = None,
+    raw_output_lines: list[str] | None = None,
 ) -> str:
     verdict, concerns, next_step = _autopilot_verdict(run, events)
     latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
@@ -501,6 +506,9 @@ def format_autopilot_context(
             lines.append(
                 f"- {event.cycle_no}:{event.actor}/{event.event_type} · {_clip(event.summary or '暂无', 80)}"
             )
+    if raw_output_lines:
+        lines.append("原始输出:")
+        lines.extend(f"- {_clip(line, 140)}" for line in raw_output_lines[-8:])
     lines.append(f"下一步: {next_step}")
     return _card("Autopilot Context", lines)
 
