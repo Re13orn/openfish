@@ -968,6 +968,7 @@ class AutopilotStub:
         self.stepped_run_ids: list[int] = []
         self.started_run_ids: list[int] = []
         self.takeover_instructions: list[str] = []
+        self.runs = [self.run]
 
     def create_run(self, *, project_id: int, chat_id: str, created_by_user_id: int, goal: str, max_cycles: int = 100):  # noqa: ANN001
         _ = project_id
@@ -1003,6 +1004,10 @@ class AutopilotStub:
     def get_latest_run_for_project(self, *, project_id: int):  # noqa: ANN201
         _ = project_id
         return self.run
+
+    def list_runs_for_project(self, *, project_id: int, limit: int = 20):  # noqa: ANN201
+        _ = project_id
+        return self.runs[:limit]
 
     def list_events(self, *, run_id: int, limit: int = 20):  # noqa: ANN201
         _ = run_id
@@ -1272,6 +1277,45 @@ def test_autopilot_status_uses_latest_run_when_id_missing() -> None:
 
     assert "【Autopilot】" in result.reply_text
     assert "Run: #1" in result.reply_text
+    assert audit.events[-1][0] == audit_events.AUTOPILOT_VIEWED
+
+
+def test_autopilots_lists_recent_runs() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    autopilot.runs = [
+        autopilot.run,
+        AutopilotRunRecord(
+            id=2,
+            project_id=101,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="分析告警",
+            status="paused",
+            supervisor_session_id="sess-c",
+            worker_session_id="sess-d",
+            current_phase="idle",
+            cycle_count=2,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="inspect findings",
+            last_decision="continue",
+            last_worker_summary="已分析一轮",
+            last_supervisor_summary="继续检查",
+            paused_reason="manual pause",
+            stopped_by_user_id=None,
+        ),
+    ]
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilots"))
+
+    assert "【Autopilot Runs】" in result.reply_text
+    assert "- #1 · created · 0/100 · 持续推进支付修复" in result.reply_text
+    assert "- #2 · paused · 2/100 · 分析告警" in result.reply_text
     assert audit.events[-1][0] == audit_events.AUTOPILOT_VIEWED
 
 

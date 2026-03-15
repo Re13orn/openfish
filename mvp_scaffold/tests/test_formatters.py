@@ -2,6 +2,7 @@ from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.formatters import (
     format_autopilot_context,
+    format_autopilot_runs,
     format_autopilot_status,
     format_context,
     format_current_task,
@@ -383,6 +384,36 @@ def test_format_autopilot_status_surfaces_near_blocked_signals() -> None:
     assert "关注点: 最近一轮无进展；最近指令开始重复；接近轮次上限" in text
 
 
+def test_format_autopilot_status_surfaces_bootstrap_state_before_first_cycle() -> None:
+    run = AutopilotRunRecord(
+        id=2,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="对 onekey 进行简单的信息收集",
+        status="running_worker",
+        supervisor_session_id=None,
+        worker_session_id=None,
+        current_phase="worker",
+        cycle_count=0,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint=None,
+        last_decision=None,
+        last_worker_summary=None,
+        last_supervisor_summary=None,
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+
+    text = format_autopilot_status(run=run, events=[])
+
+    assert "结论: 启动中" in text
+    assert "关注点: 已进入后台自治流程，首轮结果尚未产出" in text
+    assert "下一步: 无需继续输入；等待首轮完成，或执行 /autopilot-context 查看是否已有新事件。" in text
+
+
 def test_format_autopilot_context_includes_recent_event_timeline() -> None:
     run = AutopilotRunRecord(
         id=1,
@@ -452,6 +483,59 @@ def test_format_autopilot_context_includes_recent_event_timeline() -> None:
     assert "最近事件:" in text
     assert "- 2:worker/stage_completed · worker 2" in text
     assert "- 3:human/paused · 用户暂停" in text
+
+
+def test_format_autopilot_runs_lists_recent_runs() -> None:
+    runs = [
+        AutopilotRunRecord(
+            id=3,
+            project_id=101,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="持续推进支付修复",
+            status="running_worker",
+            supervisor_session_id="sess-a",
+            worker_session_id="sess-b",
+            current_phase="worker",
+            cycle_count=7,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="run tests next",
+            last_decision="continue",
+            last_worker_summary="已修改支付回调",
+            last_supervisor_summary="继续测试",
+            paused_reason=None,
+            stopped_by_user_id=None,
+        ),
+        AutopilotRunRecord(
+            id=2,
+            project_id=101,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="分析告警",
+            status="paused",
+            supervisor_session_id="sess-c",
+            worker_session_id="sess-d",
+            current_phase="idle",
+            cycle_count=2,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="inspect findings",
+            last_decision="continue",
+            last_worker_summary="已分析一轮",
+            last_supervisor_summary="继续检查",
+            paused_reason="manual pause",
+            stopped_by_user_id=None,
+        ),
+    ]
+
+    text = format_autopilot_runs(runs)
+
+    assert "【Autopilot Runs】" in text
+    assert "- #3 · running_worker · 7/100 · 持续推进支付修复" in text
+    assert "- #2 · paused · 2/100 · 分析告警" in text
 
 
 def test_help_summary_mode_is_shorter() -> None:

@@ -152,9 +152,31 @@ bash mvp_scaffold/scripts/install_start.sh start
 
 - 新增 `autopilot` supervisor-worker 长任务模式，解决长任务频繁停下来等人发一句“继续”的问题
 - 新增后台自治循环，并带明确停止条件
+- 新增 `/autopilots`，可查看和管理最近多个 run
 - 新增 `/autopilot-status`、`/autopilot-context` 观察视图
 - 支持暂停、恢复、停止、人工接管，以及暂停态单步推进
 - 首页、更多、服务面板都已接入 Autopilot 入口和控制按钮
+
+Autopilot 工作流：
+
+```mermaid
+flowchart TD
+    H[人发起 /autopilot 目标] --> R[创建 run]
+    R --> W[执行者 B 跑一轮]
+    W --> BO[B 输出结构化结果]
+    BO --> A[监督者 A 评估结果]
+    A --> D{A 的判定}
+
+    D -->|continue| N[A 给 B 下一步]
+    N --> W
+
+    D -->|complete| C[任务完成]
+    D -->|blocked| B[任务阻塞]
+    D -->|needs_human| U[需要人工判断]
+
+    H -->|暂停 / 停止 / 接管| CTRL[人工控制]
+    CTRL --> W
+```
 
 ## ><> Docker 运行
 
@@ -252,7 +274,7 @@ sequenceDiagram
 
 - `/projects`, `/use <project>`, `/status`
 - `/ask <question>`, `/do <task>`, `/resume [task_id] [instruction]`
-- `/autopilot <goal>`, `/autopilot-status [id]`, `/autopilot-context [id]`
+- `/autopilot <goal>`, `/autopilots`, `/autopilot-status [id]`, `/autopilot-context [id]`
 - `/autopilot-step [id]`, `/autopilot-pause [id]`, `/autopilot-resume [id]`, `/autopilot-stop [id]`
 - `/autopilot-takeover <instruction>`
 - `/approve [note]`, `/reject [reason]`, `/cancel`

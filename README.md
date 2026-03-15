@@ -145,9 +145,31 @@ bash mvp_scaffold/scripts/install_start.sh start
 
 - `autopilot` supervisor-worker mode for long-running tasks that would otherwise keep stopping for another human “continue”
 - background autonomous loop with explicit stop conditions
+- `/autopilots` for recent run management
 - `/autopilot-status` and `/autopilot-context` for observability
 - pause/resume/stop, human takeover, and paused single-step execution
 - Telegram buttons for Autopilot from the home/more/service surfaces
+
+Autopilot workflow:
+
+```mermaid
+flowchart TD
+    H[Human starts /autopilot goal] --> R[Create run]
+    R --> W[Worker B executes one stage]
+    W --> BO[B emits structured output]
+    BO --> A[Supervisor A evaluates result]
+    A --> D{A decision}
+
+    D -->|continue| N[A gives B next instruction]
+    N --> W
+
+    D -->|complete| C[Run completed]
+    D -->|blocked| B[Run blocked]
+    D -->|needs_human| U[Needs human judgment]
+
+    H -->|pause / stop / takeover| CTRL[Human control]
+    CTRL --> W
+```
 
 ## ><> Docker
 
@@ -245,7 +267,7 @@ Core commands:
 
 - `/projects`, `/use <project>`, `/status`
 - `/ask <question>`, `/do <task>`, `/resume [task_id] [instruction]`
-- `/autopilot <goal>`, `/autopilot-status [id]`, `/autopilot-context [id]`
+- `/autopilot <goal>`, `/autopilots`, `/autopilot-status [id]`, `/autopilot-context [id]`
 - `/autopilot-step [id]`, `/autopilot-pause [id]`, `/autopilot-resume [id]`, `/autopilot-stop [id]`
 - `/autopilot-takeover <instruction>`
 - `/approve [note]`, `/reject [reason]`, `/cancel`

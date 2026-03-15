@@ -87,6 +87,11 @@ def test_more_panel_contains_download_file_prompt() -> None:
         for button in row
     )
     assert any(
+        button.callback_data == "panel:autopilot" and button.text == "Autopilot 面板"
+        for row in spec.reply_markup.inline_keyboard
+        for button in row
+    )
+    assert any(
         button.callback_data == "prompt:autopilot" and button.text == "Autopilot"
         for row in spec.reply_markup.inline_keyboard
         for button in row
@@ -123,6 +128,7 @@ def test_service_panel_contains_health_and_logs_actions() -> None:
     assert rows[0][1].callback_data == "cmd:version"
     assert any(button.callback_data == "cmd:context" for row in rows for button in row)
     assert any(button.callback_data == "cmd:autopilot_status" for row in rows for button in row)
+    assert any(button.callback_data == "panel:autopilot" for row in rows for button in row)
     assert any(button.callback_data == "cmd:restart" for row in rows for button in row)
     assert any(button.callback_data == "cmd:logs" for row in rows for button in row)
 
@@ -411,3 +417,144 @@ def test_autopilot_run_markup_exposes_single_step_when_paused() -> None:
     rows = markup.inline_keyboard
     assert any(button.callback_data == "cmd:autopilot_step" for row in rows for button in row)
     assert any(button.callback_data == "cmd:autopilot_resume" for row in rows for button in row)
+
+
+def test_autopilot_panel_shows_latest_run_summary() -> None:
+    factory = TelegramViewFactory()
+    run = AutopilotRunRecord(
+        id=3,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="running_worker",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="worker",
+        cycle_count=7,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="run tests next",
+        last_decision="continue",
+        last_worker_summary="已修改支付回调",
+        last_supervisor_summary="继续测试",
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+
+    spec = factory.autopilot_panel(run)
+
+    assert "Autopilot 操作：" in spec.text
+    assert "最新 Run: #3" in spec.text
+    assert "状态: running_worker" in spec.text
+
+
+def test_autopilot_runs_markup_exposes_targeted_management_actions() -> None:
+    factory = TelegramViewFactory()
+    runs = [
+        AutopilotRunRecord(
+            id=3,
+            project_id=101,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="持续推进支付修复",
+            status="running_worker",
+            supervisor_session_id="sess-a",
+            worker_session_id="sess-b",
+            current_phase="worker",
+            cycle_count=7,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="run tests next",
+            last_decision="continue",
+            last_worker_summary="已修改支付回调",
+            last_supervisor_summary="继续测试",
+            paused_reason=None,
+            stopped_by_user_id=None,
+        ),
+        AutopilotRunRecord(
+            id=2,
+            project_id=101,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="分析告警",
+            status="paused",
+            supervisor_session_id="sess-c",
+            worker_session_id="sess-d",
+            current_phase="idle",
+            cycle_count=2,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="inspect findings",
+            last_decision="continue",
+            last_worker_summary="已分析一轮",
+            last_supervisor_summary="继续检查",
+            paused_reason="manual pause",
+            stopped_by_user_id=None,
+        ),
+    ]
+
+    markup = factory.autopilot_runs_markup(runs)
+
+    rows = markup.inline_keyboard
+    assert any(button.callback_data == "cmd:autopilot_status:3" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_pause:3" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_context:2" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_resume:2" for row in rows for button in row)
+
+
+def test_autopilot_panel_shows_recent_runs_summary() -> None:
+    factory = TelegramViewFactory()
+    runs = [
+        AutopilotRunRecord(
+            id=3,
+            project_id=101,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="持续推进支付修复",
+            status="running_worker",
+            supervisor_session_id="sess-a",
+            worker_session_id="sess-b",
+            current_phase="worker",
+            cycle_count=7,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="run tests next",
+            last_decision="continue",
+            last_worker_summary="已修改支付回调",
+            last_supervisor_summary="继续测试",
+            paused_reason=None,
+            stopped_by_user_id=None,
+        ),
+        AutopilotRunRecord(
+            id=2,
+            project_id=101,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="分析告警",
+            status="paused",
+            supervisor_session_id="sess-c",
+            worker_session_id="sess-d",
+            current_phase="idle",
+            cycle_count=2,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="inspect findings",
+            last_decision="continue",
+            last_worker_summary="已分析一轮",
+            last_supervisor_summary="继续检查",
+            paused_reason="manual pause",
+            stopped_by_user_id=None,
+        ),
+    ]
+
+    spec = factory.autopilot_panel(runs[0], recent_runs=runs)
+
+    assert "最近 runs:" in spec.text
+    assert "- #3 · running_worker · 7/100" in spec.text
+    assert "- #2 · paused · 2/100" in spec.text

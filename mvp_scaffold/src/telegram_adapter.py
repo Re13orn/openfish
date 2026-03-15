@@ -96,6 +96,7 @@ class TelegramBotService:
         "logs": "/logs",
         "logs_clear": "/logs-clear",
         "task_current": "/task-current",
+        "autopilots": "/autopilots",
         "autopilot_status": "/autopilot-status",
         "autopilot_context": "/autopilot-context",
         "autopilot_step": "/autopilot-step",
@@ -669,6 +670,18 @@ class TelegramBotService:
                 return
             if data.startswith("cmd:"):
                 token = data.split(":", 1)[1]
+                for prefix, command in (
+                    ("autopilot_status:", "/autopilot-status "),
+                    ("autopilot_context:", "/autopilot-context "),
+                    ("autopilot_step:", "/autopilot-step "),
+                    ("autopilot_pause:", "/autopilot-pause "),
+                    ("autopilot_resume:", "/autopilot-resume "),
+                    ("autopilot_stop:", "/autopilot-stop "),
+                ):
+                    if token.startswith(prefix):
+                        run_id = token.split(":", 1)[1]
+                        await self._execute_command(query.message, base_ctx, f"{command}{run_id}")
+                        return
                 if token.startswith("mcp_detail:"):
                     name = token.split(":", 1)[1]
                     await self._execute_command(query.message, base_ctx, f"/mcp {name}")
@@ -716,6 +729,9 @@ class TelegramBotService:
                     return
                 if panel == "service":
                     await self._send_service_panel(query.message)
+                    return
+                if panel == "autopilot":
+                    await self._send_autopilot_panel(query.message, base_ctx)
                     return
                 if panel == "model":
                     await self._send_model_panel(query.message, base_ctx)
@@ -1080,6 +1096,29 @@ class TelegramBotService:
             context="sending service panel",
             edit_context="sending service panel",
             edit_window_seconds=float(getattr(self.config, "telegram_service_edit_window_seconds", 300.0)),
+        )
+
+    async def _send_autopilot_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
+        run = None
+        runs: list[AutopilotRunRecord] = []
+        if getattr(self.router, "autopilot", None) is not None:
+            user = self.router.tasks.ensure_user(ctx)
+            active_key = self.router.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+            if active_key:
+                try:
+                    project_id = self.router.tasks.get_project_id(active_key)
+                except KeyError:
+                    project_id = None
+                if project_id is not None:
+                    runs = self.router.autopilot.list_runs_for_project(project_id=project_id, limit=6)
+                    run = runs[0] if runs else None
+        spec = self.views.autopilot_panel(run, recent_runs=runs)
+        await self._send_view_spec(
+            message,
+            spec,
+            context="sending autopilot panel",
+            edit_context="sending autopilot panel",
+            edit_window_seconds=float(getattr(self.config, "telegram_autopilot_edit_window_seconds", 300.0)),
         )
 
     async def _send_model_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
@@ -1860,6 +1899,7 @@ class TelegramBotService:
             task = (result.metadata or {}).get("current_task")
             return self.views.current_task_markup(task if isinstance(task, TaskRecord) else None)
         if command in {
+            "/autopilots",
             "/autopilot",
             "/autopilot-status",
             "/autopilot-context",
@@ -1869,6 +1909,12 @@ class TelegramBotService:
             "/autopilot-resume",
             "/autopilot-stop",
         }:
+            if command == "/autopilots":
+                runs = (result.metadata or {}).get("autopilot_runs")
+                if isinstance(runs, list):
+                    return self.views.autopilot_runs_markup(
+                        [run for run in runs if isinstance(run, AutopilotRunRecord)]
+                    )
             run = (result.metadata or {}).get("autopilot_run")
             return self.views.autopilot_run_markup(run if isinstance(run, AutopilotRunRecord) else None)
         if command == "/memory":

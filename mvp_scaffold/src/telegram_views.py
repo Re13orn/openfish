@@ -147,10 +147,12 @@ class TelegramViewFactory:
                 [
                     [InlineKeyboardButton(text="首页控制台", callback_data="cmd:home")],
                     [InlineKeyboardButton(text="当前上下文", callback_data="cmd:context")],
+                    [InlineKeyboardButton(text="Autopilot 面板", callback_data="panel:autopilot")],
                     [
                         InlineKeyboardButton(text="Autopilot", callback_data="prompt:autopilot"),
                         InlineKeyboardButton(text="Autopilot 状态", callback_data="cmd:autopilot_status"),
                     ],
+                    [InlineKeyboardButton(text="Autopilot 列表", callback_data="cmd:autopilots")],
                     [InlineKeyboardButton(text="服务面板", callback_data="panel:service")],
                     [
                         InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
@@ -228,6 +230,8 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="当前上下文", callback_data="cmd:context"),
                         InlineKeyboardButton(text="Autopilot 状态", callback_data="cmd:autopilot_status"),
                     ],
+                    [InlineKeyboardButton(text="Autopilot 列表", callback_data="cmd:autopilots")],
+                    [InlineKeyboardButton(text="Autopilot 面板", callback_data="panel:autopilot")],
                     [InlineKeyboardButton(text="更多操作", callback_data="panel:more")],
                 ]
             ),
@@ -615,11 +619,66 @@ class TelegramViewFactory:
             )
         rows.append(
             [
+                InlineKeyboardButton(text="Autopilot 列表", callback_data="cmd:autopilots"),
                 InlineKeyboardButton(text="首页控制台", callback_data="cmd:home"),
                 InlineKeyboardButton(text="更多操作", callback_data="panel:more"),
             ]
         )
         return InlineKeyboardMarkup(rows)
+
+    def autopilot_runs_markup(
+        self,
+        runs: list[AutopilotRunRecord],
+    ) -> InlineKeyboardMarkup:
+        rows: list[list[InlineKeyboardButton]] = []
+        for run in runs[:6]:
+            rows.append(
+                [
+                    InlineKeyboardButton(text=f"状态 #{run.id}", callback_data=f"cmd:autopilot_status:{run.id}"),
+                    InlineKeyboardButton(text="上下文", callback_data=f"cmd:autopilot_context:{run.id}"),
+                ]
+            )
+            if run.status in {"created", "running_worker", "running_supervisor"}:
+                rows.append(
+                    [
+                        InlineKeyboardButton(text="暂停", callback_data=f"cmd:autopilot_pause:{run.id}"),
+                        InlineKeyboardButton(text="停止", callback_data=f"cmd:autopilot_stop:{run.id}"),
+                    ]
+                )
+            elif run.status == "paused":
+                rows.append(
+                    [
+                        InlineKeyboardButton(text="只跑一轮", callback_data=f"cmd:autopilot_step:{run.id}"),
+                        InlineKeyboardButton(text="恢复", callback_data=f"cmd:autopilot_resume:{run.id}"),
+                        InlineKeyboardButton(text="停止", callback_data=f"cmd:autopilot_stop:{run.id}"),
+                    ]
+                )
+        rows.append(
+            [
+                InlineKeyboardButton(text="新建 Autopilot", callback_data="prompt:autopilot"),
+                InlineKeyboardButton(text="Autopilot 面板", callback_data="panel:autopilot"),
+            ]
+        )
+        rows.append([InlineKeyboardButton(text="更多操作", callback_data="panel:more")])
+        return InlineKeyboardMarkup(rows)
+
+    def autopilot_panel(self, run: AutopilotRunRecord | None, recent_runs: list[AutopilotRunRecord] | None = None) -> TelegramReplySpec:
+        lines = ["Autopilot 操作："]
+        if run is None:
+            lines.append("当前项目暂无 autopilot run。")
+        else:
+            lines.append(f"最新 Run: #{run.id}")
+            lines.append(f"状态: {run.status}")
+            lines.append(f"轮次: {run.cycle_count}/{run.max_cycles}")
+        visible_runs = recent_runs or ([] if run is None else [run])
+        if visible_runs:
+            lines.append("最近 runs:")
+            for item in visible_runs[:5]:
+                lines.append(f"- #{item.id} · {item.status} · {item.cycle_count}/{item.max_cycles}")
+        return TelegramReplySpec(
+            text="\n".join(lines),
+            reply_markup=self.autopilot_runs_markup(visible_runs) if len(visible_runs) > 1 else self.autopilot_run_markup(run),
+        )
 
     def schedule_list_markup(
         self, schedules: list[ScheduledTaskRecord]

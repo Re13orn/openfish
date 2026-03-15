@@ -58,6 +58,7 @@ def format_help(mode: str = "verbose") -> str:
             "/context\n"
             "/task-current\n"
             "/autopilot <goal>\n"
+            "/autopilots\n"
             "/autopilot-status [id]\n"
             "/autopilot-context [id]\n"
             "/autopilot-takeover <instruction>\n"
@@ -90,6 +91,7 @@ def format_help(mode: str = "verbose") -> str:
         "/context\n"
         "/task-current\n"
         "/autopilot <goal>\n"
+        "/autopilots\n"
         "/autopilot-status [id]\n"
         "/autopilot-context [id]\n"
         "/autopilot-takeover <instruction>\n"
@@ -336,7 +338,7 @@ def format_autopilot_status(
     run: AutopilotRunRecord,
     events: list[AutopilotEventRecord],
 ) -> str:
-    verdict, concerns, next_step = _autopilot_verdict(run)
+    verdict, concerns, next_step = _autopilot_verdict(run, events)
     latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
     latest_supervisor = next((event for event in reversed(events) if event.actor == "supervisor"), None)
     lines = [
@@ -359,6 +361,23 @@ def format_autopilot_status(
         lines.append(f"A 最近摘要: {_clip(latest_supervisor.summary or '暂无', 120)}")
     lines.append(f"下一步: {next_step}")
     return _card("Autopilot", lines)
+
+
+def format_autopilot_runs(runs: list[AutopilotRunRecord]) -> str:
+    lines = ["【Autopilot Runs】"]
+    if not runs:
+        lines.append("当前项目暂无 autopilot run。")
+        lines.append("下一步: 执行 /autopilot <goal> 创建长期任务。")
+        return "\n".join(lines)
+
+    lines.append(f"总数: {len(runs)}")
+    lines.append("最近 runs:")
+    for run in runs:
+        lines.append(
+            f"- #{run.id} · {run.status} · {run.cycle_count}/{run.max_cycles} · {_clip(run.goal, 60)}"
+        )
+    lines.append("下一步: 可执行 /autopilot-status <id>、/autopilot-context <id>，或直接点按钮管理。")
+    return "\n".join(lines)
 
 
 def format_autopilot_step_result(
@@ -416,7 +435,7 @@ def format_autopilot_context(
     run: AutopilotRunRecord,
     events: list[AutopilotEventRecord],
 ) -> str:
-    verdict, concerns, next_step = _autopilot_verdict(run)
+    verdict, concerns, next_step = _autopilot_verdict(run, events)
     latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
     latest_supervisor = next((event for event in reversed(events) if event.actor == "supervisor"), None)
     lines = [
@@ -463,7 +482,22 @@ def format_autopilot_context(
     return _card("Autopilot Context", lines)
 
 
-def _autopilot_verdict(run: AutopilotRunRecord) -> tuple[str, str, str]:
+def _autopilot_verdict(
+    run: AutopilotRunRecord,
+    events: list[AutopilotEventRecord] | None = None,
+) -> tuple[str, str, str]:
+    if (
+        run.status in {"running_worker", "running_supervisor"}
+        and run.cycle_count == 0
+        and run.supervisor_session_id is None
+        and run.worker_session_id is None
+        and not events
+    ):
+        return (
+            "启动中",
+            "已进入后台自治流程，首轮结果尚未产出",
+            "无需继续输入；等待首轮完成，或执行 /autopilot-context 查看是否已有新事件。",
+        )
     if run.status == "completed":
         return ("已完成", "任务已结束", "可查看 /autopilot-context，或创建新的 autopilot run。")
     if run.status in {"blocked", "needs_human", "failed"}:

@@ -36,6 +36,7 @@ class WizardTasksStub:
         )
         self.scheduled_tasks = []
         self.pending_system_notifications = []
+        self.autopilot = SimpleNamespace(list_runs_for_project=lambda project_id, limit=6: [])
 
     def ensure_user(self, ctx):  # noqa: ANN001
         _ = ctx
@@ -132,6 +133,31 @@ class WizardRouterStub:
     def __init__(self) -> None:
         self.tasks = WizardTasksStub()
         self.projects = SimpleNamespace(default_project_root=Path("/tmp/projects"))
+        latest_run = AutopilotRunRecord(
+            id=1,
+            project_id=101,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="持续推进支付修复",
+            status="running_worker",
+            supervisor_session_id="sess-a",
+            worker_session_id="sess-b",
+            current_phase="worker",
+            cycle_count=2,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="run tests next",
+            last_decision="continue",
+            last_worker_summary="已修改支付回调",
+            last_supervisor_summary="继续测试",
+            paused_reason=None,
+            stopped_by_user_id=None,
+        )
+        self.autopilot = SimpleNamespace(
+            get_latest_run_for_project=lambda project_id: latest_run,
+            list_runs_for_project=lambda project_id, limit=6: [latest_run][:limit],
+        )
 
     def handle(self, ctx):  # noqa: ANN001, ANN201
         _ = ctx
@@ -871,6 +897,7 @@ def test_more_panel_contains_ui_mode_buttons(monkeypatch) -> None:
     markup = captured["markup"]
     rows = markup.inline_keyboard
     assert any(button.callback_data == "panel:service" for row in rows for button in row)
+    assert any(button.callback_data == "panel:autopilot" for row in rows for button in row)
     assert any(button.callback_data == "prompt:autopilot" for row in rows for button in row)
     assert any(button.callback_data == "cmd:autopilot_status" for row in rows for button in row)
     assert any(button.callback_data == "cmd:sessions" for row in rows for button in row)
@@ -910,6 +937,141 @@ def test_send_service_panel_marks_panel_for_editing(monkeypatch) -> None:
     assert spec.context == "sending service panel"
     assert spec.edit_context == "sending service panel"
     assert spec.edit_window_seconds == 300.0
+
+
+def test_send_autopilot_panel_marks_panel_for_editing(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    captured = {}
+
+    async def fake_send(message, spec):  # noqa: ANN001, ANN201
+        _ = message
+        captured["spec"] = spec
+        return True
+
+    monkeypatch.setattr(service.sink, "send", fake_send)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._send_autopilot_panel(MessageStub([]), ctx))
+
+    spec = captured["spec"]
+    assert spec.context == "sending autopilot panel"
+    assert spec.edit_context == "sending autopilot panel"
+    assert spec.edit_window_seconds == 300.0
+    assert "最新 Run: #1" in spec.text
+    assert "最近 runs:" in spec.text
+
+
+def test_send_autopilot_panel_shows_recent_runs_when_available(monkeypatch) -> None:
+    router = WizardRouterStub()
+    router.autopilot = SimpleNamespace(
+        get_latest_run_for_project=lambda project_id: AutopilotRunRecord(
+            id=1,
+            project_id=project_id,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="持续推进支付修复",
+            status="running_worker",
+            supervisor_session_id="sess-a",
+            worker_session_id="sess-b",
+            current_phase="worker",
+            cycle_count=2,
+            max_cycles=100,
+            no_progress_cycles=0,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="run tests next",
+            last_decision="continue",
+            last_worker_summary="已修改支付回调",
+            last_supervisor_summary="继续测试",
+            paused_reason=None,
+            stopped_by_user_id=None,
+        ),
+        list_runs_for_project=lambda project_id, limit=6: [
+            AutopilotRunRecord(
+                id=1,
+                project_id=project_id,
+                chat_id="1",
+                created_by_user_id=1,
+                goal="持续推进支付修复",
+                status="running_worker",
+                supervisor_session_id="sess-a",
+                worker_session_id="sess-b",
+                current_phase="worker",
+                cycle_count=2,
+                max_cycles=100,
+                no_progress_cycles=0,
+                same_instruction_cycles=0,
+                last_instruction_fingerprint="run tests next",
+                last_decision="continue",
+                last_worker_summary="已修改支付回调",
+                last_supervisor_summary="继续测试",
+                paused_reason=None,
+                stopped_by_user_id=None,
+            ),
+            AutopilotRunRecord(
+                id=2,
+                project_id=project_id,
+                chat_id="1",
+                created_by_user_id=1,
+                goal="分析告警",
+                status="paused",
+                supervisor_session_id="sess-c",
+                worker_session_id="sess-d",
+                current_phase="idle",
+                cycle_count=1,
+                max_cycles=100,
+                no_progress_cycles=0,
+                same_instruction_cycles=0,
+                last_instruction_fingerprint="check warnings",
+                last_decision="continue",
+                last_worker_summary="已分析一轮",
+                last_supervisor_summary="继续检查",
+                paused_reason="manual pause",
+                stopped_by_user_id=None,
+            ),
+        ][:limit]
+    )
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    captured = {}
+
+    async def fake_send(message, spec):  # noqa: ANN001, ANN201
+        _ = message
+        captured["spec"] = spec
+        return True
+
+    monkeypatch.setattr(service.sink, "send", fake_send)
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._send_autopilot_panel(MessageStub([]), ctx))
+
+    spec = captured["spec"]
+    assert "最近 runs:" in spec.text
+    assert "- #2 · paused · 1/100" in spec.text
 
 
 def test_send_model_panel_contains_model_buttons(monkeypatch) -> None:

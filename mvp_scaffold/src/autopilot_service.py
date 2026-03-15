@@ -83,6 +83,9 @@ class AutopilotService:
         runs = self.tasks.autopilot.list_runs_for_project(project_id=project_id, limit=1)
         return runs[0] if runs else None
 
+    def list_runs_for_project(self, *, project_id: int, limit: int = 20) -> list[AutopilotRunRecord]:
+        return self.tasks.autopilot.list_runs_for_project(project_id=project_id, limit=limit)
+
     def list_events(self, *, run_id: int, limit: int = 20) -> list[AutopilotEventRecord]:
         return self.tasks.autopilot.list_events(run_id=run_id, limit=limit)
 

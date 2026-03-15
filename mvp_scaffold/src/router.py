@@ -21,6 +21,7 @@ from src.formatters import (
     format_approval_required,
     format_autopilot_action_result,
     format_autopilot_context,
+    format_autopilot_runs,
     format_autopilot_status,
     format_autopilot_step_result,
     format_context,
@@ -224,6 +225,8 @@ class CommandRouter:
             return self._handle_task_current(ctx)
         if command == "/autopilot":
             return self._handle_autopilot(ctx, argument)
+        if command == "/autopilots":
+            return self._handle_autopilots(ctx)
         if command == "/autopilot-status":
             return self._handle_autopilot_status(ctx, argument)
         if command == "/autopilot-context":
@@ -1603,6 +1606,27 @@ class CommandRouter:
         return CommandResult(
             redact_text(format_autopilot_status(run=run, events=events)),
             metadata={"autopilot_run_id": run.id, "autopilot_run": run},
+        )
+
+    def _handle_autopilots(self, ctx: CommandContext) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.autopilot is None:
+            return CommandResult("当前未启用 autopilot。")
+
+        runs = self.autopilot.list_runs_for_project(project_id=active.project_id, limit=8)
+        latest_run = runs[0] if runs else None
+        self.audit.log(
+            action=audit_events.AUTOPILOT_VIEWED,
+            message="查看 autopilot runs 列表",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"count": len(runs)},
+        )
+        return CommandResult(
+            redact_text(format_autopilot_runs(runs)),
+            metadata={"autopilot_runs": runs, "autopilot_run": latest_run},
         )
 
     def _handle_autopilot_status(self, ctx: CommandContext, argument: str) -> CommandResult:
