@@ -69,6 +69,7 @@ class ProjectsStub:
                 path=Path("/tmp/project_templates/recon"),
                 description="信息收集目录模板",
                 default_autopilot_goal="对目标进行自动化信息收集",
+                default_autopilot_bootstrap_instruction="先读取 target.yaml 和 policy.yaml，再启动首轮 intake",
             )
         ]
 
@@ -97,6 +98,7 @@ class ProjectsStub:
         template_name: str | None = None,
         default_run_mode: str | None = None,
         default_autopilot_goal: str | None = None,
+        default_autopilot_bootstrap_instruction: str | None = None,
     ) -> None:
         _ = create_if_missing
         self.projects[key] = ProjectConfig(
@@ -107,6 +109,7 @@ class ProjectsStub:
             template_name=template_name,
             default_run_mode=default_run_mode,
             default_autopilot_goal=default_autopilot_goal,
+            default_autopilot_bootstrap_instruction=default_autopilot_bootstrap_instruction,
         )
 
     def set_default_project_root(self, root_path: Path) -> Path:
@@ -2494,6 +2497,7 @@ def test_project_templates_lists_available_presets() -> None:
     assert "【项目模板】" in result.reply_text
     assert "recon" in result.reply_text
     assert "自动化信息收集" in result.reply_text
+    assert "首轮启动" in result.reply_text
 
 
 def test_project_add_can_create_autopilot_project_from_template() -> None:
@@ -2513,6 +2517,7 @@ def test_project_add_can_create_autopilot_project_from_template() -> None:
     assert created.template_name == "recon"
     assert created.default_run_mode == "autopilot"
     assert created.default_autopilot_goal == "对目标进行自动化信息收集"
+    assert created.default_autopilot_bootstrap_instruction == "先读取 target.yaml 和 policy.yaml，再启动首轮 intake"
     assert autopilot.created_goals == ["对目标进行自动化信息收集"]
     assert autopilot.started_run_ids == [1]
 

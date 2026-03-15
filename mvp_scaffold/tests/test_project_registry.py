@@ -109,6 +109,7 @@ projects:
     template_name: recon
     default_run_mode: autopilot
     default_autopilot_goal: 收集信息
+    default_autopilot_bootstrap_instruction: 先读取 target.yaml 和 policy.yaml，再开始首轮信息收集
 """.strip(),
         encoding="utf-8",
     )
@@ -122,6 +123,7 @@ projects:
     assert project.template_name == "recon"
     assert project.default_run_mode == "autopilot"
     assert project.default_autopilot_goal == "收集信息"
+    assert project.default_autopilot_bootstrap_instruction == "先读取 target.yaml 和 policy.yaml，再开始首轮信息收集"
 
 
 def test_project_registry_lists_and_applies_templates(tmp_path: Path) -> None:
@@ -136,6 +138,7 @@ def test_project_registry_lists_and_applies_templates(tmp_path: Path) -> None:
 name: 自动化信息收集
 description: 收集域名、子域名和 URL
 default_autopilot_goal: 对目标进行自动化信息收集
+default_autopilot_bootstrap_instruction: 先读取 target.yaml 和 policy.yaml，再整理第一批资产入口
 """.strip(),
         encoding="utf-8",
     )
@@ -150,6 +153,7 @@ default_autopilot_goal: 对目标进行自动化信息收集
     presets = registry.list_project_templates()
     assert [preset.key for preset in presets] == ["recon"]
     assert presets[0].default_autopilot_goal == "对目标进行自动化信息收集"
+    assert presets[0].default_autopilot_bootstrap_instruction == "先读取 target.yaml 和 policy.yaml，再整理第一批资产入口"
 
     target = tmp_path / "workspace" / "demo"
     applied = registry.apply_project_template(template_key="recon", target_path=target)

@@ -22,6 +22,7 @@ class ProjectConfig:
     template_name: str | None = None
     default_run_mode: str | None = None
     default_autopilot_goal: str | None = None
+    default_autopilot_bootstrap_instruction: str | None = None
     is_active: bool = True
 
 
@@ -34,6 +35,7 @@ class ProjectTemplatePreset:
     path: Path
     description: str | None = None
     default_autopilot_goal: str | None = None
+    default_autopilot_bootstrap_instruction: str | None = None
 
 
 @dataclass(slots=True)

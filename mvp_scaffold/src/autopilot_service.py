@@ -330,7 +330,7 @@ class AutopilotService:
 
         cycle_no = run.cycle_count + 1
 
-        worker_instruction = self._resolve_worker_instruction(run=run)
+        worker_instruction = self._resolve_worker_instruction(project=project, run=run)
         worker_result = self._run_worker(
             project=project,
             run=run,
@@ -493,9 +493,12 @@ class AutopilotService:
                     state.actor = None
                     state.process = None
 
-    def _resolve_worker_instruction(self, *, run: AutopilotRunRecord) -> str:
+    def _resolve_worker_instruction(self, *, project: ProjectConfig, run: AutopilotRunRecord) -> str:
         if run.cycle_count == 0:
-            return self._build_initial_worker_prompt(goal=run.goal)
+            return self._build_initial_worker_prompt(
+                goal=run.goal,
+                bootstrap_instruction=project.default_autopilot_bootstrap_instruction,
+            )
 
         events = self.tasks.autopilot.list_events(run_id=run.id, limit=100)
         for event in reversed(events):
@@ -969,7 +972,9 @@ class AutopilotService:
                 return False
             return state.stop_requested
 
-    def _build_initial_worker_prompt(self, *, goal: str) -> str:
+    def _build_initial_worker_prompt(self, *, goal: str, bootstrap_instruction: str | None) -> str:
+        if bootstrap_instruction and bootstrap_instruction.strip():
+            return bootstrap_instruction.strip()
         return goal.strip()
 
     def _build_followup_worker_prompt(self, *, goal: str, instruction: str) -> str:

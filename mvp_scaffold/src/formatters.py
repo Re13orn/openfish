@@ -348,6 +348,8 @@ def format_autopilot_status(
     verdict, concerns, next_step = _autopilot_verdict(run, events)
     latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
     latest_supervisor = next((event for event in reversed(events) if event.actor == "supervisor"), None)
+    supervisor_state = _autopilot_actor_state(actor="supervisor", events=events, runtime=runtime)
+    worker_state = _autopilot_actor_state(actor="worker", events=events, runtime=runtime)
     lines = [
         f"Run: #{run.id}",
         f"目标: {_clip(run.goal, 160)}",
@@ -356,6 +358,8 @@ def format_autopilot_status(
         f"轮次: {run.cycle_count}/{run.max_cycles}",
         f"结论: {verdict}",
         f"关注点: {concerns}",
+        f"A 状态: {supervisor_state}",
+        f"B 状态: {worker_state}",
         f"A 会话: {run.supervisor_session_id or '暂无'}",
         f"B 会话: {run.worker_session_id or '暂无'}",
         f"最近判定: {run.last_decision or '暂无'}",
@@ -458,6 +462,8 @@ def format_autopilot_context(
     verdict, concerns, next_step = _autopilot_verdict(run, events)
     latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
     latest_supervisor = next((event for event in reversed(events) if event.actor == "supervisor"), None)
+    supervisor_state = _autopilot_actor_state(actor="supervisor", events=events, runtime=runtime)
+    worker_state = _autopilot_actor_state(actor="worker", events=events, runtime=runtime)
     lines = [
         f"Run: #{run.id}",
         f"状态: {run.status}",
@@ -465,6 +471,8 @@ def format_autopilot_context(
         f"轮次: {run.cycle_count}/{run.max_cycles}",
         f"结论: {verdict}",
         f"关注点: {concerns}",
+        f"A 状态: {supervisor_state}",
+        f"B 状态: {worker_state}",
         f"A 会话: {run.supervisor_session_id or '暂无'}",
         f"B 会话: {run.worker_session_id or '暂无'}",
         f"最近判定: {run.last_decision or '暂无'}",
@@ -556,8 +564,52 @@ def _autopilot_verdict(
     return ("接近阻塞", "；".join(concerns), "建议查看 /autopilot-context；必要时执行 /autopilot-pause 或 /autopilot-stop。")
 
 
+def _autopilot_actor_state(
+    *,
+    actor: str,
+    events: list[AutopilotEventRecord],
+    runtime: AutopilotRuntimeSnapshot | None,
+) -> str:
+    if runtime is not None and runtime.thread_alive and runtime.actor == actor:
+        if runtime.last_output_at is not None:
+            quiet_for = max(0.0, time.monotonic() - runtime.last_output_at)
+            if quiet_for >= 120:
+                return f"静默中（{_format_elapsed_seconds(quiet_for)} 无新输出）"
+        return "运行中"
+
+    if actor == "worker":
+        started_types = {"stage_started"}
+        completed_types = {"stage_completed", "stage_failed"}
+    else:
+        started_types = {"decision_started"}
+        completed_types = {"decision_made", "decision_failed"}
+
+    latest_started = next(
+        (event for event in reversed(events) if event.actor == actor and event.event_type in started_types),
+        None,
+    )
+    latest_completed = next(
+        (event for event in reversed(events) if event.actor == actor and event.event_type in completed_types),
+        None,
+    )
+
+    if latest_started is None and latest_completed is None:
+        return "未启动"
+    if latest_started is not None and (
+        latest_completed is None
+        or latest_started.cycle_no > latest_completed.cycle_no
+        or (latest_started.cycle_no == latest_completed.cycle_no and latest_started.id > latest_completed.id)
+    ):
+        return "已退出"
+    return "已完成上一轮"
+
+
 def _format_elapsed(started_at: float) -> str:
     elapsed = max(0.0, time.monotonic() - started_at)
+    return _format_elapsed_seconds(elapsed)
+
+
+def _format_elapsed_seconds(elapsed: float) -> str:
     if elapsed < 1:
         return "<1s"
     if elapsed < 60:

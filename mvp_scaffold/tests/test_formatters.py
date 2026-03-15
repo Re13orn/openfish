@@ -498,6 +498,8 @@ def test_format_autopilot_context_includes_recent_event_timeline() -> None:
     assert "当前执行者: worker" in text
     assert "当前 PID: 4321" in text
     assert "结论: 已暂停" in text
+    assert "A 状态: 已完成上一轮" in text
+    assert "B 状态: 运行中" in text
     assert "B 当前阻塞: pytest still failing on auth flow" in text
     assert "B 建议下一步: fix auth tests and rerun pytest" in text
     assert "A 判定理由: worker made progress but auth tests still fail" in text
@@ -542,6 +544,64 @@ def test_format_autopilot_status_includes_recent_raw_output() -> None:
     assert "原始输出:" in text
     assert "- B> scanning targets" in text
     assert "- B> collecting urls" in text
+
+
+def test_format_autopilot_context_marks_worker_as_quiet_when_no_recent_output() -> None:
+    run = AutopilotRunRecord(
+        id=6,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="对目标进行信息收集",
+        status="running_worker",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="worker",
+        cycle_count=2,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="collect urls",
+        last_decision="continue",
+        last_worker_summary="正在整理结果",
+        last_supervisor_summary="继续收集公开 URL",
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+    events = [
+        AutopilotEventRecord(
+            id=1,
+            run_id=6,
+            cycle_no=1,
+            actor="supervisor",
+            event_type="decision_made",
+            summary="继续收集公开 URL",
+            payload={"next_instruction_for_b": "collect urls"},
+        ),
+        AutopilotEventRecord(
+            id=2,
+            run_id=6,
+            cycle_no=2,
+            actor="worker",
+            event_type="stage_started",
+            summary="B 已启动本轮执行。",
+            payload=None,
+        ),
+    ]
+    runtime = AutopilotRuntimeSnapshot(
+        run_id=6,
+        actor="worker",
+        pid=24669,
+        process_started_at=time.monotonic() - 100,
+        thread_alive=True,
+        output_version=3,
+        last_output_at=time.monotonic() - 180,
+    )
+
+    text = format_autopilot_context(run=run, events=events, runtime=runtime)
+
+    assert "A 状态: 已完成上一轮" in text
+    assert "B 状态: 静默中" in text
 
 
 def test_format_autopilot_runs_lists_recent_runs() -> None:

@@ -141,6 +141,7 @@ class WizardRouterStub:
                     path=Path("/tmp/project_templates/recon"),
                     description="信息收集目录模板",
                     default_autopilot_goal="对目标进行自动化信息收集",
+                    default_autopilot_bootstrap_instruction="先读取 target.yaml 和 policy.yaml，再启动首轮 intake",
                 )
             ],
         )

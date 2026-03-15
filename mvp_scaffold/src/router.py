@@ -831,6 +831,9 @@ class CommandRouter:
                 template_name=template.key if template is not None else None,
                 default_run_mode=parsed.default_run_mode,
                 default_autopilot_goal=autopilot_goal,
+                default_autopilot_bootstrap_instruction=(
+                    template.default_autopilot_bootstrap_instruction if template is not None else None
+                ),
             )
         except ValueError as exc:
             return CommandResult(str(exc))
@@ -954,7 +957,12 @@ class CommandRouter:
                     if preset.default_autopilot_goal
                     else ""
                 )
-                lines.append(f"- {preset.key} ({preset.name}){description}{goal}")
+                bootstrap = (
+                    f" · 首轮启动: {_clip_text(preset.default_autopilot_bootstrap_instruction, 60)}"
+                    if preset.default_autopilot_bootstrap_instruction
+                    else ""
+                )
+                lines.append(f"- {preset.key} ({preset.name}){description}{goal}{bootstrap}")
             lines.append("下一步: /project-add <key> --template <模板名> [--mode autopilot]")
         self.audit.log(
             action=audit_events.TEMPLATES_VIEWED,

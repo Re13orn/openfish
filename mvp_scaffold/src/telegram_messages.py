@@ -116,6 +116,12 @@ def project_add_prompt(
         template_name = f"{template_name} ({template_map[template_name].name})"
     mode_text = data.get("default_run_mode") or "normal"
     goal_text = data.get("autopilot_goal") or "未设置"
+    bootstrap_text = "未设置"
+    template_key = data.get("template_name")
+    if template_key in template_map:
+        bootstrap_text = (
+            template_map[template_key].default_autopilot_bootstrap_instruction or "未设置"
+        )
     return (
         "项目新增向导 7/7\n"
         f"key: {data.get('key')}\n"
@@ -123,6 +129,7 @@ def project_add_prompt(
         f"模板: {template_name}\n"
         f"模式: {mode_text}\n"
         f"Autopilot 目标: {goal_text}\n"
+        f"首轮启动: {bootstrap_text}\n"
         f"名称: {name_text}\n"
         "回复“确认”执行，回复“取消”放弃。"
     )

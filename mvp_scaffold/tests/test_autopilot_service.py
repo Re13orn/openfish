@@ -236,6 +236,28 @@ def test_step_run_executes_worker_then_supervisor(tmp_path: Path) -> None:
     assert events[-2].payload == {"pid": 2001}
 
 
+def test_step_run_prefers_project_bootstrap_instruction_for_first_worker_round(tmp_path: Path) -> None:
+    _, service = _setup_service(tmp_path)
+    run = service.create_run(
+        project_id=1,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="请对目标做信息收集",
+    )
+
+    _ = service.step_run(
+        project=ProjectConfig(
+            key="demo",
+            name="Demo",
+            path=Path("/tmp"),
+            default_autopilot_bootstrap_instruction="先读取 target.yaml 和 policy.yaml，再开始首轮 intake",
+        ),
+        run_id=run.id,
+    )
+
+    assert service.codex.last_worker_instruction == "先读取 target.yaml 和 policy.yaml，再开始首轮 intake"
+
+
 def test_pause_resume_and_stop_run(tmp_path: Path) -> None:
     _, service = _setup_service(tmp_path)
     run = service.create_run(
@@ -355,7 +377,10 @@ def test_step_run_fallback_followup_prompt_does_not_require_structured_output(tm
         cycle_count=1,
     )
 
-    instruction = service._resolve_worker_instruction(run=service.get_run(run_id=run.id))  # type: ignore[arg-type]
+    instruction = service._resolve_worker_instruction(
+        project=ProjectConfig(key="demo", name="Demo", path=Path("/tmp")),
+        run=service.get_run(run_id=run.id),  # type: ignore[arg-type]
+    )
     assert instruction == "继续推进任务。"
 
 

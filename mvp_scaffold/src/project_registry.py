@@ -59,6 +59,9 @@ class ProjectRegistry:
                 template_name=self._normalize_optional_text(value.get("template_name")),
                 default_run_mode=self._normalize_optional_text(value.get("default_run_mode")),
                 default_autopilot_goal=self._normalize_optional_text(value.get("default_autopilot_goal")),
+                default_autopilot_bootstrap_instruction=self._normalize_optional_text(
+                    value.get("default_autopilot_bootstrap_instruction")
+                ),
                 is_active=is_active,
             )
 
@@ -108,6 +111,7 @@ class ProjectRegistry:
         template_name: str | None = None,
         default_run_mode: str | None = None,
         default_autopilot_goal: str | None = None,
+        default_autopilot_bootstrap_instruction: str | None = None,
     ) -> None:
         normalized_key = key.strip()
         if not PROJECT_KEY_PATTERN.match(normalized_key):
@@ -136,6 +140,9 @@ class ProjectRegistry:
             "template_name": self._normalize_optional_text(template_name),
             "default_run_mode": self._normalize_optional_text(default_run_mode),
             "default_autopilot_goal": self._normalize_optional_text(default_autopilot_goal),
+            "default_autopilot_bootstrap_instruction": self._normalize_optional_text(
+                default_autopilot_bootstrap_instruction
+            ),
             "is_active": True,
         }
         self._write_config(data)
@@ -190,6 +197,9 @@ class ProjectRegistry:
                     path=child.resolve(),
                     description=self._normalize_optional_text(metadata.get("description")),
                     default_autopilot_goal=self._normalize_optional_text(metadata.get("default_autopilot_goal")),
+                    default_autopilot_bootstrap_instruction=self._normalize_optional_text(
+                        metadata.get("default_autopilot_bootstrap_instruction")
+                    ),
                 )
             )
         return presets
