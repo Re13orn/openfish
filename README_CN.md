@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">OpenFish（小鱼）</h1>
-<p align="center"><strong>单用户、Telegram 驱动、本机运行的 Codex 远程助手</strong></p>
+<p align="center"><strong>单用户、Telegram 驱动、本机优先的 Codex 助手</strong></p>
 
 <p align="center">
   <a href="README.md">English</a> |
@@ -18,38 +18,36 @@
   <img alt="PyPI" src="https://img.shields.io/pypi/v/openfish" />
   <img alt="License" src="https://img.shields.io/badge/License-MIT-1f6feb" />
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white" />
-  <img alt="PRs" src="https://img.shields.io/badge/PRs-welcome-2ea043" />
-  <img alt="Architecture" src="https://img.shields.io/badge/Architecture-Single--Process-7a3cff" />
   <img alt="Powered by" src="https://img.shields.io/badge/Powered%20by-Codex%20CLI-d97706" />
 </p>
 
-OpenFish 面向一个可信 Owner，目标是让你离开工位时也能通过 Telegram 持续推进本地项目开发。
-系统坚持本地优先：代码、执行、状态、审批、审计都留在你的机器上。
+OpenFish 面向一个可信 Owner，让你离开工位时也能继续通过 Telegram 控制本地 Codex 工作流。
+代码、执行、审批、运行状态、审计日志都保留在你的机器上。
 
-## 产品定位
+## 它是什么
 
 OpenFish 适合：
 
 - 单用户场景
-- 以项目为边界的连续性管理
-- 默认保守的执行策略
-- 手机端可读的简洁交互
+- 以项目为边界的连续工作
+- 默认保守的本地执行
+- 手机上可读、可控的 Telegram 交互
 
 OpenFish 不做：
 
 - 多用户 Bot 平台
 - 公网远程 Shell
-- 云端编排系统
+- 云端编排层
 
-## ><> 安装
+## 安装
 
-先通过 PyPI 安装 `><> openfish`：
+通过 PyPI 安装：
 
 ```bash
 pip install openfish
 ```
 
-然后初始化并启动：
+初始化并启动：
 
 ```bash
 openfish install
@@ -58,40 +56,13 @@ openfish check
 openfish start
 ```
 
-如果你是在源码仓库里开发：
+如果你是在源码仓库中开发：
 
 ```bash
 pip install -e ./mvp_scaffold
 ```
 
-## ><> 快速开始
-
-统一通过 `><> openfish` CLI 使用：
-
-- `openfish install`
-- `openfish configure`
-- `openfish check`
-- `openfish start`
-
-当前主生命周期命令：
-
-- `openfish install`
-- `openfish uninstall`
-- `openfish configure`
-- `openfish init-home`
-- `openfish check`
-- `openfish start`
-- `openfish stop`
-- `openfish restart`
-- `openfish status`
-- `openfish logs`
-
-更新行为按安装模式区分：
-
-- 仓库模式：`openfish update` 走 git 自更新
-- 包/home 模式：使用 `python -m pip install --upgrade openfish`
-
-如果你想把运行时数据放到用户目录，而不是仓库目录：
+如果你希望运行时数据放到用户目录：
 
 ```bash
 openfish init-home
@@ -112,62 +83,62 @@ openfish uninstall
 openfish uninstall --purge-runtime
 ```
 
-如果你还不知道自己的 Telegram 用户 ID，先给 bot 发 `/start`，再执行：
+## 日常使用路径
 
-```bash
-openfish tg-user-id
-```
+典型工作流：
 
-旧脚本入口仍保留兼容：
+1. 打开 Telegram，进入 `/home`
+2. 用 `/projects` 或 `/use <project>` 选项目
+3. 发 `/ask`、`/do`、`/resume` 或 `/autopilot`
+4. 用 `/status`、`/health`、`/task-current`、`/autopilot-status` 查看状态
+5. 需要时进行审批、暂停、恢复、停止或人工接管
 
-```bash
-bash mvp_scaffold/scripts/install_start.sh start
-```
+已经内置的 Telegram 控制面：
+
+- 首页控制台
+- 服务面板
+- 当前上下文卡片
+- 项目 / 任务 / 会话 / MCP 控制
+- 审批卡片和分步向导
 
 ## 核心能力
 
 - 项目生命周期：查看、切换、新增、停用、归档
-- 任务生命周期：`/ask`、`/do`、`/resume`、`/retry`、`/cancel`
-- Autopilot 生命周期：创建长期 supervisor-worker run、查看状态/上下文、暂停、恢复、单步推进、人工接管、停止
-- 任务管理：当前任务、任务列表、取消、删除、批量清理
+- 任务生命周期：提问、执行、继续、重试、取消、删除、批量清理
 - 定时任务：新增、查看、触发、暂停、启用、删除
-- 审批流程：`/approve`、`/reject`、备注/原因延续
-- 项目记忆：笔记、任务摘要、状态快照、分页查看
-- 会话浏览：统一查看 OpenFish 与本机 Codex 会话并导入
+- 记忆与会话：笔记、摘要、会话浏览、会话导入
 - MCP 控制：查看、启用、停用
 - 服务控制：版本、更新检查、自更新、重启、日志
-- 文件处理：上传分析、本机文件下载到 Telegram、公开 GitHub 仓库下载到项目目录
+- GitHub 与文件辅助：公开仓库克隆、上传分析、文件回传 Telegram
 
-## Telegram 交互
+## Autopilot
 
-- 高频主键盘：`项目`、`提问`、`执行`、`状态`、`继续`、`变更`、`定时`、`更多`、`帮助`
-- 审批和任务控制优先按钮化
-- Autopilot 卡片支持状态/上下文查看、暂停/恢复/停止、人工接管，以及暂停态单步推进
-- 新增项目、定时任务、审批备注/拒绝原因都支持可恢复向导
-- 默认 `stream` 模式，可通过 `/ui reset` 回到默认
-- `状态`、`项目`、`定时`、`审批`、`更多`、`记忆`、`当前任务` 卡片优先原地更新
-- 发送链路有短窗口去重和最近消息引用跟踪，减少刷屏
+Autopilot 是 OpenFish 的长期任务 supervisor-worker 模式。
 
-## 本次更新
+- `A` 是监督者 / 指挥者
+- `B` 是执行者
+- 人主要负责观察、暂停、恢复、停止或接管
 
-- 新增 `autopilot` supervisor-worker 长任务模式，解决长任务频繁停下来等人发一句“继续”的问题
-- 新增后台自治循环，并带明确停止条件
-- 新增 `/autopilots`，可查看和管理最近多个 run
-- 新增 `/autopilot-status`、`/autopilot-context` 观察视图
-- 支持暂停、恢复、停止、人工接管，以及暂停态单步推进
-- 首页、更多、服务面板都已接入 Autopilot 入口和控制按钮
+当前 Autopilot 已支持：
+
+- 后台自治循环
+- 明确停止条件
+- 状态卡片和上下文卡片
+- A/B 原始输出可见
+- 暂停、恢复、停止、人工接管
+- 暂停态单步执行
+- `/autopilots` 管理最近多个 run
 
 Autopilot 工作流：
 
 ```mermaid
 flowchart TD
     H[人发起 /autopilot 目标] --> R[创建 run]
-    R --> W[执行者 B 跑一轮]
-    W --> BO[B 输出结构化结果]
-    BO --> A[监督者 A 评估结果]
+    R --> W[执行者 B 开始执行]
+    W --> A[监督者 A 评估]
     A --> D{A 的判定}
 
-    D -->|continue| N[A 给 B 下一步]
+    D -->|continue| N[A 给 B 下一步指令]
     N --> W
 
     D -->|complete| C[任务完成]
@@ -178,25 +149,62 @@ flowchart TD
     CTRL --> W
 ```
 
-## ><> Docker 运行
+Autopilot 主要命令：
 
-仓库已经提供 Docker 独立运行模式，可用于长期自托管部署：
+- `/autopilot <goal>`
+- `/autopilots`
+- `/autopilot-status [id]`
+- `/autopilot-context [id]`
+- `/autopilot-step [id]`
+- `/autopilot-pause [id]`
+- `/autopilot-resume [id]`
+- `/autopilot-stop [id]`
+- `/autopilot-takeover <instruction>`
+
+## 项目模板
+
+现在可以基于模板目录创建项目，并直接以 Autopilot 模式开跑。
+
+模板使用路径：
+
+1. 设置模板根目录
+2. 查看可用模板
+3. 基于模板创建项目
+4. 选择 `normal` 或 `autopilot`
+5. 如果选择 `autopilot`，OpenFish 可在创建后直接启动 run
+
+模板命令：
+
+- `/project-template-root [绝对路径]`
+- `/project-templates`
+- `/project-add <key> --template <name> --mode autopilot`
+
+模板目录约定：
+
+- 模板根目录下每个子目录就是一个模板
+- 可选模板元数据文件：`.openfish-template.yaml`
+- 模板目录可以自带 `AGENTS.md`、skills、MCP 配置和工作目录约定
+
+元数据示例：
+
+```yaml
+name: Recon Workspace
+description: 收集域名、子域名和 URL
+default_autopilot_goal: 对目标进行公开资产信息收集
+```
+
+## Docker
+
+OpenFish 也提供独立 Docker 运行态。
+
+初始化：
 
 ```bash
 openfish docker-init
 ```
 
-当前 Docker 模式已经改成独立运行态：
+Docker 辅助命令：
 
-- OpenFish home 固定在 Docker volume `/var/lib/openfish`
-- 默认项目根目录固定为 `/workspace/projects`
-- Codex 登录态保存在 Docker volume `/root/.codex`
-- 运行时状态、日志、SQLite、`projects.yaml` 都放在 named volumes
-- 不再直接复用宿主机仓库里的 `.env`、`projects.yaml`、`mvp_scaffold/data`
-
-可用的 Docker 辅助命令：
-
-- `openfish docker-init`
 - `openfish docker-configure`
 - `openfish docker-up`
 - `openfish docker-down`
@@ -206,114 +214,77 @@ openfish docker-init
 - `openfish docker-login-codex`
 - `openfish docker-codex-status`
 
-推荐流程：
+当前 Docker 运行方式：
 
-1. `openfish docker-init`
-2. `openfish docker-login-codex`
-3. `openfish docker-codex-status`
-
-`openfish docker-login-codex` 支持：
-
-- 官方 device auth 登录
-- 导入本机 `~/.codex/auth.json` 或任意 auth.json 路径
-- 直接粘贴原始 `auth.json` 内容
+- OpenFish home 在 `/var/lib/openfish`
+- 默认项目根目录是 `/workspace/projects`
+- Codex 登录态在 `/root/.codex`
+- 运行时状态使用 named volumes
 
 ## 架构
-
-### 模块视图
 
 ```mermaid
 flowchart LR
     U[Telegram 用户] --> TG[Telegram Bot API]
-    TG --> A[telegram_adapter.py]
-    A --> R[router.py]
+    TG --> TA[telegram_adapter.py]
+    TA --> R[router.py]
 
     R --> PR[project_registry.py]
     R --> TS[task_store.py]
-    R --> AU[audit.py]
-    R --> AP[approval.py]
+    R --> AS[autopilot_service.py]
     R --> CR[codex_runner.py]
-    R --> RI[repo_inspector.py]
-    R --> SS[skills_service.py]
     R --> MS[mcp_service.py]
+    R --> SS[skills_service.py]
 
-    CR --> CCLI[Codex CLI]
-    CCLI --> REPO[本地项目仓库]
+    AS --> CCLI[Codex CLI]
+    CR --> CCLI
+    CCLI --> REPO[本地项目目录]
 
     TS --> DB[(SQLite)]
-    AU --> DB
     PR --> CFG[projects.yaml]
-
-    SCH[scheduler.py] --> TS
-    SCH --> R
 ```
 
-### 运行流程
+## 命令面
 
-```mermaid
-sequenceDiagram
-    participant User as Telegram用户
-    participant Adapter as Telegram适配层
-    participant Router as CommandRouter
-    participant Store as TaskStore
-    participant Codex as CodexRunner
+高频命令：
 
-    User->>Adapter: /ask 或 /do
-    Adapter->>Router: CommandContext
-    Router->>Store: 创建任务并标记 running
-    Router->>Codex: 在当前项目执行请求
-    Codex-->>Router: summary/session/exit_code
-    Router->>Store: 完成任务并更新项目状态
-    Router-->>Adapter: CommandResult
-    Adapter-->>User: 手机端友好摘要
-```
-
-## ><> 命令总览
-
-核心命令：
-
-- `/projects`, `/use <project>`, `/status`
+- `/projects`, `/use <project>`, `/status`, `/health`
 - `/ask <question>`, `/do <task>`, `/resume [task_id] [instruction]`
-- `/autopilot <goal>`, `/autopilots`, `/autopilot-status [id]`, `/autopilot-context [id]`
-- `/autopilot-step [id]`, `/autopilot-pause [id]`, `/autopilot-resume [id]`, `/autopilot-stop [id]`
-- `/autopilot-takeover <instruction>`
-- `/approve [note]`, `/reject [reason]`, `/cancel`
+- `/task-current`, `/tasks`, `/cancel`
+- `/autopilot <goal>`, `/autopilot-status`, `/autopilot-context`
+- `/approve [note]`, `/reject [reason]`
 - `/diff`, `/memory`, `/note <text>`, `/help`
 
-扩展命令：
+配置和扩展命令：
 
-- `/project-root [abs_path]`
+- `/project-root [绝对路径]`
 - `/project-add`, `/project-disable`, `/project-archive`
-- `/tasks`, `/task-current`, `/task-cancel`, `/task-delete`, `/tasks-clear`
+- `/project-template-root [绝对路径]`, `/project-templates`
 - `/sessions`, `/session`, `/session-import`
-- `/skills`, `/skill-install`
 - `/schedule-add`, `/schedule-list`, `/schedule-run`, `/schedule-pause`, `/schedule-enable`, `/schedule-del`
 - `/mcp`, `/mcp-enable`, `/mcp-disable`
 - `/model`, `/ui`, `/ui-reset`
 - `/version`, `/update-check`, `/update`, `/restart`, `/logs`, `/logs-clear`
 - `/download-file`, `/github-clone`, `/upload_policy`
 
-快捷按钮覆盖全部命令能力：
-
-- 无参数命令可直接点击执行
-- 高频有参操作会进入可恢复的分步向导
-
 ## 文档导航
 
-面向使用者：
-
-- Persistence 说明：[docs/PERSISTENCE_ARCHITECTURE.md](docs/PERSISTENCE_ARCHITECTURE.md)
-- 安装部署与使用手册：[docs/安装部署和使用手册.md](docs/安装部署和使用手册.md)
+- 英文首页：[README.md](README.md)
+- 更新日志：[CHANGELOG.md](CHANGELOG.md)
+- 持久化架构：[docs/PERSISTENCE_ARCHITECTURE.md](docs/PERSISTENCE_ARCHITECTURE.md)
+- 安装、部署、使用手册：[docs/安装部署和使用手册.md](docs/安装部署和使用手册.md)
+- Autopilot 设计：[docs/AUTOPILOT_V1_DESIGN.md](docs/AUTOPILOT_V1_DESIGN.md)
+- Autopilot 工作流：[docs/AUTOPILOT_WORKFLOW.md](docs/AUTOPILOT_WORKFLOW.md)
 
 ## 仓库结构
 
-- 运行主目录：`mvp_scaffold/`
+- 主运行目录：`mvp_scaffold/`
 - 文档目录：`docs/`
 - 配置样例：`env.example`, `projects.example.yaml`
 - 包内运行资源：`mvp_scaffold/src/resources/`
 
 ## 安全提示
 
-- Token 若出现在日志或截图中，请立即轮换。
-- 不要提交 `.env`、运行时数据目录、含敏感信息的本地配置。
+- Token 一旦出现在日志或截图中，请立即轮换。
+- 不要提交 `.env`、运行时数据、含敏感信息的本地文件。
 - 项目路径授权建议最小化并显式配置。
