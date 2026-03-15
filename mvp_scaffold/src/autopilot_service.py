@@ -63,6 +63,7 @@ class AutopilotService:
     """Owns autopilot run lifecycle and one-step supervisor-worker execution."""
 
     TERMINAL_STATUSES = {"completed", "blocked", "needs_human", "stopped", "failed"}
+    WORKER_OUTPUT_EXCERPT_LIMIT = 1200
 
     def __init__(self, *, tasks: TaskStore, codex) -> None:  # noqa: ANN001
         self.tasks = tasks
@@ -338,6 +339,10 @@ class AutopilotService:
             progress_callback=progress_callback,
         )
         worker_payload = self._parse_worker_payload(worker_result)
+        worker_event_payload = self._build_worker_event_payload(
+            worker_result=worker_result,
+            worker_payload=worker_payload,
+        )
         interrupted_run = self.tasks.autopilot.get_run(run_id=run.id)
         if interrupted_run is not None and interrupted_run.status in {"paused", "stopped"}:
             return AutopilotStepResult(
@@ -353,7 +358,7 @@ class AutopilotService:
             actor="worker",
             event_type="stage_completed" if worker_result.ok else "stage_failed",
             summary=worker_result.summary,
-            payload=worker_payload,
+            payload=worker_event_payload,
         )
         self.tasks.autopilot.update_run(
             run_id=run.id,
@@ -667,6 +672,18 @@ class AutopilotService:
             return parsed
         return None
 
+    def _build_worker_event_payload(
+        self,
+        *,
+        worker_result: CodexRunResult,
+        worker_payload: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        payload = dict(worker_payload or {})
+        raw_output_excerpt = worker_result.stdout.strip()
+        if raw_output_excerpt:
+            payload["raw_output_excerpt"] = raw_output_excerpt[: self.WORKER_OUTPUT_EXCERPT_LIMIT]
+        return payload
+
     def _parse_supervisor_payload(self, result: CodexRunResult) -> dict[str, Any]:
         parsed = self._extract_json_object(result.stdout) or self._extract_json_object(result.summary)
         if isinstance(parsed, dict):
@@ -777,7 +794,7 @@ class AutopilotService:
             payload = event.payload if isinstance(event.payload, dict) else None
             if self._worker_claims_completion(
                 summary=event.summary or "",
-                stdout=(payload or {}).get("raw_output", "") if payload else "",
+                stdout=(payload or {}).get("raw_output_excerpt", "") if payload else "",
                 payload=payload,
             ):
                 count += 1

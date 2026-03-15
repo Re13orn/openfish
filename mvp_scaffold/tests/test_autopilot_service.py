@@ -400,6 +400,44 @@ def test_supervisor_forces_verification_rounds_after_repeated_completion_claims(
     assert "Do not assume the task is complete" in result.supervisor_payload["next_instruction_for_b"]
 
 
+def test_historical_completion_claims_are_detected_from_worker_raw_output_excerpt(tmp_path: Path) -> None:
+    tasks, _ = _setup_service(tmp_path)
+    service = AutopilotService(tasks=tasks, codex=CompletionClaimCodexStub())
+    run = service.create_run(
+        project_id=1,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+    )
+
+    tasks.autopilot.append_event(
+        run_id=run.id,
+        cycle_no=1,
+        actor="worker",
+        event_type="stage_completed",
+        summary="progress update",
+        payload={"raw_output_excerpt": "all done, finished, nothing left"},
+    )
+    tasks.autopilot.append_event(
+        run_id=run.id,
+        cycle_no=2,
+        actor="worker",
+        event_type="stage_completed",
+        summary="another update",
+        payload={"raw_output_excerpt": "completed and verified"},
+    )
+
+    result = service.step_run(
+        project=ProjectConfig(key="demo", name="Demo", path=Path("/tmp")),
+        run_id=run.id,
+    )
+
+    assert result.supervisor_payload is not None
+    assert result.supervisor_payload["completion_claim_count"] >= 3
+    assert result.supervisor_payload["supervision_mode"] == "hard_verify"
+    assert result.supervisor_payload["decision_overridden"] is True
+
+
 def test_step_run_allows_single_step_from_paused_and_returns_to_paused(tmp_path: Path) -> None:
     _, service = _setup_service(tmp_path)
     run = service.create_run(
