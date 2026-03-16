@@ -21,6 +21,7 @@ from src.formatters import (
     format_approval_required,
     format_autopilot_action_result,
     format_autopilot_context,
+    format_autopilot_log,
     format_autopilot_runs,
     format_autopilot_status,
     format_autopilot_step_result,
@@ -243,6 +244,8 @@ class CommandRouter:
             return self._handle_autopilot_status(ctx, argument)
         if command == "/autopilot-context":
             return self._handle_autopilot_context(ctx, argument)
+        if command == "/autopilot-log":
+            return self._handle_autopilot_log(ctx, argument)
         if command == "/autopilot-takeover":
             return self._handle_autopilot_takeover(ctx, argument)
         if command == "/autopilot-step":
@@ -1805,6 +1808,9 @@ class CommandRouter:
         events = self.autopilot.list_events(run_id=run.id, limit=10)
         runtime = self.autopilot.get_runtime_snapshot(run_id=run.id)
         raw_output_lines = self.autopilot.get_recent_output(run_id=run.id, limit=8)
+        persisted_stream_lines = self._render_autopilot_stream_lines(
+            self.autopilot.list_stream_chunks(run_id=run.id, limit=12)
+        )
         self.audit.log(
             action=audit_events.AUTOPILOT_VIEWED,
             message=f"查看 autopilot context #{run.id}",
@@ -1819,8 +1825,35 @@ class CommandRouter:
                     events=events,
                     runtime=runtime,
                     raw_output_lines=raw_output_lines,
+                    persisted_stream_lines=persisted_stream_lines,
                 )
             ),
+            metadata={"autopilot_run_id": run.id, "autopilot_run": run},
+        )
+
+    def _handle_autopilot_log(self, ctx: CommandContext, argument: str) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        if self.autopilot is None:
+            return CommandResult("当前未启用 autopilot。")
+
+        run_or_result = self._resolve_autopilot_run(project_id=active.project_id, argument=argument)
+        if isinstance(run_or_result, CommandResult):
+            return run_or_result
+        if run_or_result is None:
+            return CommandResult("当前项目还没有 autopilot run。")
+        run = run_or_result
+        chunks = self.autopilot.list_stream_chunks(run_id=run.id, limit=200)
+        self.audit.log(
+            action=audit_events.AUTOPILOT_VIEWED,
+            message=f"查看 autopilot log #{run.id}",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"run_id": run.id, "view": "log"},
+        )
+        return CommandResult(
+            redact_text(format_autopilot_log(run=run, chunks=chunks)),
             metadata={"autopilot_run_id": run.id, "autopilot_run": run},
         )
 
@@ -2769,6 +2802,13 @@ class CommandRouter:
         if run is None or run.project_id != project_id:
             return CommandResult(f"autopilot run #{raw} 不存在或不属于当前项目。")
         return run
+
+    def _render_autopilot_stream_lines(self, chunks) -> list[str]:  # noqa: ANN001
+        lines: list[str] = []
+        for chunk in chunks:
+            actor_label = "A" if chunk.actor == "supervisor" else "B"
+            lines.append(f"{chunk.cycle_no}:{actor_label}>[{chunk.channel}] {chunk.content}")
+        return lines
 
     def _refresh_repo_state(self, *, project_id: int, project: ProjectConfig) -> None:
         repo_state = self.repo.inspect(project.path)

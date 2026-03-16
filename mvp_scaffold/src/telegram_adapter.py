@@ -112,6 +112,7 @@ class TelegramBotService:
         "autopilots": "/autopilots",
         "autopilot_status": "/autopilot-status",
         "autopilot_context": "/autopilot-context",
+        "autopilot_log": "/autopilot-log",
         "autopilot_step": "/autopilot-step",
         "autopilot_pause": "/autopilot-pause",
         "autopilot_resume": "/autopilot-resume",
@@ -696,6 +697,7 @@ class TelegramBotService:
                 for prefix, command in (
                     ("autopilot_status:", "/autopilot-status "),
                     ("autopilot_context:", "/autopilot-context "),
+                    ("autopilot_log:", "/autopilot-log "),
                     ("autopilot_step:", "/autopilot-step "),
                     ("autopilot_pause:", "/autopilot-pause "),
                     ("autopilot_resume:", "/autopilot-resume "),

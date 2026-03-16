@@ -56,7 +56,7 @@ class Application:
         )
         self.github_repos = GitHubRepoService()
         self.repo = RepoInspector()
-        self.autopilot = AutopilotService(tasks=self.tasks, codex=self.codex)
+        self.autopilot = AutopilotService(tasks=self.tasks, codex=self.codex, config=config)
         self.router = CommandRouter(
             config=config,
             projects=self.projects,

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from src import audit_events
 from src.approval import ApprovalService
 from src.autopilot_service import AutopilotRuntimeSnapshot
+from src.autopilot_store import AutopilotStreamChunkRecord
 from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.codex_runner import CodexRunResult
@@ -1009,6 +1010,24 @@ class AutopilotStub:
         self.started_run_ids: list[int] = []
         self.takeover_instructions: list[str] = []
         self.raw_output_lines: list[str] = ["B> opening scope page", "B> extracting urls"]
+        self.stream_chunks = [
+            AutopilotStreamChunkRecord(
+                id=1,
+                run_id=self.run.id,
+                cycle_no=1,
+                actor="worker",
+                channel="stderr",
+                content="opening scope page",
+            ),
+            AutopilotStreamChunkRecord(
+                id=2,
+                run_id=self.run.id,
+                cycle_no=1,
+                actor="supervisor",
+                channel="stdout",
+                content='{"decision":"continue"}',
+            ),
+        ]
         self.runs = [self.run]
         self.runtime = AutopilotRuntimeSnapshot(
             run_id=self.run.id,
@@ -1071,6 +1090,10 @@ class AutopilotStub:
     def get_recent_output(self, *, run_id: int, limit: int = 12):  # noqa: ANN201
         _ = run_id
         return self.raw_output_lines[-limit:]
+
+    def list_stream_chunks(self, *, run_id: int, limit: int = 200):  # noqa: ANN201
+        _ = run_id
+        return self.stream_chunks[-limit:]
 
     def step_run(self, *, project, run_id: int, model: str | None = None, progress_callback=None):  # noqa: ANN001, ANN201
         _ = project
@@ -1438,6 +1461,21 @@ def test_autopilot_context_returns_sessions_and_counters() -> None:
     assert "B 会话: sess-b" in result.reply_text
     assert "当前 PID: 4321" in result.reply_text
     assert "无进展计数: 1" in result.reply_text
+    assert audit.events[-1][0] == audit_events.AUTOPILOT_VIEWED
+
+
+def test_autopilot_log_returns_persisted_stream() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilot-log"))
+
+    assert "【Autopilot Log】" in result.reply_text
+    assert "持久化流条数: 2" in result.reply_text
+    assert "1:B>[stderr] opening scope page" in result.reply_text
     assert audit.events[-1][0] == audit_events.AUTOPILOT_VIEWED
 
 

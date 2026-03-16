@@ -80,3 +80,4 @@ def test_repository_migrations_include_autopilot_tables(tmp_path: Path) -> None:
 
     assert "autopilot_runs" in tables
     assert "autopilot_events" in tables
+    assert "autopilot_stream_chunks" in tables

@@ -41,6 +41,16 @@ class AutopilotEventRecord:
     payload: dict[str, Any] | None
 
 
+@dataclass(slots=True)
+class AutopilotStreamChunkRecord:
+    id: int
+    run_id: int
+    cycle_no: int
+    actor: str
+    channel: str
+    content: str
+
+
 class AutopilotStore:
     """Encapsulates persistence for autopilot runs and their event logs."""
 
@@ -265,6 +275,50 @@ class AutopilotStore:
                 )
             )
         return records
+
+    def append_stream_chunk(
+        self,
+        *,
+        run_id: int,
+        cycle_no: int,
+        actor: str,
+        channel: str,
+        content: str,
+    ) -> int:
+        connection = self.db.get_connection()
+        cursor = connection.execute(
+            """
+            INSERT INTO autopilot_stream_chunks (
+                run_id, cycle_no, actor, channel, content
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (run_id, cycle_no, actor, channel, content),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+    def list_stream_chunks(self, *, run_id: int, limit: int = 200) -> list[AutopilotStreamChunkRecord]:
+        rows = self.db.get_connection().execute(
+            """
+            SELECT id, run_id, cycle_no, actor, channel, content
+            FROM autopilot_stream_chunks
+            WHERE run_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (run_id, limit),
+        ).fetchall()
+        return list(reversed([
+            AutopilotStreamChunkRecord(
+                id=int(row["id"]),
+                run_id=int(row["run_id"]),
+                cycle_no=int(row["cycle_no"]),
+                actor=str(row["actor"]),
+                channel=str(row["channel"]),
+                content=str(row["content"]),
+            )
+            for row in rows
+        ]))
 
     def _row_to_run(self, row) -> AutopilotRunRecord:  # noqa: ANN001
         return AutopilotRunRecord(

@@ -595,11 +595,12 @@ class TelegramViewFactory:
             rows.append(
                 [
                     InlineKeyboardButton(text="当前上下文", callback_data="cmd:autopilot_context"),
-                    InlineKeyboardButton(text="人工接管", callback_data="prompt:autopilot_takeover"),
+                    InlineKeyboardButton(text="流回顾", callback_data="cmd:autopilot_log"),
                 ]
             )
             rows.append(
                 [
+                    InlineKeyboardButton(text="人工接管", callback_data="prompt:autopilot_takeover"),
                     InlineKeyboardButton(text="暂停", callback_data="cmd:autopilot_pause"),
                     InlineKeyboardButton(text="停止", callback_data="cmd:autopilot_stop"),
                 ]
@@ -608,13 +609,28 @@ class TelegramViewFactory:
             rows.append(
                 [
                     InlineKeyboardButton(text="当前上下文", callback_data="cmd:autopilot_context"),
-                    InlineKeyboardButton(text="人工接管", callback_data="prompt:autopilot_takeover"),
+                    InlineKeyboardButton(text="流回顾", callback_data="cmd:autopilot_log"),
                 ]
             )
             rows.append(
                 [
+                    InlineKeyboardButton(text="人工接管", callback_data="prompt:autopilot_takeover"),
                     InlineKeyboardButton(text="只跑一轮", callback_data="cmd:autopilot_step"),
                     InlineKeyboardButton(text="恢复", callback_data="cmd:autopilot_resume"),
+                    InlineKeyboardButton(text="停止", callback_data="cmd:autopilot_stop"),
+                ]
+            )
+        elif run is not None and run.status in {"blocked", "needs_human", "failed", "stopped"}:
+            rows.append(
+                [
+                    InlineKeyboardButton(text="当前上下文", callback_data="cmd:autopilot_context"),
+                    InlineKeyboardButton(text="流回顾", callback_data="cmd:autopilot_log"),
+                ]
+            )
+            rows.append(
+                [
+                    InlineKeyboardButton(text="人工接管", callback_data="prompt:autopilot_takeover"),
+                    InlineKeyboardButton(text="Autopilot 状态", callback_data="cmd:autopilot_status"),
                     InlineKeyboardButton(text="停止", callback_data="cmd:autopilot_stop"),
                 ]
             )
@@ -644,6 +660,7 @@ class TelegramViewFactory:
                 [
                     InlineKeyboardButton(text=f"状态 #{run.id}", callback_data=f"cmd:autopilot_status:{run.id}"),
                     InlineKeyboardButton(text="上下文", callback_data=f"cmd:autopilot_context:{run.id}"),
+                    InlineKeyboardButton(text="回顾", callback_data=f"cmd:autopilot_log:{run.id}"),
                 ]
             )
             if run.status in {"created", "running_worker", "running_supervisor"}:
@@ -658,6 +675,13 @@ class TelegramViewFactory:
                     [
                         InlineKeyboardButton(text="只跑一轮", callback_data=f"cmd:autopilot_step:{run.id}"),
                         InlineKeyboardButton(text="恢复", callback_data=f"cmd:autopilot_resume:{run.id}"),
+                        InlineKeyboardButton(text="停止", callback_data=f"cmd:autopilot_stop:{run.id}"),
+                    ]
+                )
+            elif run.status in {"blocked", "needs_human", "failed", "stopped"}:
+                rows.append(
+                    [
+                        InlineKeyboardButton(text="人工接管", callback_data="prompt:autopilot_takeover"),
                         InlineKeyboardButton(text="停止", callback_data=f"cmd:autopilot_stop:{run.id}"),
                     ]
                 )

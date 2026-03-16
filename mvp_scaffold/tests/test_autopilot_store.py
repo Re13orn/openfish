@@ -115,3 +115,30 @@ def test_list_runs_for_project_orders_latest_first(tmp_path: Path) -> None:
 
     assert runs[0].id == newer_id
     assert runs[1].id == older_id
+
+
+def test_autopilot_stream_chunks_round_trip(tmp_path: Path) -> None:
+    _, store = _setup_store(tmp_path)
+    run_id = store.create_run(
+        project_id=1,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="推进信息收集",
+    )
+
+    chunk_id = store.append_stream_chunk(
+        run_id=run_id,
+        cycle_no=1,
+        actor="worker",
+        channel="stderr",
+        content="mcp github starting",
+    )
+
+    chunks = store.list_stream_chunks(run_id=run_id)
+
+    assert len(chunks) == 1
+    assert chunks[0].id == chunk_id
+    assert chunks[0].cycle_no == 1
+    assert chunks[0].actor == "worker"
+    assert chunks[0].channel == "stderr"
+    assert chunks[0].content == "mcp github starting"

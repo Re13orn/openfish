@@ -99,6 +99,27 @@ def test_model_is_passed_to_codex_exec() -> None:
     assert runner.commands[0][model_index + 1] == "o3"
 
 
+def test_explicit_sandbox_and_approval_overrides_are_used() -> None:
+    runner = StubCodexRunner(
+        responses=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+        ]
+    )
+
+    result = runner.run(
+        _project(),
+        "hello",
+        sandbox_mode="danger-full-access",
+        approval_mode="never",
+    )
+
+    assert result.ok is True
+    sandbox_flag_index = runner.commands[0].index("--sandbox")
+    assert runner.commands[0][sandbox_flag_index + 1] == "danger-full-access"
+    approval_flag_index = runner.commands[0].index("--ask-for-approval")
+    assert runner.commands[0][approval_flag_index + 1] == "never"
+
+
 def test_fallback_removes_json_then_approval_flag() -> None:
     runner = StubCodexRunner(
         responses=[

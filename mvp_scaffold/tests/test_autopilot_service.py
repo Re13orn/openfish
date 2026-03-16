@@ -29,14 +29,18 @@ class CodexStub:
         self.last_worker_instruction: str | None = None
         self.last_supervisor_prompt: str | None = None
 
-    def run(self, project, prompt: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+    def run(self, project, prompt: str, *, model=None, sandbox_mode=None, approval_mode=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
         self.last_worker_instruction = prompt
         _ = model
-        _ = progress_callback
+        _ = sandbox_mode
+        _ = approval_mode
         if process_callback is not None:
             process_callback(SimpleNamespace(pid=1001))
             process_callback(None)
+        if progress_callback is not None:
+            progress_callback("stderr", "opened policy scopes page")
+            progress_callback("stderr", "found target domains")
         self.calls.append("run")
         return _codex_result(
             "worker round 1",
@@ -44,15 +48,18 @@ class CodexStub:
             stdout="opened policy scopes page\nfound target domains\ncollecting public urls",
         )
 
-    def resume_session(self, project, session_id: str, instruction: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+    def resume_session(self, project, session_id: str, instruction: str, *, model=None, sandbox_mode=None, approval_mode=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
         _ = session_id
         self.last_worker_instruction = instruction
         _ = model
-        _ = progress_callback
+        _ = sandbox_mode
+        _ = approval_mode
         if process_callback is not None:
             process_callback(SimpleNamespace(pid=1002))
             process_callback(None)
+        if progress_callback is not None:
+            progress_callback("stderr", "continuing from supervisor instruction")
         self.calls.append("resume_session")
         return _codex_result(
             "worker round resumed",
@@ -60,14 +67,17 @@ class CodexStub:
             stdout="continuing from supervisor instruction\nrunning targeted verification",
         )
 
-    def ask(self, project, question: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+    def ask(self, project, question: str, *, model=None, sandbox_mode=None, approval_mode=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
         self.last_supervisor_prompt = question
         _ = model
-        _ = progress_callback
+        _ = sandbox_mode
+        _ = approval_mode
         if process_callback is not None:
             process_callback(SimpleNamespace(pid=2001))
             process_callback(None)
+        if progress_callback is not None:
+            progress_callback("stdout", '{"decision":"continue"}')
         self.calls.append("ask")
         return _codex_result(
             "supervisor continue",
@@ -75,15 +85,18 @@ class CodexStub:
             stdout='{"decision":"continue","reason":"still work left","progress_summary":"good progress","progress_made":true,"confidence":"medium","next_instruction_for_b":"run tests next"}',
         )
 
-    def ask_in_session(self, project, session_id: str, question: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+    def ask_in_session(self, project, session_id: str, question: str, *, model=None, sandbox_mode=None, approval_mode=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
         _ = session_id
         self.last_supervisor_prompt = question
         _ = model
-        _ = progress_callback
+        _ = sandbox_mode
+        _ = approval_mode
         if process_callback is not None:
             process_callback(SimpleNamespace(pid=2002))
             process_callback(None)
+        if progress_callback is not None:
+            progress_callback("stdout", '{"decision":"continue"}')
         self.calls.append("ask_in_session")
         return _codex_result(
             "supervisor followup",
@@ -93,10 +106,12 @@ class CodexStub:
 
 
 class CompletingCodexStub(CodexStub):
-    def ask(self, project, question: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+    def ask(self, project, question: str, *, model=None, sandbox_mode=None, approval_mode=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
         self.last_supervisor_prompt = question
         _ = model
+        _ = sandbox_mode
+        _ = approval_mode
         _ = progress_callback
         _ = process_callback
         self.calls.append("ask")
@@ -108,10 +123,12 @@ class CompletingCodexStub(CodexStub):
 
 
 class SlowCompletingCodexStub(CompletingCodexStub):
-    def run(self, project, prompt: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+    def run(self, project, prompt: str, *, model=None, sandbox_mode=None, approval_mode=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
         _ = prompt
         _ = model
+        _ = sandbox_mode
+        _ = approval_mode
         _ = progress_callback
         if process_callback is not None:
             process_callback(SimpleNamespace(pid=1001))
@@ -127,10 +144,12 @@ class SlowCompletingCodexStub(CompletingCodexStub):
 
 
 class CompletionClaimCodexStub(CodexStub):
-    def run(self, project, prompt: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+    def run(self, project, prompt: str, *, model=None, sandbox_mode=None, approval_mode=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
         self.last_worker_instruction = prompt
         _ = model
+        _ = sandbox_mode
+        _ = approval_mode
         _ = progress_callback
         if process_callback is not None:
             process_callback(SimpleNamespace(pid=1001))
@@ -142,10 +161,12 @@ class CompletionClaimCodexStub(CodexStub):
             stdout="all done, finished, nothing left",
         )
 
-    def ask(self, project, question: str, *, model=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
+    def ask(self, project, question: str, *, model=None, sandbox_mode=None, approval_mode=None, progress_callback=None, process_callback=None):  # noqa: ANN001, ANN201
         _ = project
         self.last_supervisor_prompt = question
         _ = model
+        _ = sandbox_mode
+        _ = approval_mode
         _ = progress_callback
         _ = process_callback
         self.calls.append("ask")
@@ -181,7 +202,11 @@ def _setup_service(tmp_path: Path) -> tuple[TaskStore, AutopilotService]:
     connection.commit()
 
     tasks = TaskStore(db)
-    service = AutopilotService(tasks=tasks, codex=CodexStub())
+    config = SimpleNamespace(
+        autopilot_codex_sandbox_mode="danger-full-access",
+        autopilot_codex_approval_mode="never",
+    )
+    service = AutopilotService(tasks=tasks, codex=CodexStub(), config=config)
     return tasks, service
 
 
@@ -256,6 +281,28 @@ def test_step_run_prefers_project_bootstrap_instruction_for_first_worker_round(t
     )
 
     assert service.codex.last_worker_instruction == "先读取 target.yaml 和 policy.yaml，再开始首轮 intake"
+
+
+def test_worker_raw_output_is_persisted_as_stream_chunks(tmp_path: Path) -> None:
+    tasks, service = _setup_service(tmp_path)
+    run = service.create_run(
+        project_id=1,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="推进信息收集",
+    )
+
+    _ = service.step_run(
+        project=ProjectConfig(key="demo", name="Demo", path=Path("/tmp")),
+        run_id=run.id,
+    )
+
+    chunks = service.list_stream_chunks(run_id=run.id, limit=20)
+
+    assert chunks
+    assert any(chunk.actor == "worker" for chunk in chunks)
+    assert any(chunk.actor == "supervisor" for chunk in chunks)
+    assert any("opened policy scopes page" in chunk.content for chunk in chunks)
 
 
 def test_pause_resume_and_stop_run(tmp_path: Path) -> None:
@@ -416,7 +463,11 @@ def test_step_run_fallback_followup_prompt_does_not_require_structured_output(tm
 
 def test_supervisor_forces_verification_rounds_after_repeated_completion_claims(tmp_path: Path) -> None:
     tasks, _ = _setup_service(tmp_path)
-    service = AutopilotService(tasks=tasks, codex=CompletionClaimCodexStub())
+    config = SimpleNamespace(
+        autopilot_codex_sandbox_mode="danger-full-access",
+        autopilot_codex_approval_mode="never",
+    )
+    service = AutopilotService(tasks=tasks, codex=CompletionClaimCodexStub(), config=config)
     run = service.create_run(
         project_id=1,
         chat_id="chat-1",
@@ -457,7 +508,11 @@ def test_supervisor_forces_verification_rounds_after_repeated_completion_claims(
 
 def test_historical_completion_claims_are_detected_from_worker_raw_output_excerpt(tmp_path: Path) -> None:
     tasks, _ = _setup_service(tmp_path)
-    service = AutopilotService(tasks=tasks, codex=CompletionClaimCodexStub())
+    config = SimpleNamespace(
+        autopilot_codex_sandbox_mode="danger-full-access",
+        autopilot_codex_approval_mode="never",
+    )
+    service = AutopilotService(tasks=tasks, codex=CompletionClaimCodexStub(), config=config)
     run = service.create_run(
         project_id=1,
         chat_id="chat-1",
@@ -520,7 +575,11 @@ def test_step_run_allows_single_step_from_paused_and_returns_to_paused(tmp_path:
 
 def test_start_run_loop_completes_in_background(tmp_path: Path) -> None:
     tasks, _ = _setup_service(tmp_path)
-    service = AutopilotService(tasks=tasks, codex=CompletingCodexStub())
+    config = SimpleNamespace(
+        autopilot_codex_sandbox_mode="danger-full-access",
+        autopilot_codex_approval_mode="never",
+    )
+    service = AutopilotService(tasks=tasks, codex=CompletingCodexStub(), config=config)
     run = service.create_run(
         project_id=1,
         chat_id="chat-1",
@@ -548,7 +607,11 @@ def test_start_run_loop_completes_in_background(tmp_path: Path) -> None:
 
 def test_start_run_loop_does_not_duplicate_alive_thread(tmp_path: Path) -> None:
     tasks, _ = _setup_service(tmp_path)
-    service = AutopilotService(tasks=tasks, codex=SlowCompletingCodexStub())
+    config = SimpleNamespace(
+        autopilot_codex_sandbox_mode="danger-full-access",
+        autopilot_codex_approval_mode="never",
+    )
+    service = AutopilotService(tasks=tasks, codex=SlowCompletingCodexStub(), config=config)
     run = service.create_run(
         project_id=1,
         chat_id="chat-1",
@@ -572,7 +635,11 @@ def test_start_run_loop_does_not_duplicate_alive_thread(tmp_path: Path) -> None:
 
 def test_start_run_loop_records_scheduler_progress_before_worker_finishes(tmp_path: Path) -> None:
     tasks, _ = _setup_service(tmp_path)
-    service = AutopilotService(tasks=tasks, codex=SlowCompletingCodexStub())
+    config = SimpleNamespace(
+        autopilot_codex_sandbox_mode="danger-full-access",
+        autopilot_codex_approval_mode="never",
+    )
+    service = AutopilotService(tasks=tasks, codex=SlowCompletingCodexStub(), config=config)
     run = service.create_run(
         project_id=1,
         chat_id="chat-1",

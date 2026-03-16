@@ -45,6 +45,8 @@ class CodexRunner:
         prompt: str,
         *,
         model: str | None = None,
+        sandbox_mode: str | None = None,
+        approval_mode: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
         process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
@@ -55,6 +57,8 @@ class CodexRunner:
             prompt,
             use_json=self.config.codex_json_output,
             model=model,
+            sandbox_mode=sandbox_mode,
+            approval_mode=approval_mode,
         )
         proc, used_json, resolved_command = self._execute_with_optional_fallback(
             command,
@@ -70,6 +74,8 @@ class CodexRunner:
         question: str,
         *,
         model: str | None = None,
+        sandbox_mode: str | None = None,
+        approval_mode: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
         process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
@@ -81,6 +87,8 @@ class CodexRunner:
             prompt,
             use_json=self.config.codex_json_output,
             model=model,
+            sandbox_mode=sandbox_mode,
+            approval_mode=approval_mode,
         )
         proc, used_json, resolved_command = self._execute_with_optional_fallback(
             command,
@@ -97,6 +105,8 @@ class CodexRunner:
         question: str,
         *,
         model: str | None = None,
+        sandbox_mode: str | None = None,
+        approval_mode: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
         process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
@@ -107,6 +117,8 @@ class CodexRunner:
             session_id,
             self._build_ask_prompt(question),
             model=model,
+            sandbox_mode=sandbox_mode,
+            approval_mode=approval_mode,
             progress_callback=progress_callback,
             process_callback=process_callback,
         )
@@ -117,6 +129,8 @@ class CodexRunner:
         instruction: str,
         *,
         model: str | None = None,
+        sandbox_mode: str | None = None,
+        approval_mode: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
         process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
@@ -127,6 +141,11 @@ class CodexRunner:
             command.extend(["-m", model])
         if self.config.codex_json_output:
             command.append("--json")
+        if sandbox_mode:
+            command.extend(["--sandbox", sandbox_mode])
+        effective_approval_mode = self._effective_approval_mode(override=approval_mode)
+        if effective_approval_mode:
+            command.extend(["--ask-for-approval", effective_approval_mode])
         command.append(instruction)
 
         return self._run_resume_with_fallback(
@@ -145,6 +164,8 @@ class CodexRunner:
         instruction: str,
         *,
         model: str | None = None,
+        sandbox_mode: str | None = None,
+        approval_mode: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
         process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
@@ -159,6 +180,11 @@ class CodexRunner:
                 command.extend(["-m", model])
             if self.config.codex_json_output:
                 command.append("--json")
+            if sandbox_mode:
+                command.extend(["--sandbox", sandbox_mode])
+            effective_approval_mode = self._effective_approval_mode(override=approval_mode)
+            if effective_approval_mode:
+                command.extend(["--ask-for-approval", effective_approval_mode])
             command.append(instruction)
             result = self._run_resume_with_fallback(
                 project=project,
@@ -166,6 +192,8 @@ class CodexRunner:
                 instruction=instruction,
                 fallback_to_exec=False,
                 model=model,
+                sandbox_mode=sandbox_mode,
+                approval_mode=approval_mode,
                 progress_callback=progress_callback,
                 process_callback=process_callback,
             )
@@ -182,6 +210,8 @@ class CodexRunner:
             project,
             fallback_instruction,
             model=model,
+            sandbox_mode=sandbox_mode,
+            approval_mode=approval_mode,
             progress_callback=progress_callback,
             process_callback=process_callback,
         )
@@ -225,17 +255,20 @@ class CodexRunner:
         *,
         use_json: bool,
         model: str | None = None,
+        sandbox_mode: str | None = None,
+        approval_mode: str | None = None,
     ) -> list[str]:
         command = [self.config.codex_bin, "exec", "--cd", str(project_path)]
         if model:
             command.extend(["-m", model])
         if use_json:
             command.append("--json")
-        if self.config.codex_default_sandbox_mode:
-            command.extend(["--sandbox", self.config.codex_default_sandbox_mode])
-        approval_mode = self._effective_approval_mode()
-        if approval_mode:
-            command.extend(["--ask-for-approval", approval_mode])
+        resolved_sandbox_mode = sandbox_mode if sandbox_mode is not None else self.config.codex_default_sandbox_mode
+        if resolved_sandbox_mode:
+            command.extend(["--sandbox", resolved_sandbox_mode])
+        resolved_approval_mode = self._effective_approval_mode(override=approval_mode)
+        if resolved_approval_mode:
+            command.extend(["--ask-for-approval", resolved_approval_mode])
         command.append(prompt)
         return command
 
@@ -531,6 +564,8 @@ class CodexRunner:
         instruction: str,
         fallback_to_exec: bool = True,
         model: str | None = None,
+        sandbox_mode: str | None = None,
+        approval_mode: str | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
         process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
     ) -> CodexRunResult:
@@ -550,6 +585,8 @@ class CodexRunner:
                 fallback_prompt,
                 use_json=self.config.codex_json_output,
                 model=model,
+                sandbox_mode=sandbox_mode,
+                approval_mode=approval_mode,
             )
             fallback_proc, used_json, resolved_command = self._execute_with_optional_fallback(
                 fallback_command,
@@ -569,8 +606,8 @@ class CodexRunner:
         except Exception:
             proc.kill()
 
-    def _effective_approval_mode(self) -> str | None:
-        mode = (self.config.codex_default_approval_mode or "").strip()
+    def _effective_approval_mode(self, *, override: str | None = None) -> str | None:
+        mode = (override if override is not None else self.config.codex_default_approval_mode or "").strip()
         if not mode:
             return None
         # OpenFish runs Codex as a non-interactive subprocess. "on-request" can block forever

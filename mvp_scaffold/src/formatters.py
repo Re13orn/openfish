@@ -3,7 +3,7 @@
 import time
 
 from src.autopilot_service import AutopilotRuntimeSnapshot
-from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
+from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord, AutopilotStreamChunkRecord
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.task_store import MemorySnapshot, StatusSnapshot, TaskPage, TaskRecord
 
@@ -64,6 +64,7 @@ def format_help(mode: str = "verbose") -> str:
             "/autopilots\n"
             "/autopilot-status [id]\n"
             "/autopilot-context [id]\n"
+            "/autopilot-log [id]\n"
             "/autopilot-takeover <instruction>\n"
             "/autopilot-pause [id]\n"
             "/autopilot-resume [id]\n"
@@ -97,6 +98,7 @@ def format_help(mode: str = "verbose") -> str:
         "/autopilots\n"
         "/autopilot-status [id]\n"
         "/autopilot-context [id]\n"
+        "/autopilot-log [id]\n"
         "/autopilot-takeover <instruction>\n"
         "/autopilot-step [id]\n"
         "/autopilot-pause [id]\n"
@@ -458,6 +460,7 @@ def format_autopilot_context(
     events: list[AutopilotEventRecord],
     runtime: AutopilotRuntimeSnapshot | None = None,
     raw_output_lines: list[str] | None = None,
+    persisted_stream_lines: list[str] | None = None,
 ) -> str:
     verdict, concerns, next_step = _autopilot_verdict(run, events)
     latest_worker = next((event for event in reversed(events) if event.actor == "worker"), None)
@@ -517,8 +520,34 @@ def format_autopilot_context(
     if raw_output_lines:
         lines.append("原始输出:")
         lines.extend(f"- {_clip(line, 140)}" for line in raw_output_lines[-8:])
+    if persisted_stream_lines:
+        lines.append("持久化流回顾:")
+        lines.extend(f"- {_clip(line, 140)}" for line in persisted_stream_lines[-12:])
     lines.append(f"下一步: {next_step}")
     return _card("Autopilot Context", lines)
+
+
+def format_autopilot_log(
+    *,
+    run: AutopilotRunRecord,
+    chunks: list[AutopilotStreamChunkRecord],
+) -> str:
+    lines = [
+        f"Run: #{run.id}",
+        f"状态: {run.status}",
+        f"阶段: {run.current_phase}",
+        f"轮次: {run.cycle_count}/{run.max_cycles}",
+    ]
+    if not chunks:
+        lines.append("持久化原始流: 暂无")
+        lines.append("下一步: 先运行 autopilot，或等待新的流式输出写入。")
+        return _card("Autopilot Log", lines)
+
+    lines.append(f"持久化流条数: {len(chunks)}")
+    lines.append("最近原始流:")
+    lines.extend(f"- {_clip(_render_stream_chunk(chunk), 140)}" for chunk in chunks[-40:])
+    lines.append("下一步: 可继续查看 /autopilot-context，或等待 run 继续推进。")
+    return _card("Autopilot Log", lines)
 
 
 def _autopilot_verdict(
@@ -619,6 +648,11 @@ def _format_elapsed_seconds(elapsed: float) -> str:
         return f"{minutes}m{seconds:02d}s"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h{minutes:02d}m"
+
+
+def _render_stream_chunk(chunk: AutopilotStreamChunkRecord) -> str:
+    actor_label = "A" if chunk.actor == "supervisor" else "B"
+    return f"{chunk.cycle_no}:{actor_label}>[{chunk.channel}] {chunk.content}"
 
 
 def format_health(

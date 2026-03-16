@@ -1,10 +1,11 @@
 import time
 
 from src.autopilot_service import AutopilotRuntimeSnapshot
-from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
+from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord, AutopilotStreamChunkRecord
 from src.codex_session_service import CodexSessionListResult, CodexSessionRecord
 from src.formatters import (
     format_autopilot_context,
+    format_autopilot_log,
     format_autopilot_runs,
     format_autopilot_status,
     format_context,
@@ -602,6 +603,89 @@ def test_format_autopilot_context_marks_worker_as_quiet_when_no_recent_output() 
 
     assert "A 状态: 已完成上一轮" in text
     assert "B 状态: 静默中" in text
+
+
+def test_format_autopilot_context_includes_persisted_stream_review() -> None:
+    run = AutopilotRunRecord(
+        id=7,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="信息收集",
+        status="running_worker",
+        supervisor_session_id=None,
+        worker_session_id=None,
+        current_phase="worker",
+        cycle_count=1,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint=None,
+        last_decision="continue",
+        last_worker_summary=None,
+        last_supervisor_summary=None,
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+
+    text = format_autopilot_context(
+        run=run,
+        events=[],
+        persisted_stream_lines=["1:B>[stderr] mcp github starting", "1:A>[stdout] continue"],
+    )
+
+    assert "持久化流回顾:" in text
+    assert "- 1:B>[stderr] mcp github starting" in text
+    assert "- 1:A>[stdout] continue" in text
+
+
+def test_format_autopilot_log_lists_persisted_chunks() -> None:
+    run = AutopilotRunRecord(
+        id=8,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="信息收集",
+        status="running_worker",
+        supervisor_session_id=None,
+        worker_session_id=None,
+        current_phase="worker",
+        cycle_count=2,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint=None,
+        last_decision="continue",
+        last_worker_summary=None,
+        last_supervisor_summary=None,
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+    chunks = [
+        AutopilotStreamChunkRecord(
+            id=1,
+            run_id=8,
+            cycle_no=1,
+            actor="worker",
+            channel="stderr",
+            content="mcp github starting",
+        ),
+        AutopilotStreamChunkRecord(
+            id=2,
+            run_id=8,
+            cycle_no=1,
+            actor="supervisor",
+            channel="stdout",
+            content='{"decision":"continue"}',
+        ),
+    ]
+
+    text = format_autopilot_log(run=run, chunks=chunks)
+
+    assert "【Autopilot Log】" in text
+    assert "持久化流条数: 2" in text
+    assert "- 1:B>[stderr] mcp github starting" in text
+    assert '- 1:A>[stdout] {"decision":"continue"}' in text
 
 
 def test_format_autopilot_runs_lists_recent_runs() -> None:

@@ -419,6 +419,38 @@ def test_autopilot_run_markup_exposes_single_step_when_paused() -> None:
     assert any(button.callback_data == "cmd:autopilot_resume" for row in rows for button in row)
 
 
+def test_autopilot_run_markup_exposes_takeover_for_blocked_run() -> None:
+    factory = TelegramViewFactory()
+    run = AutopilotRunRecord(
+        id=1,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="blocked",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="idle",
+        cycle_count=4,
+        max_cycles=100,
+        no_progress_cycles=2,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="run tests next",
+        last_decision="continue",
+        last_worker_summary="无进展",
+        last_supervisor_summary="需要人工介入",
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+
+    markup = factory.autopilot_run_markup(run)
+
+    rows = markup.inline_keyboard
+    assert any(button.callback_data == "cmd:autopilot_context" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_log" for row in rows for button in row)
+    assert any(button.callback_data == "prompt:autopilot_takeover" for row in rows for button in row)
+
+
 def test_autopilot_panel_shows_latest_run_summary() -> None:
     factory = TelegramViewFactory()
     run = AutopilotRunRecord(
@@ -495,6 +527,27 @@ def test_autopilot_runs_markup_exposes_targeted_management_actions() -> None:
             paused_reason="manual pause",
             stopped_by_user_id=None,
         ),
+        AutopilotRunRecord(
+            id=1,
+            project_id=101,
+            chat_id="1",
+            created_by_user_id=1,
+            goal="分析告警",
+            status="blocked",
+            supervisor_session_id="sess-e",
+            worker_session_id="sess-f",
+            current_phase="idle",
+            cycle_count=3,
+            max_cycles=100,
+            no_progress_cycles=2,
+            same_instruction_cycles=0,
+            last_instruction_fingerprint="inspect findings",
+            last_decision="continue",
+            last_worker_summary="无进展",
+            last_supervisor_summary="建议人工接管",
+            paused_reason=None,
+            stopped_by_user_id=None,
+        ),
     ]
 
     markup = factory.autopilot_runs_markup(runs)
@@ -503,7 +556,9 @@ def test_autopilot_runs_markup_exposes_targeted_management_actions() -> None:
     assert any(button.callback_data == "cmd:autopilot_status:3" for row in rows for button in row)
     assert any(button.callback_data == "cmd:autopilot_pause:3" for row in rows for button in row)
     assert any(button.callback_data == "cmd:autopilot_context:2" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_log:2" for row in rows for button in row)
     assert any(button.callback_data == "cmd:autopilot_resume:2" for row in rows for button in row)
+    assert any(button.callback_data == "prompt:autopilot_takeover" for row in rows for button in row)
 
 
 def test_autopilot_panel_shows_recent_runs_summary() -> None:

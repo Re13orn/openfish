@@ -10,7 +10,7 @@ from threading import Lock, Thread
 import time
 from typing import Any
 
-from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord
+from src.autopilot_store import AutopilotEventRecord, AutopilotRunRecord, AutopilotStreamChunkRecord
 from src.codex_runner import CodexRunResult
 from src.models import ProjectConfig
 from src.task_store import TaskStore
@@ -65,9 +65,10 @@ class AutopilotService:
     TERMINAL_STATUSES = {"completed", "blocked", "needs_human", "stopped", "failed"}
     WORKER_OUTPUT_EXCERPT_LIMIT = 1200
 
-    def __init__(self, *, tasks: TaskStore, codex) -> None:  # noqa: ANN001
+    def __init__(self, *, tasks: TaskStore, codex, config) -> None:  # noqa: ANN001
         self.tasks = tasks
         self.codex = codex
+        self.config = config
         self._run_state_guard = Lock()
         self._run_states: dict[int, _RunExecutionState] = {}
         self._raw_output_observer = None
@@ -118,6 +119,9 @@ class AutopilotService:
 
     def list_events(self, *, run_id: int, limit: int = 20) -> list[AutopilotEventRecord]:
         return self.tasks.autopilot.list_events(run_id=run_id, limit=limit)
+
+    def list_stream_chunks(self, *, run_id: int, limit: int = 200) -> list[AutopilotStreamChunkRecord]:
+        return self.tasks.autopilot.list_stream_chunks(run_id=run_id, limit=limit)
 
     def get_runtime_snapshot(self, *, run_id: int) -> AutopilotRuntimeSnapshot | None:
         with self._run_state_guard:
@@ -539,7 +543,7 @@ class AutopilotService:
         )
         combined_progress_callback = self._combine_progress_callbacks(
             progress_callback,
-            self._make_actor_output_callback(run_id=run.id, actor="worker"),
+            self._make_actor_output_callback(run_id=run.id, actor="worker", cycle_no=run.cycle_count + 1),
         )
         if run.worker_session_id:
             return self.codex.resume_session(
@@ -547,6 +551,8 @@ class AutopilotService:
                 run.worker_session_id,
                 instruction,
                 model=model,
+                sandbox_mode=self.config.autopilot_codex_sandbox_mode,
+                approval_mode=self.config.autopilot_codex_approval_mode,
                 progress_callback=combined_progress_callback,
                 process_callback=process_callback,
             )
@@ -554,6 +560,8 @@ class AutopilotService:
             project,
             instruction,
             model=model,
+            sandbox_mode=self.config.autopilot_codex_sandbox_mode,
+            approval_mode=self.config.autopilot_codex_approval_mode,
             progress_callback=combined_progress_callback,
             process_callback=process_callback,
         )
@@ -594,7 +602,7 @@ class AutopilotService:
         )
         combined_progress_callback = self._combine_progress_callbacks(
             progress_callback,
-            self._make_actor_output_callback(run_id=run.id, actor="supervisor"),
+            self._make_actor_output_callback(run_id=run.id, actor="supervisor", cycle_no=run.cycle_count),
         )
         if run.supervisor_session_id:
             return self.codex.ask_in_session(
@@ -602,6 +610,8 @@ class AutopilotService:
                 run.supervisor_session_id,
                 prompt,
                 model=model,
+                sandbox_mode=self.config.autopilot_codex_sandbox_mode,
+                approval_mode=self.config.autopilot_codex_approval_mode,
                 progress_callback=combined_progress_callback,
                 process_callback=process_callback,
             )
@@ -609,6 +619,8 @@ class AutopilotService:
             project,
             prompt,
             model=model,
+            sandbox_mode=self.config.autopilot_codex_sandbox_mode,
+            approval_mode=self.config.autopilot_codex_approval_mode,
             progress_callback=combined_progress_callback,
             process_callback=process_callback,
         )
@@ -915,15 +927,14 @@ class AutopilotService:
 
         return _callback
 
-    def _make_actor_output_callback(self, *, run_id: int, actor: str):
+    def _make_actor_output_callback(self, *, run_id: int, actor: str, cycle_no: int):
         actor_label = "A" if actor == "supervisor" else "B"
 
         def _callback(channel: str, text: str) -> None:
-            _ = channel
             line = text.strip()
             if not line:
                 return
-            rendered = f"{actor_label}> {line}"
+            rendered = f"{actor_label}>[{channel}] {line}"
             observer = None
             with self._run_state_guard:
                 state = self._run_states.setdefault(run_id, _RunExecutionState())
@@ -933,6 +944,13 @@ class AutopilotService:
                 state.output_version += 1
                 state.last_output_at = time.monotonic()
                 observer = self._raw_output_observer
+            self.tasks.autopilot.append_stream_chunk(
+                run_id=run_id,
+                cycle_no=cycle_no,
+                actor=actor,
+                channel=channel,
+                content=line,
+            )
             if observer is not None:
                 observer(run_id)
 
