@@ -1876,11 +1876,14 @@ class CommandRouter:
             return run_or_result
         if run_or_result is None:
             return CommandResult("当前项目还没有 autopilot run。")
-        run = self.autopilot.takeover_run(
-            run_id=run_or_result.id,
-            instruction=argument.strip(),
-            taken_by_user_id=active.user.id,
-        )
+        try:
+            run = self.autopilot.takeover_run(
+                run_id=run_or_result.id,
+                instruction=argument.strip(),
+                taken_by_user_id=active.user.id,
+            )
+        except ValueError as exc:
+            return CommandResult(str(exc))
         model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
         self.autopilot.start_run_loop(
             project=active.project,
@@ -1912,7 +1915,10 @@ class CommandRouter:
             return run_or_result
         if run_or_result is None:
             return CommandResult("当前项目还没有 autopilot run。")
-        run = self.autopilot.pause_run(run_id=run_or_result.id)
+        try:
+            run = self.autopilot.pause_run(run_id=run_or_result.id)
+        except ValueError as exc:
+            return CommandResult(str(exc))
         self.audit.log(
             action=audit_events.AUTOPILOT_PAUSED,
             message=f"暂停 autopilot run #{run.id}",
@@ -1936,7 +1942,10 @@ class CommandRouter:
             return run_or_result
         if run_or_result is None:
             return CommandResult("当前项目还没有 autopilot run。")
-        run = self.autopilot.resume_run(run_id=run_or_result.id)
+        try:
+            run = self.autopilot.resume_run(run_id=run_or_result.id)
+        except ValueError as exc:
+            return CommandResult(str(exc))
         model = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
         self.autopilot.start_run_loop(
             project=active.project,
@@ -1968,10 +1977,13 @@ class CommandRouter:
             return run_or_result
         if run_or_result is None:
             return CommandResult("当前项目还没有 autopilot run。")
-        run = self.autopilot.stop_run(
-            run_id=run_or_result.id,
-            stopped_by_user_id=active.user.id,
-        )
+        try:
+            run = self.autopilot.stop_run(
+                run_id=run_or_result.id,
+                stopped_by_user_id=active.user.id,
+            )
+        except ValueError as exc:
+            return CommandResult(str(exc))
         self.audit.log(
             action=audit_events.AUTOPILOT_STOPPED,
             message=f"停止 autopilot run #{run.id}",
@@ -2749,6 +2761,8 @@ class CommandRouter:
         raw = argument.strip()
         if not raw:
             return self.autopilot.get_latest_run_for_project(project_id=project_id)
+        if raw.startswith("#"):
+            raw = raw[1:].strip()
         if not raw.isdigit():
             return CommandResult("autopilot run id 必须是整数。")
         run = self.autopilot.get_run(run_id=int(raw))

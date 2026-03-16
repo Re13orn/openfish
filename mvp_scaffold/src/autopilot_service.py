@@ -275,7 +275,7 @@ class AutopilotService:
         run = self.tasks.autopilot.get_run(run_id=run_id)
         if run is None:
             raise ValueError(f"autopilot run #{run_id} 不存在。")
-        if run.status in self.TERMINAL_STATUSES:
+        if run.status == "completed":
             raise ValueError(f"autopilot run #{run_id} 当前状态为 {run.status}，不可接管。")
         normalized = instruction.strip()
         if not normalized:

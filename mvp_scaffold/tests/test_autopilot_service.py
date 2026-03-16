@@ -339,6 +339,36 @@ def test_step_run_prefers_latest_human_takeover_instruction(tmp_path: Path) -> N
     assert service.codex.last_worker_instruction == "不要再分析，直接修 auth tests 并跑定向 pytest"
 
 
+def test_takeover_run_can_restart_blocked_run(tmp_path: Path) -> None:
+    _, service = _setup_service(tmp_path)
+    run = service.create_run(
+        project_id=1,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+    )
+    service.tasks.autopilot.update_run(
+        run_id=run.id,
+        status="blocked",
+        current_phase="idle",
+        cycle_count=2,
+        no_progress_cycles=2,
+        same_instruction_cycles=1,
+    )
+
+    taken = service.takeover_run(
+        run_id=run.id,
+        instruction="不要再泛化分析，直接补齐 intake 并继续。",
+        taken_by_user_id=1,
+    )
+
+    assert taken.status == "running_worker"
+    assert taken.current_phase == "worker"
+    assert taken.no_progress_cycles == 0
+    assert taken.same_instruction_cycles == 0
+    assert taken.last_decision == "continue"
+
+
 def test_step_run_uses_supervisor_instruction_as_plain_followup_prompt(tmp_path: Path) -> None:
     _, service = _setup_service(tmp_path)
     run = service.create_run(

@@ -286,6 +286,7 @@ class TelegramBotService:
             .token(self.config.telegram_bot_token)
             .request(request)
             .get_updates_request(get_updates_request)
+            .concurrent_updates(int(getattr(self.config, "telegram_concurrent_updates", 32)))
             .post_init(self._on_post_init)
             .build()
         )

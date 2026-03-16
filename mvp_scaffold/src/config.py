@@ -74,6 +74,7 @@ class AppConfig:
     telegram_reconnect_initial_delay_seconds: float
     telegram_reconnect_max_delay_seconds: float
     telegram_reconnect_jitter_seconds: float
+    telegram_concurrent_updates: int
     default_ui_mode: str
     enable_scheduler: bool
     schedule_poll_interval_seconds: int
@@ -186,6 +187,7 @@ def load_config() -> AppConfig:
         telegram_reconnect_jitter_seconds=float(
             os.getenv("TELEGRAM_RECONNECT_JITTER_SECONDS", "1")
         ),
+        telegram_concurrent_updates=max(1, int(os.getenv("TELEGRAM_CONCURRENT_UPDATES", "32"))),
         default_ui_mode=default_ui_mode,
         enable_scheduler=_parse_bool(os.getenv("ENABLE_SCHEDULER"), default=True),
         schedule_poll_interval_seconds=int(os.getenv("SCHEDULE_POLL_INTERVAL_SECONDS", "20")),

@@ -1162,6 +1162,8 @@ class AutopilotStub:
 
     def resume_run(self, *, run_id: int):  # noqa: ANN201
         _ = run_id
+        if self.run.status != "paused":
+            raise ValueError(f"autopilot run #{self.run.id} 当前状态为 {self.run.status}，不可恢复。")
         self.run = AutopilotRunRecord(
             id=self.run.id,
             project_id=self.run.project_id,
@@ -1213,6 +1215,8 @@ class AutopilotStub:
     def takeover_run(self, *, run_id: int, instruction: str, taken_by_user_id: int | None = None):  # noqa: ANN201
         _ = run_id
         _ = taken_by_user_id
+        if self.run.status == "completed":
+            raise ValueError(f"autopilot run #{self.run.id} 当前状态为 {self.run.status}，不可接管。")
         self.takeover_instructions.append(instruction)
         self.run = AutopilotRunRecord(
             id=self.run.id,
@@ -1476,6 +1480,53 @@ def test_autopilot_pause_resume_and_stop_commands() -> None:
     assert audit_events.AUTOPILOT_STOPPED in codes
 
 
+def test_autopilot_resume_accepts_hash_prefixed_run_id() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    autopilot.run = autopilot.pause_run(run_id=autopilot.run.id)
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilot-resume #1"))
+
+    assert "动作: resume" in result.reply_text
+    assert "状态: running_worker" in result.reply_text
+
+
+def test_autopilot_resume_returns_user_facing_error_for_blocked_run() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    autopilot.run = AutopilotRunRecord(
+        id=1,
+        project_id=tasks.project_id,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="blocked",
+        supervisor_session_id=None,
+        worker_session_id=None,
+        current_phase="idle",
+        cycle_count=2,
+        max_cycles=100,
+        no_progress_cycles=2,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="",
+        last_decision="continue",
+        last_worker_summary=None,
+        last_supervisor_summary=None,
+        paused_reason="",
+        stopped_by_user_id=None,
+    )
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilot-resume 1"))
+
+    assert "当前状态为 blocked，不可恢复" in result.reply_text
+
+
 def test_autopilot_takeover_restarts_loop_with_new_instruction() -> None:
     tasks = TasksStub()
     audit = AuditStub()
@@ -1490,6 +1541,41 @@ def test_autopilot_takeover_restarts_loop_with_new_instruction() -> None:
     assert autopilot.takeover_instructions == ["不要再分析，直接修 auth tests 并跑定向 pytest"]
     assert autopilot.started_run_ids == [1]
     assert audit.events[-1][0] == audit_events.AUTOPILOT_TAKEOVER
+
+
+def test_autopilot_takeover_can_restart_blocked_run() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    autopilot.run = AutopilotRunRecord(
+        id=1,
+        project_id=tasks.project_id,
+        chat_id="chat-1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="blocked",
+        supervisor_session_id=None,
+        worker_session_id=None,
+        current_phase="idle",
+        cycle_count=2,
+        max_cycles=100,
+        no_progress_cycles=2,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="",
+        last_decision="continue",
+        last_worker_summary=None,
+        last_supervisor_summary=None,
+        paused_reason="",
+        stopped_by_user_id=None,
+    )
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilot-takeover 先补齐 intake，再继续。"))
+
+    assert "动作: takeover" in result.reply_text
+    assert "状态: running_worker" in result.reply_text
+    assert autopilot.takeover_instructions == ["先补齐 intake，再继续。"]
 
 
 def test_tasks_lists_project_tasks() -> None:

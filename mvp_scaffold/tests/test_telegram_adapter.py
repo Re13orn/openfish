@@ -347,6 +347,10 @@ def test_build_application_uses_dedicated_requests(monkeypatch) -> None:
             captured["get_updates_request"] = value
             return self
 
+        def concurrent_updates(self, value):  # noqa: ANN001, ANN201
+            captured["concurrent_updates"] = value
+            return self
+
         def post_init(self, value):  # noqa: ANN001, ANN201
             captured["post_init"] = value
             return self
@@ -362,6 +366,7 @@ def test_build_application_uses_dedicated_requests(monkeypatch) -> None:
     assert captured["token"] == "dummy"
     assert isinstance(captured["request"], HTTPXRequest)
     assert isinstance(captured["get_updates_request"], HTTPXRequest)
+    assert captured["concurrent_updates"] == 32
 
 
 def test_build_application_registers_post_init(monkeypatch) -> None:
@@ -378,6 +383,10 @@ def test_build_application_registers_post_init(monkeypatch) -> None:
             return self
 
         def get_updates_request(self, value):  # noqa: ANN001, ANN201
+            _ = value
+            return self
+
+        def concurrent_updates(self, value):  # noqa: ANN001, ANN201
             _ = value
             return self
 
