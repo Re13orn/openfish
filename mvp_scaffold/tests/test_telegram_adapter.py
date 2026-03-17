@@ -798,6 +798,48 @@ def test_schedule_add_interval_flow_builds_interval_command() -> None:
     assert service._wizard_command(state) == "/schedule-add every 30m do 检查服务状态"
 
 
+def test_schedule_add_digest_flow_can_skip_text() -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+
+    state = {"kind": "schedule_add", "step": "trigger", "data": {}}
+    state = service._advance_wizard_state(state, "daily")
+    state = service._advance_wizard_state(state, "09:30")
+    state = service._advance_wizard_state(state, "digest")
+    state = service._advance_wizard_state(state, "跳过")
+
+    assert state == {
+        "kind": "schedule_add",
+        "step": "confirm",
+        "data": {
+            "schedule_type": "daily",
+            "hhmm": "09:30",
+            "mode": "digest",
+            "text": "项目摘要推送",
+        },
+    }
+    assert service._wizard_command(state) == "/schedule-add 09:30 digest 项目摘要推送"
+
+
+def test_natural_language_digest_routes_to_digest() -> None:
+    router = WizardRouterStub()
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+
+    assert service._classify_natural_language_command("今天发生了什么") == "/digest"
+
+
 def test_on_text_message_starts_project_import_wizard_from_bare_github_repo(monkeypatch) -> None:
     router = WizardRouterStub()
     router.tasks.active_project_key = None

@@ -150,8 +150,10 @@ def schedule_add_prompt(step: str, data: dict) -> str:
     if step == "interval":
         return "定时任务向导 2/5\n请输入间隔，例如 30m、2h、30分钟、2小时。"
     if step == "mode":
-        return "定时任务向导 3/5\n请输入任务类型：ask 或 do。"
+        return "定时任务向导 3/5\n请选择任务类型：ask、do 或 digest。"
     if step == "text":
+        if data.get("mode") == "digest":
+            return "定时任务向导 4/5\n可选：输入这条摘要的备注；也可以直接点“跳过内容”。"
         return "定时任务向导 4/5\n请输入定时任务内容。"
     return (
         "定时任务向导 5/5\n"

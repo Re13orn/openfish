@@ -2440,6 +2440,40 @@ def test_schedule_add_invalid_usage() -> None:
     assert "用法: /schedule-add" in result.reply_text
 
 
+def test_schedule_add_supports_digest_mode() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    created = router.handle(_ctx("/schedule-add 09:30 digest"))
+    listed = router.handle(_ctx("/schedule-list"))
+
+    assert "类型: /digest" in created.reply_text
+    assert "#1 09:30 /digest [启用]" in listed.reply_text
+
+
+def test_digest_command_returns_project_summary() -> None:
+    tasks = TasksStub()
+    tasks.latest_task = TaskRecord(
+        id=3,
+        command_type="do",
+        original_request="整理日志",
+        status="completed",
+        codex_session_id="sess-3",
+        latest_summary="已生成日志报告",
+    )
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    result = router.handle(_ctx("/digest"))
+
+    assert "【项目摘要】" in result.reply_text
+    assert "项目: demo" in result.reply_text
+    assert "最近任务:" in result.reply_text
+
+
 def test_run_scheduled_task_runs_codex() -> None:
     tasks = TasksStub()
     audit = AuditStub()
@@ -2467,6 +2501,34 @@ def test_run_scheduled_task_runs_codex() -> None:
     assert result.metadata.get("status") == "completed"
     codes = [event[0] for event in audit.events]
     assert audit_events.SCHEDULE_TRIGGERED in codes
+
+
+def test_run_scheduled_digest_returns_summary_without_codex() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("定期任务执行完成", ok=True))
+    router = _build_router(tasks, audit, codex)
+
+    scheduled = ScheduledTaskRecord(
+        id=11,
+        user_id=1,
+        project_id=tasks.project_id,
+        telegram_chat_id="1",
+        command_type="digest",
+        request_text="项目摘要推送",
+        minute_of_day=60,
+        enabled=True,
+        last_triggered_on=None,
+        last_task_id=None,
+        last_run_status=None,
+        last_run_summary=None,
+    )
+    result = router.run_scheduled_task(scheduled)
+
+    assert codex.calls == []
+    assert result.metadata is not None
+    assert result.metadata.get("status") == "completed"
+    assert "【项目摘要】" in result.reply_text
 
 
 def test_schedule_run_and_toggle_commands() -> None:

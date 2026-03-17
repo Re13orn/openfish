@@ -46,6 +46,7 @@ SYSTEM_UPDATE_TRIGGERED = "system.update_triggered"
 SYSTEM_RESTART_TRIGGERED = "system.restart_triggered"
 SYSTEM_LOGS_VIEWED = "system.logs_viewed"
 SYSTEM_LOGS_CLEARED = "system.logs_cleared"
+SYSTEM_DIGEST_VIEWED = "system.digest_viewed"
 SYSTEM_LOCAL_FILE_SENT = "system.local_file_sent"
 SYSTEM_GITHUB_CLONED = "system.github_cloned"
 AUTOPILOT_CREATED = "autopilot.created"
@@ -111,6 +112,7 @@ ALL_EVENTS = {
     SYSTEM_RESTART_TRIGGERED,
     SYSTEM_LOGS_VIEWED,
     SYSTEM_LOGS_CLEARED,
+    SYSTEM_DIGEST_VIEWED,
     SYSTEM_LOCAL_FILE_SENT,
     SYSTEM_GITHUB_CLONED,
     AUTOPILOT_CREATED,

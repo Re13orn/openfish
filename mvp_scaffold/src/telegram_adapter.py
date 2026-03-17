@@ -107,6 +107,7 @@ class TelegramBotService:
         "sessions": "/sessions",
         "model": "/model",
         "health": "/health",
+        "digest": "/digest",
         "version": "/version",
         "update_check": "/update-check",
         "update": "/update",
@@ -151,6 +152,7 @@ class TelegramBotService:
     _PROMPT_COMMANDS = {
         "ask": "/ask",
         "do": "/do",
+        "digest": "/digest",
         "note": "/note",
         "retry": "/retry",
         "resume": "/resume",
@@ -188,6 +190,7 @@ class TelegramBotService:
         "model": "请输入模型名称。下一条消息将按 /model set 执行。",
         "autopilot": "请输入长期任务目标。下一条消息将按 /autopilot 执行。",
         "autopilot_takeover": "请输入新的高层指令。下一条消息将按 /autopilot-takeover 执行。",
+        "digest": "请输入摘要关注点。下一条消息将按 /digest 执行；也可以直接发送“今天发生了什么”。",
         "send_file": "请输入本机文件绝对路径，或使用 ~ 开头。下一条消息将按 /download-file 执行。",
         "github_clone": "请输入公开 GitHub 仓库 URL 或 owner/repo，可选再跟一个相对目录名。下一条消息将按 /github-clone 执行。",
     }
@@ -244,6 +247,17 @@ class TelegramBotService:
         "一直做完",
     )
     _NATURAL_LANGUAGE_NOTE_PREFIXES = ("记住", "记一下", "记录", "备注", "note ")
+    _NATURAL_LANGUAGE_DIGEST_MARKERS = (
+        "今天发生了什么",
+        "今天都做了什么",
+        "总结一下",
+        "摘要",
+        "日报",
+        "晨报",
+        "晚报",
+        "digest",
+        "summary",
+    )
     _NATURAL_LANGUAGE_PROJECT_SWITCH_MARKERS = (
         "切到",
         "切换到",
@@ -323,9 +337,15 @@ class TelegramBotService:
             return "/autopilot"
         if any(normalized.startswith(prefix) for prefix in self._NATURAL_LANGUAGE_NOTE_PREFIXES):
             return "/note"
+        if self._looks_like_digest_request(normalized):
+            return "/digest"
         if self._looks_like_question(normalized):
             return "/ask"
         return "/do"
+
+    def _looks_like_digest_request(self, text: str) -> bool:
+        lowered = text.strip().lower()
+        return any(marker in lowered for marker in self._NATURAL_LANGUAGE_DIGEST_MARKERS)
 
     def _looks_like_project_switch_request(self, text: str) -> bool:
         lowered = text.strip().lower()
@@ -2616,7 +2636,15 @@ class TelegramBotService:
                         [
                             InlineKeyboardButton(text="ask", callback_data="wizard:mode:ask"),
                             InlineKeyboardButton(text="do", callback_data="wizard:mode:do"),
+                            InlineKeyboardButton(text="digest", callback_data="wizard:mode:digest"),
                         ],
+                        [InlineKeyboardButton(text="取消", callback_data="wizard:cancel")],
+                    ]
+                )
+            if step == "text" and (state.get("data") or {}).get("mode") == "digest":
+                return InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton(text="跳过内容", callback_data="wizard:skip")],
                         [InlineKeyboardButton(text="取消", callback_data="wizard:cancel")],
                     ]
                 )
@@ -2957,11 +2985,14 @@ class TelegramBotService:
                 data["interval_minutes"] = interval_minutes
                 return {"kind": kind, "step": "mode", "data": data}
             if step == "mode":
-                if lowered not in {"ask", "do", "/ask", "/do"}:
+                if lowered not in {"ask", "do", "digest", "/ask", "/do", "/digest"}:
                     return None
                 data["mode"] = lowered.lstrip("/")
                 return {"kind": kind, "step": "text", "data": data}
             if step == "text":
+                if data.get("mode") == "digest" and lowered in {item.lower() for item in self._WIZARD_SKIP_TOKENS}:
+                    data["text"] = "项目摘要推送"
+                    return {"kind": kind, "step": "confirm", "data": data}
                 if not text:
                     return None
                 data["text"] = text

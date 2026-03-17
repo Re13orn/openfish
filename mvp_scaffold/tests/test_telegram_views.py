@@ -416,7 +416,8 @@ def test_home_markup_for_active_task_exposes_current_task_and_cancel() -> None:
     rows = markup.inline_keyboard
     assert rows[0][0].callback_data == "cmd:context"
     assert rows[0][1].callback_data == "cmd:task_current"
-    assert rows[1][0].callback_data == "task:cancel:12"
+    assert rows[1][0].callback_data == "cmd:digest"
+    assert rows[2][0].callback_data == "task:cancel:12"
 
 
 def test_home_markup_idle_exposes_autopilot_prompt() -> None:

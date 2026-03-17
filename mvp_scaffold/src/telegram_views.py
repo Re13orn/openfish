@@ -186,6 +186,7 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="最近任务", callback_data="cmd:last"),
                         InlineKeyboardButton(text="项目记忆", callback_data="cmd:memory"),
                     ],
+                    [InlineKeyboardButton(text="项目摘要", callback_data="cmd:digest")],
                     [InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current")],
                     [
                         InlineKeyboardButton(text="审批面板", callback_data="panel:approval"),
@@ -262,6 +263,7 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="当前上下文", callback_data="cmd:context"),
                         InlineKeyboardButton(text="Autopilot 状态", callback_data="cmd:autopilot_status"),
                     ],
+                    [InlineKeyboardButton(text="项目摘要", callback_data="cmd:digest")],
                     [InlineKeyboardButton(text="Autopilot 列表", callback_data="cmd:autopilots")],
                     [InlineKeyboardButton(text="Autopilot 面板", callback_data="panel:autopilot")],
                     [InlineKeyboardButton(text="更多操作", callback_data="panel:more")],
@@ -278,6 +280,7 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="提问", callback_data="status:ask"),
                         InlineKeyboardButton(text="执行", callback_data="status:do"),
                     ],
+                    [InlineKeyboardButton(text="项目摘要", callback_data="cmd:digest")],
                     [InlineKeyboardButton(text="首页控制台", callback_data="cmd:home")],
                     [InlineKeyboardButton(text="更多", callback_data="status:more")],
                 ]
@@ -307,6 +310,7 @@ class TelegramViewFactory:
                     InlineKeyboardButton(text="项目", callback_data="status:projects"),
                     InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
                 ],
+                [InlineKeyboardButton(text="项目摘要", callback_data="cmd:digest")],
                 [
                     InlineKeyboardButton(text="模型", callback_data="panel:model"),
                     InlineKeyboardButton(text="首页控制台", callback_data="cmd:home"),
@@ -351,6 +355,7 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="当前上下文", callback_data="cmd:context"),
                         InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
                     ],
+                    [InlineKeyboardButton(text="项目摘要", callback_data="cmd:digest")],
                     [
                         InlineKeyboardButton(text="项目", callback_data="status:projects"),
                         InlineKeyboardButton(text="会话", callback_data="cmd:sessions"),
@@ -369,6 +374,7 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="当前上下文", callback_data="cmd:context"),
                         InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
                     ],
+                    [InlineKeyboardButton(text="项目摘要", callback_data="cmd:digest")],
                     [
                         InlineKeyboardButton(
                             text=f"取消 #{snapshot.active_task.id}",
@@ -391,6 +397,7 @@ class TelegramViewFactory:
                     InlineKeyboardButton(text="提问", callback_data="status:ask"),
                     InlineKeyboardButton(text="执行", callback_data="status:do"),
                 ],
+                [InlineKeyboardButton(text="项目摘要", callback_data="cmd:digest")],
                 [
                     InlineKeyboardButton(text="项目", callback_data="status:projects"),
                     InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),

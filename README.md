@@ -24,6 +24,13 @@
 OpenFish lets one trusted owner control local Codex work from Telegram.
 Code, execution, approvals, runtime state, and audit logs stay on your machine.
 
+## What's New in v1.3.0
+
+- natural-language-first Telegram entry: plain text now routes to ask, do, autopilot, note, schedule, digest, project switch, GitHub clone/import, or a clarification step
+- one live home dashboard as the primary status surface instead of multiple competing live cards
+- mobile-first buttons and wizards for approvals, project switching, schedules, task output, and Autopilot control
+- stronger Autopilot run panels, raw-stream review, and run-scoped takeover actions
+
 ## What It Is
 
 OpenFish is designed for:
@@ -87,25 +94,32 @@ openfish uninstall --purge-runtime
 
 Typical daily workflow:
 
-1. open Telegram and use `/home`
-2. select a project with `/projects` or `/use <project>`
-3. run `/ask`, `/do`, `/resume`, or `/autopilot`
-4. inspect `/status`, `/health`, `/task-current`, or `/autopilot-status`
-5. approve, reject, pause, resume, or takeover as needed
+1. open Telegram and start from `/home`
+2. say what you want in plain language, for example:
+   - `help me clean up yesterday's logs`
+   - `switch to ops project`
+   - `every 30 minutes check service health`
+   - `what happened today`
+3. let OpenFish route the request, infer or ask for the project when needed
+4. use the live home dashboard as the default status surface
+5. click buttons for approve, reject, pause, stop, takeover, output review, or project switching
 
 Telegram surfaces already included:
 
-- home dashboard
+- unified live home dashboard
 - service dashboard
 - current context card
 - project/task/session/MCP controls
 - approval cards and step-by-step wizards
+- task result actions and full-output review
+- Autopilot raw stream and run-scoped panels
 
 ## Core Capabilities
 
 - Project lifecycle: list, select, add, disable, archive
 - Task lifecycle: ask, do, resume, retry, cancel, delete, bulk cleanup
 - Scheduling: add, list, run, pause, enable, delete
+- Digest and review: project digest, long-output review, file export back to Telegram
 - Memory and sessions: notes, summaries, session browser, session import
 - MCP controls: inspect, enable, disable
 - Service controls: version, update-check, update, restart, logs, logs-clear
@@ -160,6 +174,23 @@ Main Autopilot commands:
 - `/autopilot-resume [id]`
 - `/autopilot-stop [id]`
 - `/autopilot-takeover <instruction>`
+
+## Assistant Entry
+
+Telegram no longer has to start from `/ask` or `/do`.
+
+Plain-text requests now route into the right path first and only fall back to explicit commands when needed:
+
+- questions -> `/ask`
+- execution requests -> `/do`
+- long-running self-propelled requests -> `/autopilot`
+- notes -> `/note`
+- schedule-like requests -> schedule wizard
+- project switching -> `/use`
+- digest-style requests -> `/digest`
+- bare GitHub repo links -> project import wizard
+
+Commands remain available as power-user shortcuts and for deterministic control.
 
 ## Project Templates
 
@@ -253,7 +284,7 @@ High-frequency commands:
 - `/task-current`, `/tasks`, `/cancel`
 - `/autopilot <goal>`, `/autopilot-status`, `/autopilot-context`
 - `/approve [note]`, `/reject [reason]`
-- `/diff`, `/memory`, `/note <text>`, `/help`
+- `/diff`, `/digest`, `/memory`, `/note <text>`, `/help`
 
 Configuration and extended commands:
 

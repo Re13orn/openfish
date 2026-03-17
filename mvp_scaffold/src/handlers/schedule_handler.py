@@ -23,9 +23,9 @@ class _ScheduleHandler:
         if parsed is None:
             return CommandResult(
                 "用法: /schedule-add\n"
-                "  /schedule-add <HH:MM> <ask|do> <text>   — 每日定时触发\n"
-                "  /schedule-add every <N>m <ask|do> <text> — 每隔 N 分钟触发\n"
-                "  /schedule-add every <N>h <ask|do> <text> — 每隔 N 小时触发",
+                "  /schedule-add <HH:MM> <ask|do|digest> [text]   — 每日定时触发\n"
+                "  /schedule-add every <N>m <ask|do|digest> [text] — 每隔 N 分钟触发\n"
+                "  /schedule-add every <N>h <ask|do|digest> [text] — 每隔 N 小时触发",
                 metadata={"wizard": "schedule_add"},
             )
 
@@ -205,12 +205,12 @@ class _ScheduleHandler:
     ) -> tuple[str, int, str, str, str, int | None] | None:
         """Returns (trigger_label, minute_of_day, command_type, request_text, schedule_type, interval_minutes)."""
         parts = argument.strip().split()
-        if len(parts) < 3:
+        if len(parts) < 2:
             return None
 
-        # Interval form: every <N>m|<N>h <ask|do> <text>
+        # Interval form: every <N>m|<N>h <ask|do|digest> [text]
         if parts[0].lower() == "every":
-            if len(parts) < 4:
+            if len(parts) < 3:
                 return None
             interval_str = parts[1].lower()
             if interval_str.endswith("m"):
@@ -231,20 +231,20 @@ class _ScheduleHandler:
             if interval_minutes < 1:
                 return None
             command_type = parts[2].lstrip("/")
-            if command_type not in {"ask", "do"}:
+            if command_type not in {"ask", "do", "digest"}:
                 return None
             request_text = " ".join(parts[3:]).strip()
-            if not request_text:
+            if command_type != "digest" and not request_text:
                 return None
-            return label, 0, command_type, request_text, "interval", interval_minutes
+            return label, 0, command_type, request_text or "项目摘要推送", "interval", interval_minutes
 
-        # Daily form: HH:MM <ask|do> <text>
+        # Daily form: HH:MM <ask|do|digest> [text]
         hhmm = parts[0]
         command_type = parts[1].lstrip("/")
-        if command_type not in {"ask", "do"}:
+        if command_type not in {"ask", "do", "digest"}:
             return None
         request_text = " ".join(parts[2:]).strip()
-        if not request_text:
+        if command_type != "digest" and not request_text:
             return None
         hour_text, sep, minute_text = hhmm.partition(":")
         if sep != ":":
@@ -258,7 +258,7 @@ class _ScheduleHandler:
             return None
         normalized_hhmm = f"{hour:02d}:{minute:02d}"
         minute_of_day = hour * 60 + minute
-        return normalized_hhmm, minute_of_day, command_type, request_text, "daily", None
+        return normalized_hhmm, minute_of_day, command_type, request_text or "项目摘要推送", "daily", None
 
     def _minute_to_hhmm(self, minute_of_day: int) -> str:
         hour = minute_of_day // 60

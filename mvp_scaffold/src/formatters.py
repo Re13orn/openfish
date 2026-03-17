@@ -59,6 +59,7 @@ def format_help(mode: str = "verbose") -> str:
             "/do <task>\n"
             "/status\n"
             "/context\n"
+            "/digest\n"
             "/task-current\n"
             "/autopilot <goal>\n"
             "/autopilots\n"
@@ -93,6 +94,7 @@ def format_help(mode: str = "verbose") -> str:
         "/do <task>\n"
         "/status\n"
         "/context\n"
+        "/digest\n"
         "/task-current\n"
         "/autopilot <goal>\n"
         "/autopilots\n"
@@ -126,7 +128,7 @@ def format_help(mode: str = "verbose") -> str:
         "/project-archive <key>\n"
         "\n"
         "定时与审批：\n"
-        "/schedule-add <HH:MM> <ask|do> <text>\n"
+        "/schedule-add <HH:MM> <ask|do|digest> [text]\n"
         "/schedule-list\n"
         "/schedule-run <id>\n"
         "/schedule-pause <id>\n"
@@ -156,7 +158,8 @@ def format_help(mode: str = "verbose") -> str:
         "/upload_policy\n"
         "/cancel\n"
         "\n"
-        "直接发送普通文本会按 /ask 处理。未选项目时，可先点“项目”或使用 /projects。"
+        "直接发送普通文本会优先按自然语言意图路由（ask/do/autopilot/note/schedule/digest）。\n"
+        "命令仍可作为 power-user 快捷方式。"
     )
 
 
@@ -1176,7 +1179,7 @@ def format_schedule_added(*, schedule_id: int, trigger_label: str, command_type:
         f"定期任务已创建: #{schedule_id}\n"
         f"触发: {trigger_label}\n"
         f"类型: /{command_type}\n"
-        f"内容: {_clip(request_text, 120)}"
+        f"内容: {_clip(request_text or '项目摘要推送', 120)}"
     )
 
 
@@ -1190,9 +1193,9 @@ def format_schedule_list(items: list[tuple[int, str, bool, str, str, str | None]
         status_text = f" | 上次: {last_status}" if last_status else ""
         enabled_text = "启用" if enabled else "暂停"
         lines.append(f"- #{schedule_id} {trigger_label} /{command_type} [{enabled_text}]{status_text}")
-        lines.append(f"  {_clip(request_text, 80)}")
-    lines.append("新增(每日): /schedule-add <HH:MM> <ask|do> <text>")
-    lines.append("新增(间隔): /schedule-add every <N>m|<N>h <ask|do> <text>")
+        lines.append(f"  {_clip(request_text or '项目摘要推送', 80)}")
+    lines.append("新增(每日): /schedule-add <HH:MM> <ask|do|digest> [text]")
+    lines.append("新增(间隔): /schedule-add every <N>m|<N>h <ask|do|digest> [text]")
     lines.append("控制: /schedule-run <id> /schedule-pause <id> /schedule-enable <id>")
     return "\n".join(lines)
 
@@ -1207,3 +1210,49 @@ def format_schedule_toggled(schedule_id: int, *, enabled: bool) -> str:
 
 def format_schedule_run_result(schedule_id: int, result_text: str) -> str:
     return f"已触发定期任务 #{schedule_id}\n{result_text}"
+
+
+def format_digest(
+    *,
+    project_key: str,
+    branch: str | None,
+    repo_dirty: bool | None,
+    active_task: TaskRecord | None,
+    pending_approval: bool,
+    recent_tasks: list[TaskRecord],
+    recent_runs: list[AutopilotRunRecord],
+    next_schedule_label: str | None,
+) -> str:
+    repo_state = "未知"
+    if repo_dirty is True:
+        repo_state = "有变更"
+    elif repo_dirty is False:
+        repo_state = "干净"
+    lines = [
+        f"项目: {project_key}",
+        f"分支: {branch or '未知'}",
+        f"工作区: {repo_state}",
+        f"当前任务: #{active_task.id} · {STATUS_LABELS.get(active_task.status, active_task.status)}" if active_task else "当前任务: 空闲",
+        f"审批: {'待处理' if pending_approval else '无'}",
+        f"下一个定时: {next_schedule_label or '暂无'}",
+    ]
+    if recent_tasks:
+        lines.append("最近任务:")
+        for task in recent_tasks[:3]:
+            label = STATUS_LABELS.get(task.status, task.status)
+            lines.append(f"- #{task.id} · {label} · {_clip(task.latest_summary or task.original_request, 80)}")
+    else:
+        lines.append("最近任务: 暂无")
+    if recent_runs:
+        lines.append("最近 Autopilot:")
+        for run in recent_runs[:2]:
+            lines.append(f"- #{run.id} · {run.status} · {run.current_phase} · {run.cycle_count}/{run.max_cycles}")
+    else:
+        lines.append("最近 Autopilot: 暂无")
+    if active_task is not None:
+        lines.append("下一步: 可先点“当前任务”或等待结果卡刷新。")
+    elif pending_approval:
+        lines.append("下一步: 优先处理待审批任务。")
+    else:
+        lines.append("下一步: 可直接说人话发起 ask / do / autopilot，或把摘要设成定时任务。")
+    return _card("项目摘要", lines)

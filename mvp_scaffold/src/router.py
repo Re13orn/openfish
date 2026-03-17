@@ -150,6 +150,8 @@ class CommandRouter(
             return self._handle_home(ctx)
         if command == "/context":
             return self._handle_context(ctx)
+        if command == "/digest":
+            return self._handle_digest(ctx)
         if command == "/help":
             return self._handle_help(ctx, argument)
         if command == "/projects":
@@ -304,14 +306,21 @@ class CommandRouter(
             telegram_message_id=None,
             text=f"/{schedule.command_type} {schedule.request_text}",
         )
-        result = self._run_codex_task(
-            ctx=ctx,
-            active=active,
-            command_type=schedule.command_type,
-            request_text=schedule.request_text,
-            run_mode=schedule.command_type,
-            next_step="该任务由定期调度触发。",
-        )
+        if schedule.command_type == "digest":
+            result = self._build_project_digest(active=active)
+            result = CommandResult(
+                result.reply_text,
+                metadata={"status": "completed"},
+            )
+        else:
+            result = self._run_codex_task(
+                ctx=ctx,
+                active=active,
+                command_type=schedule.command_type,
+                request_text=schedule.request_text,
+                run_mode=schedule.command_type,
+                next_step="该任务由定期调度触发。",
+            )
         status = result.metadata.get("status") if result.metadata else None
         task_id_value = result.metadata.get("task_id") if result.metadata else None
         task_id = task_id_value if isinstance(task_id_value, int) else None

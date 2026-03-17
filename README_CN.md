@@ -24,6 +24,13 @@
 OpenFish 面向一个可信 Owner，让你离开工位时也能继续通过 Telegram 控制本地 Codex 工作流。
 代码、执行、审批、运行状态、审计日志都保留在你的机器上。
 
+## v1.3.0 这次重点
+
+- Telegram 默认入口改成自然语言优先：普通文本会先路由到 ask、do、autopilot、note、schedule、digest、项目切换、GitHub 仓库导入等路径
+- 首页控制台收成唯一主状态面，不再让多张 live 卡同时争抢注意力
+- 审批、项目切换、定时任务、任务输出、Autopilot 控制都更偏手机按钮和向导交互
+- Autopilot 的 run 面板、原始流回顾、按 run 定向接管继续收口
+
 ## 它是什么
 
 OpenFish 适合：
@@ -87,25 +94,32 @@ openfish uninstall --purge-runtime
 
 典型工作流：
 
-1. 打开 Telegram，进入 `/home`
-2. 用 `/projects` 或 `/use <project>` 选项目
-3. 发 `/ask`、`/do`、`/resume` 或 `/autopilot`
-4. 用 `/status`、`/health`、`/task-current`、`/autopilot-status` 查看状态
-5. 需要时进行审批、暂停、恢复、停止或人工接管
+1. 打开 Telegram，从 `/home` 开始
+2. 直接说人话，比如：
+   - `帮我把昨天的日志整理一下`
+   - `切换到 ops 项目`
+   - `每隔30分钟检查服务状态`
+   - `今天发生了什么`
+3. 让 OpenFish 自动路由请求，必要时自动推断项目或让你点一下选择
+4. 把首页控制台当成默认状态面
+5. 需要时直接点按钮做审批、暂停、停止、接管、查看完整输出或切项目
 
 已经内置的 Telegram 控制面：
 
-- 首页控制台
+- 统一 live 首页控制台
 - 服务面板
 - 当前上下文卡片
 - 项目 / 任务 / 会话 / MCP 控制
 - 审批卡片和分步向导
+- 任务结果后续动作和完整输出查看
+- Autopilot 原始流与 run 面板
 
 ## 核心能力
 
 - 项目生命周期：查看、切换、新增、停用、归档
 - 任务生命周期：提问、执行、继续、重试、取消、删除、批量清理
 - 定时任务：新增、查看、触发、暂停、启用、删除
+- 摘要与回顾：项目摘要、长输出回顾、文件回传 Telegram
 - 记忆与会话：笔记、摘要、会话浏览、会话导入
 - MCP 控制：查看、启用、停用
 - 服务控制：版本、更新检查、自更新、重启、日志
@@ -160,6 +174,23 @@ Autopilot 主要命令：
 - `/autopilot-resume [id]`
 - `/autopilot-stop [id]`
 - `/autopilot-takeover <instruction>`
+
+## 助理入口
+
+现在 Telegram 不必再从 `/ask` 或 `/do` 开始。
+
+普通文本会先走意图路由，再决定真正执行哪条路径：
+
+- 问题类 -> `/ask`
+- 执行类 -> `/do`
+- 长任务自治 -> `/autopilot`
+- 笔记类 -> `/note`
+- 定时类 -> 定时任务向导
+- 切项目类 -> `/use`
+- 摘要/回顾类 -> `/digest`
+- 直接发 GitHub 仓库链接 -> 项目导入向导
+
+命令仍然保留，作为 power-user 的快捷方式和确定性控制入口。
 
 ## 项目模板
 
@@ -253,7 +284,7 @@ flowchart LR
 - `/task-current`, `/tasks`, `/cancel`
 - `/autopilot <goal>`, `/autopilot-status`, `/autopilot-context`
 - `/approve [note]`, `/reject [reason]`
-- `/diff`, `/memory`, `/note <text>`, `/help`
+- `/diff`, `/digest`, `/memory`, `/note <text>`, `/help`
 
 配置和扩展命令：
 

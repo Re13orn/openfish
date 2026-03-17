@@ -9,6 +9,7 @@ from pathlib import Path
 from src import audit_events
 from src.formatters import (
     format_context,
+    format_digest,
     format_health,
     format_help,
     format_home,
@@ -81,6 +82,12 @@ class _SystemHandler:
             },
         )
 
+    def _handle_digest(self, ctx: CommandContext) -> CommandResult:
+        active = self._resolve_active_project(ctx)
+        if isinstance(active, CommandResult):
+            return active
+        return self._build_project_digest(active=active)
+
     def _handle_help(self, ctx: CommandContext, argument: str) -> CommandResult:
         mode_arg = argument.strip().lower()
         if mode_arg == "verbose":
@@ -90,6 +97,51 @@ class _SystemHandler:
         else:
             mode = "summary"
         return CommandResult(format_help(mode))
+
+    def _build_project_digest(self, *, active) -> CommandResult:  # noqa: ANN001
+        repo_state = self.repo.inspect(active.project.path)
+        active_task = self.tasks.get_latest_active_task(active.project_id)
+        recent_task_page = self.tasks.list_tasks(project_id=active.project_id, page=1, page_size=5)
+        recent_tasks = recent_task_page.items
+        pending_approval = self.tasks.get_pending_approval(active.project_id) is not None
+        schedules = self.tasks.list_scheduled_tasks(active.project_id)
+        next_schedule_label = None
+        enabled = [item for item in schedules if item.enabled]
+        if enabled:
+            next_item = enabled[0]
+            if next_item.schedule_type == "interval" and next_item.interval_minutes is not None:
+                if next_item.interval_minutes % 60 == 0:
+                    next_schedule_label = f"每{next_item.interval_minutes // 60}小时"
+                else:
+                    next_schedule_label = f"每{next_item.interval_minutes}分钟"
+            else:
+                hour = next_item.minute_of_day // 60
+                minute = next_item.minute_of_day % 60
+                next_schedule_label = f"{hour:02d}:{minute:02d}"
+        recent_runs = (
+            self.tasks.autopilot.list_runs_for_project(project_id=active.project_id, limit=2)
+            if self.autopilot is not None
+            else []
+        )
+        self.audit.log(
+            action=audit_events.SYSTEM_DIGEST_VIEWED,
+            message="查看项目摘要",
+            user_id=active.user.id,
+            project_id=active.project_id,
+            details={"recent_tasks": len(recent_tasks), "recent_runs": len(recent_runs)},
+        )
+        return CommandResult(
+            format_digest(
+                project_key=active.project_key,
+                branch=repo_state.branch,
+                repo_dirty=repo_state.dirty,
+                active_task=active_task,
+                pending_approval=pending_approval,
+                recent_tasks=recent_tasks,
+                recent_runs=recent_runs,
+                next_schedule_label=next_schedule_label,
+            )
+        )
 
     # ------------------------------------------------------------------ #
     #  Preferences                                                         #
