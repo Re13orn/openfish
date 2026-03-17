@@ -248,6 +248,24 @@ def test_chat_ui_mode_round_trip(tmp_path: Path) -> None:
     assert store.get_chat_ui_mode(chat_id="chat-default") is None
 
 
+def test_chat_pending_command_round_trip(tmp_path: Path) -> None:
+    _, store = _setup_store(tmp_path)
+    user = store.ensure_user(
+        CommandContext(
+            telegram_user_id="123",
+            telegram_chat_id="chat-default",
+            telegram_message_id="1",
+            text="/do something",
+        )
+    )
+
+    store.set_chat_pending_command(chat_id="chat-default", user_id=user.id, command="/do")
+    assert store.get_chat_pending_command(chat_id="chat-default") == "/do"
+
+    store.clear_chat_pending_command(chat_id="chat-default")
+    assert store.get_chat_pending_command(chat_id="chat-default") is None
+
+
 def test_recover_interrupted_tasks_marks_created_and_running_failed(tmp_path: Path) -> None:
     db, store = _setup_store(tmp_path)
     user = store.ensure_user(

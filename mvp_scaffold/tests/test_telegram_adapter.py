@@ -12,6 +12,7 @@ from telegram.request import HTTPXRequest
 from src.autopilot_store import AutopilotRunRecord
 from src.models import CommandResult, ProjectTemplatePreset
 from src.telegram_adapter import TelegramBotService
+from src.task_store import TaskRecord
 
 
 class RouterStub:
@@ -37,6 +38,14 @@ class WizardTasksStub:
         self.scheduled_tasks = []
         self.pending_system_notifications = []
         self.autopilot = SimpleNamespace(list_runs_for_project=lambda project_id, limit=6: [])
+        self.current_task = TaskRecord(
+            id=9,
+            command_type="do",
+            original_request="修复支付回调",
+            status="running",
+            codex_session_id="sess-9",
+            latest_summary="正在修改 webhook 验证逻辑",
+        )
 
     def ensure_user(self, ctx):  # noqa: ANN001
         _ = ctx
@@ -111,14 +120,30 @@ class WizardTasksStub:
         _ = user_id
         _ = chat_id
         return SimpleNamespace(
-            active_project_key=None,
+            active_project_key=self.active_project_key,
             pending_approval=False,
+            pending_approval_id=None,
             most_recent_task_summary=None,
+            active_task=self.current_task,
+            last_codex_session_id=self.current_task.codex_session_id,
+            next_schedule_id=None,
+            next_schedule_hhmm=None,
+            next_step="继续执行当前任务",
         )
 
     def list_scheduled_tasks(self, project_id: int):  # noqa: ANN201
         _ = project_id
         return self.scheduled_tasks
+
+    def get_latest_active_task(self, project_id: int):  # noqa: ANN201
+        _ = project_id
+        if self.current_task.status in {"created", "running", "waiting_approval"}:
+            return self.current_task
+        return None
+
+    def get_latest_task(self, project_id: int):  # noqa: ANN201
+        _ = project_id
+        return self.current_task
 
     def list_pending_system_notifications(self, *, limit: int = 32):  # noqa: ANN201
         return self.pending_system_notifications[:limit]
@@ -127,6 +152,19 @@ class WizardTasksStub:
         self.pending_system_notifications = [
             item for item in self.pending_system_notifications if item.id != notification_id
         ]
+
+    def get_chat_pending_command(self, *, chat_id: str) -> str | None:
+        _ = chat_id
+        return getattr(self, "pending_command", None)
+
+    def set_chat_pending_command(self, *, chat_id: str, user_id: int, command: str) -> None:
+        _ = chat_id
+        _ = user_id
+        self.pending_command = command
+
+    def clear_chat_pending_command(self, *, chat_id: str) -> None:
+        _ = chat_id
+        self.pending_command = None
 
 
 class WizardRouterStub:
@@ -437,6 +475,40 @@ def test_deliver_pending_system_notifications_sends_and_clears() -> None:
     assert router.tasks.pending_system_notifications == []
 
 
+def test_refresh_current_task_card_pushes_running_task_with_cancel_button() -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    sent_specs: list[object] = []
+
+    async def fake_send(message, spec):  # noqa: ANN001, ANN202
+        _ = message
+        sent_specs.append(spec)
+        return True
+
+    service.sink.send = fake_send  # type: ignore[method-assign]
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="chat-1",
+        telegram_message_id="1",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._refresh_current_task_card(object(), ctx, force=True))
+
+    assert len(sent_specs) == 1
+    spec = sent_specs[0]
+    assert "当前任务" in spec.text
+    assert "任务: #9" in spec.text
+    rows = spec.reply_markup.inline_keyboard
+    assert rows[0][0].callback_data == "task:cancel:9"
+
+
 def test_menu_text_maps_to_status_command() -> None:
     service = _service()
     assert service._map_menu_to_command("状态") == "/status"
@@ -465,6 +537,15 @@ def test_callback_token_maps_to_command() -> None:
     assert service._resolve_callback_command("ui_summary") == "/ui summary"
     assert service._resolve_callback_command("ui_stream") == "/ui stream"
     assert service._resolve_callback_command("missing") is None
+
+
+def test_menu_text_maps_to_task_and_approval_commands() -> None:
+    service = _service()
+
+    assert service._map_menu_to_command("当前任务") == "/task-current"
+    assert service._map_menu_to_command("取消任务") == "/cancel"
+    assert service._map_menu_to_command("批准") == "/approve"
+    assert service._map_menu_to_command("拒绝") == "/reject"
 
 
 def test_document_upload_handles_telegram_file_too_big(monkeypatch) -> None:
@@ -1186,6 +1267,100 @@ def test_send_autopilot_panel_shows_recent_runs_when_available(monkeypatch) -> N
     assert "- #2 · paused · 1/100" in spec.text
 
 
+def test_flush_autopilot_stream_update_sends_live_status_card_and_raw_stream(monkeypatch) -> None:
+    router = WizardRouterStub()
+    run = AutopilotRunRecord(
+        id=3,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="running_worker",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="worker",
+        cycle_count=2,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="run tests next",
+        last_decision="hesitation",
+        last_worker_summary="已修改支付回调",
+        last_supervisor_summary="继续执行剩余步骤",
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+    router.autopilot = SimpleNamespace(
+        get_run=lambda run_id: run,
+        get_runtime_snapshot=lambda run_id: SimpleNamespace(
+            thread_alive=True,
+            actor="worker",
+            pid=12345,
+            process_started_at=time.time() - 5,
+            last_output_at=time.time() - 1,
+        ),
+        list_events=lambda run_id, limit=10: [
+            SimpleNamespace(
+                actor="supervisor",
+                event_type="decision_made",
+                summary='{"classification":"hesitation"}',
+                payload={"reason": "worker 在犹豫", "next_instruction_for_b": "继续执行剩余步骤"},
+                cycle_no=2,
+            ),
+            SimpleNamespace(
+                actor="worker",
+                event_type="stage_started",
+                summary="B 已启动本轮执行。",
+                payload=None,
+                cycle_no=2,
+            ),
+        ],
+        get_recent_output=lambda run_id, limit=10: ["- B> reading files", "- A> continue"],
+    )
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+            telegram_autopilot_edit_window_seconds=300.0,
+        ),
+        router=router,
+    )
+    service._app = SimpleNamespace(bot=SimpleNamespace())
+    sent_specs: list[object] = []
+
+    async def fake_send(target, spec):  # noqa: ANN001, ANN202
+        _ = target
+        sent_specs.append(spec)
+        return True
+
+    async def fake_send_message_draft(message, *, draft_id: int, text: str, context: str):  # noqa: ANN001, ANN202
+        _ = message
+        _ = draft_id
+        _ = text
+        _ = context
+        return False
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(service.sink, "send", fake_send)
+    monkeypatch.setattr(service.sink, "send_message_draft", fake_send_message_draft)
+    monkeypatch.setattr("src.telegram_adapter.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(service, "_chat_uses_stream_mode", lambda chat_id: True)
+
+    asyncio.run(service._flush_autopilot_stream_update(run_id=3, chat_id="1"))
+
+    assert len(sent_specs) == 3
+    assert sent_specs[0].context == "autopilot live 1:3"
+    assert "【Autopilot】" in sent_specs[0].text
+    assert "A 状态:" in sent_specs[0].text
+    assert sent_specs[1].context == "live home dashboard 1"
+    assert "【控制台】" in sent_specs[1].text
+    assert sent_specs[2].context == "autopilot raw 1:3"
+    assert "Autopilot 原始流" in sent_specs[2].text
+
+
 def test_send_model_panel_contains_model_buttons(monkeypatch) -> None:
     config = SimpleNamespace(
         telegram_bot_token="dummy",
@@ -1489,6 +1664,78 @@ def test_task_delete_callback_executes_delete_command(monkeypatch) -> None:
     assert executed == ["/task-delete 12"]
 
 
+def test_task_output_callback_executes_output_command(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    message = MessageStub([object()])
+    query = SimpleNamespace(message=message, data="task:output:12")
+
+    async def fake_answer(*args, **kwargs):  # noqa: ANN003
+        _ = args
+        _ = kwargs
+        return None
+
+    query.answer = fake_answer
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_callback_query(update, SimpleNamespace()))
+
+    assert executed == ["/task-output 12"]
+
+
+def test_approval_more_callback_opens_current_task(monkeypatch) -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+    executed: list[str] = []
+
+    async def fake_execute_command(message, base_ctx, text: str) -> None:  # noqa: ANN001
+        _ = message
+        _ = base_ctx
+        executed.append(text)
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    message = MessageStub([object()])
+    query = SimpleNamespace(message=message, data="approval:more")
+
+    async def fake_answer(*args, **kwargs):  # noqa: ANN003
+        _ = args
+        _ = kwargs
+        return None
+
+    query.answer = fake_answer
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_callback_query(update, SimpleNamespace()))
+
+    assert executed == ["/task-current"]
+
+
 def test_session_detail_callback_executes_session_command(monkeypatch) -> None:
     config = SimpleNamespace(
         telegram_bot_token="dummy",
@@ -1702,6 +1949,30 @@ def test_on_text_message_sends_typing_for_prompted_long_running_command() -> Non
     assert message.chat_actions == ["typing"]
 
 
+def test_on_text_message_uses_persisted_pending_command_after_restart() -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    service.router.tasks.pending_command = "/do"
+    message = MessageStub([object(), object()])
+    message.text = "fix issue"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert message.chat_actions == ["typing"]
+    assert service.router.tasks.pending_command is None
+
+
 def test_on_text_message_sends_typing_for_plain_text_question() -> None:
     service = TelegramBotService(
         config=SimpleNamespace(
@@ -1803,8 +2074,11 @@ def test_dispatch_router_command_stream_mode_sends_progress_updates(monkeypatch)
     asyncio.run(service._dispatch_router_command(message, ctx, command="/do"))
 
     progress_contexts = {context for context, _, edit_context in captured if edit_context}
-    assert len(progress_contexts) == 1
-    progress_context = next(iter(progress_contexts))
+    assert "sending current task card" in progress_contexts
+    assert "live home dashboard 1" in progress_contexts
+    stream_progress_contexts = [context for context in progress_contexts if context.startswith("stream progress 1:/do:")]
+    assert len(stream_progress_contexts) == 1
+    progress_context = stream_progress_contexts[0]
     assert any("当前阶段" in text for _, text, _ in captured)
     assert any("Reading package.json" in text for _, text, _ in captured)
     assert ("delete", progress_context, None) in captured
@@ -2094,3 +2368,49 @@ def test_reply_markup_for_autopilot_result_uses_autopilot_controls() -> None:
     assert any(button.callback_data == "prompt:autopilot_takeover" for row in rows for button in row)
     assert any(button.callback_data == "cmd:autopilot_pause" for row in rows for button in row)
     assert any(button.callback_data == "cmd:autopilot_stop" for row in rows for button in row)
+
+
+def test_reply_markup_for_use_without_argument_returns_projects_panel() -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+
+    markup = service._reply_markup_for_result(
+        "/use",
+        SimpleNamespace(telegram_user_id="123", telegram_chat_id="1"),
+        CommandResult(
+            "请选择要切换的项目。",
+            metadata={
+                "projects_panel": True,
+                "projects_ordered_keys": ["demo", "ops"],
+                "projects_active_key": "demo",
+                "recent_projects": ["demo", "ops"],
+            },
+        ),
+    )
+
+    assert markup.inline_keyboard[0][0].callback_data == "use:demo"
+
+
+def test_reply_markup_for_task_result_includes_output_button() -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+
+    markup = service._reply_markup_for_result(
+        "/do",
+        SimpleNamespace(telegram_chat_id="1"),
+        CommandResult("ok", metadata={"task_id": 21, "status": "completed"}),
+    )
+
+    assert any(button.callback_data == "task:output:21" for row in markup.inline_keyboard for button in row)

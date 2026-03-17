@@ -239,6 +239,25 @@ class TaskRuntimeStore:
             (task_id, project_id),
         ).fetchone()
 
+    def get_latest_task_artifact_row(
+        self,
+        *,
+        task_id: int,
+        artifact_types: tuple[str, ...],
+    ) -> sqlite3.Row | None:
+        placeholders = ", ".join("?" for _ in artifact_types)
+        return self.db.get_connection().execute(
+            f"""
+            SELECT id, artifact_type, content, metadata_json
+            FROM task_artifacts
+            WHERE task_id = ?
+              AND artifact_type IN ({placeholders})
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (task_id, *artifact_types),
+        ).fetchone()
+
     def delete_task(self, *, task_id: int, project_id: int) -> bool:
         connection = self.db.get_connection()
         cursor = connection.execute(

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import logging
+import json
 import sqlite3
 from typing import Any
 
@@ -65,6 +66,13 @@ class PendingApprovalRecord:
     requested_action: str
     task_summary: str | None
     codex_session_id: str | None
+
+
+@dataclass(slots=True)
+class TaskArtifactRecord:
+    artifact_type: str
+    content: str | None
+    metadata: dict[str, Any] | None
 
 
 @dataclass(slots=True)
@@ -206,6 +214,15 @@ class TaskStore:
     def clear_chat_codex_model(self, *, chat_id: str) -> None:
         self.chat_state.clear_chat_codex_model(chat_id=chat_id)
 
+    def get_chat_pending_command(self, *, chat_id: str) -> str | None:
+        return self.chat_state.get_chat_pending_command(chat_id=chat_id)
+
+    def set_chat_pending_command(self, *, chat_id: str, user_id: int, command: str) -> None:
+        self.chat_state.set_chat_pending_command(chat_id=chat_id, user_id=user_id, command=command)
+
+    def clear_chat_pending_command(self, *, chat_id: str) -> None:
+        self.chat_state.clear_chat_pending_command(chat_id=chat_id)
+
     def get_recent_outbound_message_id(
         self,
         *,
@@ -261,6 +278,19 @@ class TaskStore:
             payload=payload,
             collapse_existing=collapse_existing,
         )
+
+    def list_all_telegram_chat_ids(self) -> list[str]:
+        return self.chat_state.list_all_telegram_chat_ids()
+
+    def queue_health_alert_all_chats(self, *, message: str, kind: str = "health_alert") -> None:
+        """Queue a health alert notification to all known Telegram chats."""
+        for chat_id in self.list_all_telegram_chat_ids():
+            self.queue_system_notification(
+                chat_id=chat_id,
+                kind=kind,
+                payload={"message": message},
+                collapse_existing=True,
+            )
 
     def list_pending_system_notifications(self, *, limit: int = 32) -> list[SystemNotificationRecord]:
         return self.system_notifications.list_pending_notifications(limit=limit)
@@ -589,6 +619,29 @@ class TaskStore:
         row = self.runtime.get_task_for_project_row(task_id=task_id, project_id=project_id)
         return self._row_to_task(row)
 
+    def get_latest_task_artifact(
+        self,
+        *,
+        task_id: int,
+        artifact_types: tuple[str, ...] = ("codex_stdout", "codex_stderr"),
+    ) -> TaskArtifactRecord | None:
+        row = self.runtime.get_latest_task_artifact_row(task_id=task_id, artifact_types=artifact_types)
+        if row is None:
+            return None
+        metadata_json = row["metadata_json"]
+        metadata: dict[str, Any] | None = None
+        if metadata_json:
+            try:
+                loaded = json.loads(str(metadata_json))
+                metadata = loaded if isinstance(loaded, dict) else None
+            except json.JSONDecodeError:
+                metadata = None
+        return TaskArtifactRecord(
+            artifact_type=str(row["artifact_type"]),
+            content=str(row["content"]) if row["content"] is not None else None,
+            metadata=metadata,
+        )
+
     def get_pending_approval(self, project_id: int, approval_id: int | None = None) -> PendingApprovalRecord | None:
         row = self.approvals.get_pending_approval_row(project_id, approval_id=approval_id)
         if row is None:
@@ -665,8 +718,43 @@ class TaskStore:
         )
 
     # Project memory facade.
-    def add_project_note(self, *, project_id: int, content: str, title: str | None = None) -> None:
-        self.project_state.add_project_note(project_id=project_id, content=content, title=title)
+    def add_project_note(
+        self,
+        *,
+        project_id: int,
+        content: str,
+        title: str | None = None,
+        category: str = "general",
+    ) -> None:
+        self.project_state.add_project_note(
+            project_id=project_id,
+            content=content,
+            title=title,
+            category=category,
+        )
+
+    def add_task_completion_note(
+        self,
+        *,
+        project_id: int,
+        title: str,
+        content: str,
+        max_notes: int = 20,
+    ) -> None:
+        self.project_state.add_task_completion_note(
+            project_id=project_id,
+            title=title,
+            content=content,
+            max_notes=max_notes,
+        )
+
+    def add_autopilot_run_note(self, *, project_id: int, title: str, content: str, run_id: int) -> None:
+        self.project_state.add_autopilot_run_note(
+            project_id=project_id,
+            title=title,
+            content=content,
+            run_id=run_id,
+        )
 
     def get_memory_snapshot(
         self,
@@ -700,6 +788,8 @@ class TaskStore:
         command_type: str,
         request_text: str,
         minute_of_day: int,
+        schedule_type: str = "daily",
+        interval_minutes: int | None = None,
     ) -> int:
         return self.schedules.create_scheduled_task(
             user_id=user_id,
@@ -708,6 +798,8 @@ class TaskStore:
             command_type=command_type,
             request_text=request_text,
             minute_of_day=minute_of_day,
+            schedule_type=schedule_type,
+            interval_minutes=interval_minutes,
         )
 
     def list_scheduled_tasks(self, project_id: int) -> list[ScheduledTaskRecord]:

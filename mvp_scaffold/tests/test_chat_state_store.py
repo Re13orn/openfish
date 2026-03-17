@@ -71,6 +71,18 @@ def test_chat_codex_model_round_trip(tmp_path: Path) -> None:
     assert store.get_chat_codex_model(chat_id="chat-1") is None
 
 
+def test_chat_pending_command_round_trip(tmp_path: Path) -> None:
+    _, store = _setup_store(tmp_path)
+
+    store.set_chat_pending_command(chat_id="chat-1", user_id=1, command="/do")
+
+    assert store.get_chat_pending_command(chat_id="chat-1") == "/do"
+
+    store.clear_chat_pending_command(chat_id="chat-1")
+
+    assert store.get_chat_pending_command(chat_id="chat-1") is None
+
+
 def test_outbound_message_delivery_round_trip(tmp_path: Path) -> None:
     _, store = _setup_store(tmp_path)
     store.set_chat_wizard_state(chat_id="chat-1", user_id=1, state={"kind": "noop"})

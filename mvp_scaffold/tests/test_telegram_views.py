@@ -23,6 +23,61 @@ def test_projects_panel_marks_active_and_recent() -> None:
     assert rows[1][0].text == "切换: ops"
 
 
+def test_main_menu_markup_switches_to_cancel_when_task_running() -> None:
+    factory = TelegramViewFactory()
+    snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id="sess-1",
+        most_recent_task_summary="fix auth",
+        recent_failed_summary=None,
+        pending_approval=False,
+        next_schedule_id=None,
+        next_schedule_hhmm=None,
+        next_step=None,
+        active_task=TaskRecord(
+            id=12,
+            command_type="do",
+            original_request="run task",
+            status="running",
+            codex_session_id="sess-12",
+            latest_summary="处理中",
+        ),
+    )
+
+    markup = factory.main_menu_markup(snapshot=snapshot)
+
+    assert markup.keyboard[0][2].text == "取消任务"
+    assert markup.keyboard[1][0].text == "当前任务"
+
+
+def test_main_menu_markup_switches_to_approval_actions_when_pending() -> None:
+    factory = TelegramViewFactory()
+    snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id="sess-1",
+        most_recent_task_summary="fix auth",
+        recent_failed_summary=None,
+        pending_approval=True,
+        pending_approval_id=99,
+        next_schedule_id=None,
+        next_schedule_hhmm=None,
+        next_step=None,
+    )
+
+    markup = factory.main_menu_markup(snapshot=snapshot)
+
+    assert markup.keyboard[0][2].text == "批准"
+    assert markup.keyboard[1][0].text == "拒绝"
+
+
 def test_status_result_markup_for_pending_approval_has_approve_buttons() -> None:
     factory = TelegramViewFactory()
     snapshot = StatusSnapshot(
@@ -58,6 +113,7 @@ def test_approval_panel_uses_explicit_approval_id_when_available() -> None:
     assert rows[0][1].callback_data == "approval:reject:42"
     assert rows[1][0].callback_data == "prompt:approve:42"
     assert rows[1][1].callback_data == "prompt:reject:42"
+    assert rows[2][0].callback_data == "approval:more"
 
 
 def test_model_panel_marks_current_model_and_reset_action() -> None:
@@ -264,6 +320,36 @@ def test_current_task_markup_contains_cancel_for_active_task() -> None:
     rows = markup.inline_keyboard
     assert rows[0][0].callback_data == "task:cancel:9"
     assert rows[1][0].callback_data == "cmd:status"
+
+
+def test_current_task_markup_for_waiting_approval_includes_decision_buttons() -> None:
+    factory = TelegramViewFactory()
+    task = TaskRecord(
+        id=11,
+        command_type="do",
+        original_request="run task",
+        status="waiting_approval",
+        codex_session_id="sess-11",
+        latest_summary="等待审批",
+    )
+
+    markup = factory.current_task_markup(task)
+
+    rows = markup.inline_keyboard
+    assert rows[0][0].callback_data == "approval:approve"
+    assert rows[0][1].callback_data == "approval:reject"
+    assert rows[0][2].callback_data == "approval:more"
+    assert rows[1][0].callback_data == "task:output:11"
+
+
+def test_task_result_markup_includes_output_button() -> None:
+    factory = TelegramViewFactory()
+
+    markup = factory.task_result_markup(task_id=21, status="completed")
+
+    rows = markup.inline_keyboard
+    assert rows[0][0].callback_data == "status:resume"
+    assert rows[1][0].callback_data == "task:output:21"
 
 
 def test_status_result_markup_prefers_current_task_button_for_active_task() -> None:

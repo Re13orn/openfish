@@ -268,6 +268,8 @@ class CommandRouter(
             return self._handle_task_cancel(ctx, argument)
         if command == "/task-delete":
             return self._handle_task_delete(ctx, argument)
+        if command == "/task-output":
+            return self._handle_task_output(ctx, argument)
         if command == "/tasks-clear":
             return self._handle_tasks_clear(ctx)
         if command == "/diff":
@@ -321,6 +323,19 @@ class CommandRouter(
             project_id=schedule.project_id,
             task_id=task_id,
             details={"schedule_id": schedule.id, "status": status or "unknown"},
+        )
+        self.tasks.queue_system_notification(
+            chat_id=schedule.telegram_chat_id,
+            kind="scheduled_task_result",
+            payload={
+                "schedule_id": schedule.id,
+                "project_key": project_key,
+                "command_type": schedule.command_type,
+                "status": status or "unknown",
+                "task_id": task_id,
+                "summary": result.reply_text[:1200],
+            },
+            collapse_existing=False,
         )
         return result
 

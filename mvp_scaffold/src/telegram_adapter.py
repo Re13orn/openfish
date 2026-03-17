@@ -17,7 +17,7 @@ from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, 
 from telegram.request import HTTPXRequest
 
 from src import telegram_messages
-from src.formatters import format_upload_received
+from src.formatters import format_autopilot_status, format_current_task, format_home, format_upload_received
 from src.models import CommandContext, CommandResult, ProjectTemplatePreset
 from src.progress_reporter import ProgressReporter
 from src.telegram_sink import TelegramMessageSink, TelegramSendSpec
@@ -89,6 +89,10 @@ class TelegramBotService:
     _MENU_SCHEDULE = "定时"
     _MENU_MORE = "更多"
     _MENU_HELP = "帮助"
+    _MENU_CURRENT_TASK = "当前任务"
+    _MENU_CANCEL_TASK = "取消任务"
+    _MENU_APPROVE_ACTION = "批准"
+    _MENU_REJECT_ACTION = "拒绝"
 
     _CALLBACK_COMMANDS = {
         "start": "/start",
@@ -202,6 +206,15 @@ class TelegramBotService:
         "/restart",
         "/github-clone",
     }
+    _CURRENT_TASK_CARD_COMMANDS = {
+        "/ask",
+        "/approve",
+        "/do",
+        "/reject",
+        "/resume",
+        "/retry",
+        "/schedule-run",
+    }
 
     def __init__(self, config, router) -> None:
         self.config = config
@@ -218,6 +231,7 @@ class TelegramBotService:
         self._app_loop: asyncio.AbstractEventLoop | None = None
         self._pending_command_by_chat: dict[str, str] = {}
         self._autopilot_stream_tasks: dict[int, asyncio.Task[None]] = {}
+        self._home_dashboard_signatures: dict[str, tuple[object, ...]] = {}
         self._notification_poll_task: asyncio.Task[None] | None = None
         autopilot = getattr(router, "autopilot", None)
         if autopilot is not None and hasattr(autopilot, "set_raw_output_observer"):
@@ -383,6 +397,28 @@ class TelegramBotService:
         if kind == "health_alert":
             msg = (payload or {}).get("message") or "系统健康异常"
             return f"[健康告警] {msg}"
+        if kind == "scheduled_task_result":
+            data = payload or {}
+            schedule_id = data.get("schedule_id")
+            project_key = data.get("project_key") or "未知项目"
+            command_type = data.get("command_type") or "ask"
+            status = data.get("status") or "unknown"
+            task_id = data.get("task_id")
+            summary = str(data.get("summary") or "").strip()
+            if len(summary) > 280:
+                summary = summary[:277] + "..."
+            lines = [
+                "[定时任务结果]",
+                f"项目: {project_key}",
+                f"定时: #{schedule_id}" if schedule_id is not None else "定时: 未知",
+                f"类型: /{command_type}",
+                f"状态: {status}",
+            ]
+            if task_id is not None:
+                lines.append(f"任务: #{task_id}")
+            if summary:
+                lines.append(f"摘要: {summary}")
+            return "\n".join(lines)
         return None
 
     async def _on_application_error(
@@ -465,6 +501,12 @@ class TelegramBotService:
                 self._clear_input_modes(command_context.telegram_chat_id)
             else:
                 pending_command = self._pending_command_by_chat.pop(command_context.telegram_chat_id, None)
+                if pending_command is None and hasattr(self.router, "tasks"):
+                    pending_command = self.router.tasks.get_chat_pending_command(
+                        chat_id=command_context.telegram_chat_id
+                    )
+                if pending_command and hasattr(self.router, "tasks"):
+                    self.router.tasks.clear_chat_pending_command(chat_id=command_context.telegram_chat_id)
                 if pending_command:
                     raw_text = f"{pending_command} {raw_text}"
 
@@ -617,195 +659,7 @@ class TelegramBotService:
             telegram_display_name=user.full_name,
         )
         try:
-            if data.startswith("use:"):
-                project_key = data.split(":", 1)[1]
-                await self._execute_command(
-                    query.message,
-                    base_ctx,
-                    f"/use {project_key}",
-                )
-                return
-            if data == "status:resume":
-                await self._execute_command(query.message, base_ctx, "/resume")
-                return
-            if data == "status:diff":
-                await self._execute_command(query.message, base_ctx, "/diff")
-                return
-            if data == "status:ask":
-                await self._activate_prompt(query.message, base_ctx, "ask")
-                return
-            if data == "status:do":
-                await self._activate_prompt(query.message, base_ctx, "do")
-                return
-            if data == "status:projects":
-                await self._send_projects_panel(query.message, base_ctx)
-                return
-            if data == "status:approval":
-                await self._send_approval_panel(query.message, base_ctx)
-                return
-            if data == "status:schedule":
-                await self._send_schedule_panel(query.message, base_ctx)
-                return
-            if data == "status:more":
-                await self._send_more_panel(query.message)
-                return
-            if data.startswith("memory:page:"):
-                page = data.rsplit(":", 1)[1]
-                await self._execute_command(query.message, base_ctx, f"/memory {page}")
-                return
-            if data.startswith("sessions:page:"):
-                page = data.rsplit(":", 1)[1]
-                await self._execute_command(query.message, base_ctx, f"/sessions {page}")
-                return
-            if data.startswith("tasks:page:"):
-                page = data.rsplit(":", 1)[1]
-                await self._execute_command(query.message, base_ctx, f"/tasks {page}")
-                return
-            if data == "approval:approve":
-                await self._execute_command(query.message, base_ctx, "/approve")
-                await self._clear_inline_keyboard(query.message)
-                return
-            if data == "approval:reject":
-                await self._execute_command(query.message, base_ctx, "/reject")
-                await self._clear_inline_keyboard(query.message)
-                return
-            if data.startswith("approval:approve:"):
-                approval_id = data.rsplit(":", 1)[1]
-                if not self._is_active_approval_callback(base_ctx, query.message, approval_id):
-                    await self._clear_inline_keyboard(query.message)
-                    await self._send_text(
-                        query.message,
-                        "这个审批按钮已过期，请重新打开当前审批卡片。",
-                        context="sending expired approval callback",
-                        reply_markup=self._main_menu_markup(),
-                    )
-                    return
-                await self._execute_command(query.message, base_ctx, f"/approve {approval_id}")
-                await self._clear_inline_keyboard(query.message)
-                return
-            if data.startswith("approval:reject:"):
-                approval_id = data.rsplit(":", 1)[1]
-                if not self._is_active_approval_callback(base_ctx, query.message, approval_id):
-                    await self._clear_inline_keyboard(query.message)
-                    await self._send_text(
-                        query.message,
-                        "这个审批按钮已过期，请重新打开当前审批卡片。",
-                        context="sending expired approval callback",
-                        reply_markup=self._main_menu_markup(),
-                    )
-                    return
-                await self._execute_command(query.message, base_ctx, f"/reject {approval_id}")
-                await self._clear_inline_keyboard(query.message)
-                return
-            if data == "approval:status":
-                await self._execute_command(query.message, base_ctx, "/status")
-                return
-            if data == "schedule:refresh":
-                await self._send_schedule_panel(query.message, base_ctx)
-                return
-            if data.startswith("schedule:run:"):
-                schedule_id = data.rsplit(":", 1)[1]
-                await self._execute_command(query.message, base_ctx, f"/schedule-run {schedule_id}")
-                return
-            if data.startswith("schedule:pause:"):
-                schedule_id = data.rsplit(":", 1)[1]
-                await self._execute_command(query.message, base_ctx, f"/schedule-pause {schedule_id}")
-                return
-            if data.startswith("schedule:enable:"):
-                schedule_id = data.rsplit(":", 1)[1]
-                await self._execute_command(query.message, base_ctx, f"/schedule-enable {schedule_id}")
-                return
-            if data.startswith("schedule:del:"):
-                schedule_id = data.rsplit(":", 1)[1]
-                await self._execute_command(query.message, base_ctx, f"/schedule-del {schedule_id}")
-                return
-            if data.startswith("task:cancel:"):
-                task_id = data.rsplit(":", 1)[1]
-                await self._execute_command(query.message, base_ctx, f"/task-cancel {task_id}")
-                return
-            if data.startswith("task:delete:"):
-                task_id = data.rsplit(":", 1)[1]
-                await self._execute_command(query.message, base_ctx, f"/task-delete {task_id}")
-                return
-            if data in {"taskmode:ask", "taskmode:do"}:
-                token = "ask" if data.endswith(":ask") else "do"
-                await self._activate_prompt(query.message, base_ctx, token)
-                return
-            if data.startswith("cmd:"):
-                token = data.split(":", 1)[1]
-                for prefix, command in (
-                    ("autopilot_status:", "/autopilot-status "),
-                    ("autopilot_context:", "/autopilot-context "),
-                    ("autopilot_log:", "/autopilot-log "),
-                    ("autopilot_step:", "/autopilot-step "),
-                    ("autopilot_pause:", "/autopilot-pause "),
-                    ("autopilot_resume:", "/autopilot-resume "),
-                    ("autopilot_stop:", "/autopilot-stop "),
-                ):
-                    if token.startswith(prefix):
-                        run_id = token.split(":", 1)[1]
-                        await self._execute_command(query.message, base_ctx, f"{command}{run_id}")
-                        return
-                if token.startswith("mcp_detail:"):
-                    name = token.split(":", 1)[1]
-                    await self._execute_command(query.message, base_ctx, f"/mcp {name}")
-                    return
-                if token.startswith("session_detail:"):
-                    session_id = token.split(":", 1)[1]
-                    await self._execute_command(query.message, base_ctx, f"/session {session_id}")
-                    return
-                command = self._resolve_callback_command(token)
-                if command is not None:
-                    await self._execute_command(query.message, base_ctx, command)
-                    return
-            if data.startswith("session:import:"):
-                session_id = data.split(":", 2)[2]
-                await self._execute_command(query.message, base_ctx, f"/session-import {session_id}")
-                return
-            if data.startswith("mcp:enable:"):
-                name = data.split(":", 2)[2]
-                await self._execute_command(query.message, base_ctx, f"/mcp-enable {name}")
-                return
-            if data.startswith("mcp:disable:"):
-                name = data.split(":", 2)[2]
-                await self._execute_command(query.message, base_ctx, f"/mcp-disable {name}")
-                return
-            if data.startswith("prompt:"):
-                token = data.split(":", 1)[1]
-                await self._activate_prompt(query.message, base_ctx, token)
-                return
-            if data.startswith("wizard:"):
-                await self._handle_wizard_callback(query.message, base_ctx, data)
-                return
-            if data.startswith("panel:"):
-                panel = data.split(":", 1)[1]
-                if panel == "projects":
-                    await self._send_projects_panel(query.message, base_ctx)
-                    return
-                if panel == "schedule":
-                    await self._send_schedule_panel(query.message, base_ctx)
-                    return
-                if panel == "approval":
-                    await self._send_approval_panel(query.message, base_ctx)
-                    return
-                if panel == "more":
-                    await self._send_more_panel(query.message)
-                    return
-                if panel == "service":
-                    await self._send_service_panel(query.message)
-                    return
-                if panel == "autopilot":
-                    await self._send_autopilot_panel(query.message, base_ctx)
-                    return
-                if panel == "model":
-                    await self._send_model_panel(query.message, base_ctx)
-                    return
-            if data.startswith("model:set:"):
-                model = data.split(":", 2)[2]
-                await self._execute_command(query.message, base_ctx, f"/model set {model}")
-                return
-            if data == "model:reset":
-                await self._execute_command(query.message, base_ctx, "/model reset")
+            if await self._dispatch_callback_data(query.message, base_ctx, data):
                 return
         except Exception:  # pragma: no cover - defensive logging
             logger.exception("Unhandled callback query error: %s", data)
@@ -823,6 +677,219 @@ class TelegramBotService:
             context="sending unknown callback",
             reply_markup=self._main_menu_markup(),
         )
+
+    async def _dispatch_callback_data(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        handlers = (
+            self._handle_use_callback,
+            self._handle_status_callback,
+            self._handle_pagination_callback,
+            self._handle_approval_callback,
+            self._handle_schedule_callback,
+            self._handle_task_callback,
+            self._handle_taskmode_callback,
+            self._handle_cmd_callback,
+            self._handle_session_callback,
+            self._handle_mcp_callback,
+            self._handle_prompt_callback,
+            self._handle_wizard_callback_data,
+            self._handle_panel_callback,
+            self._handle_model_callback,
+        )
+        for handler in handlers:
+            if await handler(message, base_ctx, data):
+                return True
+        return False
+
+    async def _handle_use_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        if not data.startswith("use:"):
+            return False
+        project_key = data.split(":", 1)[1]
+        await self._execute_command(message, base_ctx, f"/use {project_key}")
+        return True
+
+    async def _handle_status_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        mapping = {
+            "status:resume": lambda: self._execute_command(message, base_ctx, "/resume"),
+            "status:diff": lambda: self._execute_command(message, base_ctx, "/diff"),
+            "status:ask": lambda: self._activate_prompt(message, base_ctx, "ask"),
+            "status:do": lambda: self._activate_prompt(message, base_ctx, "do"),
+            "status:projects": lambda: self._send_projects_panel(message, base_ctx),
+            "status:approval": lambda: self._send_approval_panel(message, base_ctx),
+            "status:schedule": lambda: self._send_schedule_panel(message, base_ctx),
+            "status:more": lambda: self._send_more_panel(message),
+        }
+        action = mapping.get(data)
+        if action is None:
+            return False
+        await action()
+        return True
+
+    async def _handle_pagination_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        for prefix, command in (
+            ("memory:page:", "/memory "),
+            ("sessions:page:", "/sessions "),
+            ("tasks:page:", "/tasks "),
+        ):
+            if data.startswith(prefix):
+                page = data.rsplit(":", 1)[1]
+                await self._execute_command(message, base_ctx, f"{command}{page}")
+                return True
+        return False
+
+    async def _handle_approval_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        if data == "approval:approve":
+            await self._execute_command(message, base_ctx, "/approve")
+            await self._clear_inline_keyboard(message)
+            return True
+        if data == "approval:reject":
+            await self._execute_command(message, base_ctx, "/reject")
+            await self._clear_inline_keyboard(message)
+            return True
+        if data == "approval:status":
+            await self._execute_command(message, base_ctx, "/status")
+            return True
+        if data == "approval:more":
+            await self._execute_command(message, base_ctx, "/task-current")
+            return True
+        for prefix, command in (("approval:approve:", "/approve "), ("approval:reject:", "/reject ")):
+            if data.startswith(prefix):
+                approval_id = data.rsplit(":", 1)[1]
+                if not self._is_active_approval_callback(base_ctx, message, approval_id):
+                    await self._clear_inline_keyboard(message)
+                    await self._send_text(
+                        message,
+                        "这个审批按钮已过期，请重新打开当前审批卡片。",
+                        context="sending expired approval callback",
+                        reply_markup=self._main_menu_markup(),
+                    )
+                    return True
+                await self._execute_command(message, base_ctx, f"{command}{approval_id}")
+                await self._clear_inline_keyboard(message)
+                return True
+        return False
+
+    async def _handle_schedule_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        if data == "schedule:refresh":
+            await self._send_schedule_panel(message, base_ctx)
+            return True
+        for prefix, command in (
+            ("schedule:run:", "/schedule-run "),
+            ("schedule:pause:", "/schedule-pause "),
+            ("schedule:enable:", "/schedule-enable "),
+            ("schedule:del:", "/schedule-del "),
+        ):
+            if data.startswith(prefix):
+                schedule_id = data.rsplit(":", 1)[1]
+                await self._execute_command(message, base_ctx, f"{command}{schedule_id}")
+                return True
+        return False
+
+    async def _handle_task_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        for prefix, command in (
+            ("task:cancel:", "/task-cancel "),
+            ("task:delete:", "/task-delete "),
+            ("task:output:", "/task-output "),
+        ):
+            if data.startswith(prefix):
+                task_id = data.rsplit(":", 1)[1]
+                await self._execute_command(message, base_ctx, f"{command}{task_id}")
+                return True
+        return False
+
+    async def _handle_taskmode_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        if data not in {"taskmode:ask", "taskmode:do"}:
+            return False
+        token = "ask" if data.endswith(":ask") else "do"
+        await self._activate_prompt(message, base_ctx, token)
+        return True
+
+    async def _handle_cmd_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        if not data.startswith("cmd:"):
+            return False
+        token = data.split(":", 1)[1]
+        for prefix, command in (
+            ("autopilot_status:", "/autopilot-status "),
+            ("autopilot_context:", "/autopilot-context "),
+            ("autopilot_log:", "/autopilot-log "),
+            ("autopilot_step:", "/autopilot-step "),
+            ("autopilot_pause:", "/autopilot-pause "),
+            ("autopilot_resume:", "/autopilot-resume "),
+            ("autopilot_stop:", "/autopilot-stop "),
+        ):
+            if token.startswith(prefix):
+                run_id = token.split(":", 1)[1]
+                await self._execute_command(message, base_ctx, f"{command}{run_id}")
+                return True
+        if token.startswith("mcp_detail:"):
+            name = token.split(":", 1)[1]
+            await self._execute_command(message, base_ctx, f"/mcp {name}")
+            return True
+        if token.startswith("session_detail:"):
+            session_id = token.split(":", 1)[1]
+            await self._execute_command(message, base_ctx, f"/session {session_id}")
+            return True
+        command = self._resolve_callback_command(token)
+        if command is None:
+            return False
+        await self._execute_command(message, base_ctx, command)
+        return True
+
+    async def _handle_session_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        if not data.startswith("session:import:"):
+            return False
+        session_id = data.split(":", 2)[2]
+        await self._execute_command(message, base_ctx, f"/session-import {session_id}")
+        return True
+
+    async def _handle_mcp_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        for prefix, command in (("mcp:enable:", "/mcp-enable "), ("mcp:disable:", "/mcp-disable ")):
+            if data.startswith(prefix):
+                name = data.split(":", 2)[2]
+                await self._execute_command(message, base_ctx, f"{command}{name}")
+                return True
+        return False
+
+    async def _handle_prompt_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        if not data.startswith("prompt:"):
+            return False
+        token = data.split(":", 1)[1]
+        await self._activate_prompt(message, base_ctx, token)
+        return True
+
+    async def _handle_wizard_callback_data(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        if not data.startswith("wizard:"):
+            return False
+        await self._handle_wizard_callback(message, base_ctx, data)
+        return True
+
+    async def _handle_panel_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        if not data.startswith("panel:"):
+            return False
+        panel = data.split(":", 1)[1]
+        mapping = {
+            "projects": lambda: self._send_projects_panel(message, base_ctx),
+            "schedule": lambda: self._send_schedule_panel(message, base_ctx),
+            "approval": lambda: self._send_approval_panel(message, base_ctx),
+            "more": lambda: self._send_more_panel(message),
+            "service": lambda: self._send_service_panel(message),
+            "autopilot": lambda: self._send_autopilot_panel(message, base_ctx),
+            "model": lambda: self._send_model_panel(message, base_ctx),
+        }
+        action = mapping.get(panel)
+        if action is None:
+            return False
+        await action()
+        return True
+
+    async def _handle_model_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
+        if data == "model:reset":
+            await self._execute_command(message, base_ctx, "/model reset")
+            return True
+        if not data.startswith("model:set:"):
+            return False
+        model = data.split(":", 2)[2]
+        await self._execute_command(message, base_ctx, f"/model set {model}")
+        return True
 
     def _resolve_callback_command(self, token: str) -> str | None:
         return self._CALLBACK_COMMANDS.get(token)
@@ -869,7 +936,9 @@ class TelegramBotService:
             return
 
         self.router.tasks.clear_chat_wizard_state(chat_id=chat_id)
+        user = self.router.tasks.ensure_user(ctx)
         self._pending_command_by_chat[chat_id] = command
+        self.router.tasks.set_chat_pending_command(chat_id=chat_id, user_id=user.id, command=command)
         hint = self._PROMPT_HINTS.get(token, f"请输入参数。下一条消息将按 {command} 执行。")
         await self._send_text(
             message,
@@ -905,6 +974,7 @@ class TelegramBotService:
             return
         user = self.router.tasks.ensure_user(ctx)
         self._pending_command_by_chat.pop(ctx.telegram_chat_id, None)
+        self.router.tasks.clear_chat_pending_command(chat_id=ctx.telegram_chat_id)
         state = {
             "kind": "approve_note" if action == "approve" else "reject_note",
             "step": "note",
@@ -974,9 +1044,14 @@ class TelegramBotService:
         typing_task: asyncio.Task[None] | None = None
         progress_task: asyncio.Task[None] | None = None
         progress_context: str | None = None
+        current_task_card_task: asyncio.Task[None] | None = None
         stream_state: _StreamProgressState | None = None
         try:
             await self.sink.send_typing(message, context=typing_context)
+            if self._should_refresh_current_task_card(command):
+                current_task_card_task = asyncio.create_task(
+                    self._track_current_task_card(message, command_context)
+                )
             if self._should_stream_progress(command_context.telegram_chat_id, command):
                 progress_context = self._stream_progress_context(command_context, command)
                 stream_state = _StreamProgressState(
@@ -1003,6 +1078,11 @@ class TelegramBotService:
             )
             return await asyncio.to_thread(self.router.handle, command_context)
         finally:
+            if current_task_card_task is not None:
+                current_task_card_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await current_task_card_task
+                await self._refresh_current_task_card(message, command_context, force=True)
             if progress_task is not None:
                 progress_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -1085,6 +1165,123 @@ class TelegramBotService:
         token = command_context.telegram_message_id or str(time.time_ns())
         return f"stream progress {command_context.telegram_chat_id}:{command}:{token}"
 
+    def _should_refresh_current_task_card(self, command: str) -> bool:
+        return command in self._CURRENT_TASK_CARD_COMMANDS
+
+    async def _track_current_task_card(self, message, command_context: CommandContext) -> None:  # noqa: ANN001
+        last_signature: tuple[object, ...] | None = None
+        last_home_signature: tuple[object, ...] | None = None
+        while True:
+            last_signature = await self._refresh_current_task_card(
+                message,
+                command_context,
+                previous_signature=last_signature,
+            )
+            user = self.router.tasks.ensure_user(command_context)
+            last_home_signature = await self._refresh_home_dashboard(
+                message,
+                user_id=user.id,
+                chat_id=command_context.telegram_chat_id,
+                previous_signature=last_home_signature,
+            )
+            await asyncio.sleep(1.0)
+
+    async def _refresh_current_task_card(
+        self,
+        message,  # noqa: ANN001
+        command_context: CommandContext,
+        *,
+        previous_signature: tuple[object, ...] | None = None,
+        force: bool = False,
+    ) -> tuple[object, ...] | None:
+        tasks = getattr(self.router, "tasks", None)
+        if tasks is None:
+            return previous_signature
+        user = tasks.ensure_user(command_context)
+        active_key = tasks.get_active_project_key(user.id, command_context.telegram_chat_id)
+        if not active_key:
+            return previous_signature
+        try:
+            project_id = tasks.get_project_id(active_key)
+        except KeyError:
+            return previous_signature
+        task = tasks.get_latest_active_task(project_id) or tasks.get_latest_task(project_id)
+        signature = (
+            active_key,
+            getattr(task, "id", None),
+            getattr(task, "status", None),
+            getattr(task, "latest_summary", None),
+            getattr(task, "codex_session_id", None),
+        )
+        if not force and signature == previous_signature:
+            return signature
+        await self.sink.send(
+            message,
+            TelegramSendSpec(
+                text=format_current_task(project_key=active_key, task=task),
+                context="sending current task card",
+                reply_markup=self.views.current_task_markup(task),
+                edit_context="sending current task card",
+                edit_window_seconds=float(
+                    getattr(self.config, "telegram_current_task_edit_window_seconds", 300.0)
+                ),
+            ),
+        )
+        return signature
+
+    async def _refresh_home_dashboard(
+        self,
+        target,  # noqa: ANN001
+        *,
+        user_id: int,
+        chat_id: str,
+        previous_signature: tuple[object, ...] | None = None,
+        force: bool = False,
+    ) -> tuple[object, ...] | None:
+        tasks = getattr(self.router, "tasks", None)
+        if tasks is None:
+            return previous_signature
+        snapshot = tasks.get_status_snapshot(user_id, chat_id)
+        recent_keys = tasks.list_recent_project_keys(user_id=user_id)
+        current_model = tasks.get_chat_codex_model(chat_id=chat_id)
+        signature = (
+            snapshot.active_project_key,
+            getattr(snapshot.active_task, "id", None),
+            getattr(snapshot.active_task, "status", None),
+            snapshot.pending_approval,
+            snapshot.pending_approval_id,
+            snapshot.last_codex_session_id,
+            snapshot.next_schedule_id,
+            snapshot.next_schedule_hhmm,
+            snapshot.next_step,
+            snapshot.most_recent_task_summary,
+            current_model,
+            tuple(recent_keys[:4]),
+        )
+        if previous_signature is None:
+            previous_signature = self._home_dashboard_signatures.get(chat_id)
+        if not force and signature == previous_signature:
+            return signature
+        context = f"live home dashboard {chat_id}"
+        await self.sink.send(
+            target,
+            TelegramSendSpec(
+                text=format_home(
+                    snapshot=snapshot,
+                    current_model=current_model,
+                    recent_project_keys=recent_keys,
+                ),
+                context=context,
+                reply_markup=self.views.home_markup(snapshot=snapshot, recent_projects=recent_keys),
+                edit_context=context,
+                edit_window_seconds=float(
+                    getattr(self.config, "telegram_home_edit_window_seconds", 300.0)
+                ),
+            ),
+        )
+        self._home_dashboard_signatures[chat_id] = signature
+        return signature
+
     async def _send_stream_progress_text(
         self,
         message,  # noqa: ANN001
@@ -1145,10 +1342,34 @@ class TelegramBotService:
             if run is None:
                 return
             runtime = autopilot.get_runtime_snapshot(run_id=run_id)
+            events = autopilot.list_events(run_id=run_id, limit=10)
             raw_output_lines = autopilot.get_recent_output(run_id=run_id, limit=10)
             if not raw_output_lines:
                 return
             target = _ChatTarget(chat_id=chat_id, bot=self._app.bot)
+            status_context = f"autopilot live {chat_id}:{run_id}"
+            await self.sink.send(
+                target,
+                TelegramSendSpec(
+                    text=format_autopilot_status(
+                        run=run,
+                        events=events,
+                        runtime=runtime,
+                        raw_output_lines=raw_output_lines[-6:],
+                    ),
+                    context=status_context,
+                    reply_markup=self.views.autopilot_run_markup(run),
+                    edit_context=status_context,
+                    edit_window_seconds=float(
+                        getattr(self.config, "telegram_autopilot_edit_window_seconds", 300.0)
+                    ),
+                ),
+            )
+            await self._refresh_home_dashboard(
+                target,
+                user_id=run.created_by_user_id,
+                chat_id=chat_id,
+            )
             context = f"autopilot raw {chat_id}:{run_id}"
             lines = [
                 "Autopilot 原始流",
@@ -1350,11 +1571,15 @@ class TelegramBotService:
         text: str,
         *,
         context: str,
+        ctx: CommandContext | None = None,
         reply_markup=None,  # noqa: ANN001
     ) -> bool:
         return await self._send_view_spec(
             message,
-            TelegramReplySpec(text=text, reply_markup=reply_markup),
+            TelegramReplySpec(
+                text=text,
+                reply_markup=reply_markup if reply_markup is not None else self._contextual_main_menu_markup(ctx),
+            ),
             context=context,
         )
 
@@ -1461,13 +1686,16 @@ class TelegramBotService:
     ) -> bool:  # noqa: ANN001
         if await self._send_local_file_result(message, result):
             return True
+        reply_markup = self._reply_markup_for_result(command, ctx, result)
+        if reply_markup is None:
+            reply_markup = self._contextual_main_menu_markup(ctx)
         parts = self._split_long_text(result.reply_text)
         if len(parts) == 1:
             return await self._send_view_spec(
                 message,
                 TelegramReplySpec(
                     text=result.reply_text,
-                    reply_markup=self._reply_markup_for_result(command, ctx, result),
+                    reply_markup=reply_markup,
                 ),
                 context=context,
                 command=command,
@@ -1477,7 +1705,7 @@ class TelegramBotService:
             message,
             TelegramReplySpec(
                 text=parts[0],
-                reply_markup=self._reply_markup_for_result(command, ctx, result),
+                reply_markup=reply_markup,
             ),
             context=context,
             command=command,
@@ -1554,6 +1782,16 @@ class TelegramBotService:
     def _main_menu_markup(self) -> ReplyKeyboardMarkup:
         return self.views.main_menu_markup()
 
+    def _contextual_main_menu_markup(self, ctx: CommandContext | None) -> ReplyKeyboardMarkup:
+        if ctx is None or not hasattr(self.router, "tasks"):
+            return self._main_menu_markup()
+        try:
+            user = self.router.tasks.ensure_user(ctx)
+            snapshot = self.router.tasks.get_status_snapshot(user.id, ctx.telegram_chat_id)
+        except Exception:
+            return self._main_menu_markup()
+        return self.views.main_menu_markup(snapshot=snapshot)
+
     def _map_menu_to_command(self, text: str) -> str | None:
         mapping = {
             self._MENU_STATUS: "/status",
@@ -1565,12 +1803,17 @@ class TelegramBotService:
             self._MENU_DIFF: "__diff__",
             self._MENU_SCHEDULE: "__schedule__",
             self._MENU_MORE: "__more__",
+            self._MENU_CURRENT_TASK: "/task-current",
+            self._MENU_CANCEL_TASK: "/cancel",
+            self._MENU_APPROVE_ACTION: "/approve",
+            self._MENU_REJECT_ACTION: "/reject",
         }
         return mapping.get(text)
 
     def _clear_input_modes(self, chat_id: str) -> None:
         self._pending_command_by_chat.pop(chat_id, None)
         if hasattr(self.router, "tasks"):
+            self.router.tasks.clear_chat_pending_command(chat_id=chat_id)
             self.router.tasks.clear_chat_wizard_state(chat_id=chat_id)
 
     def _get_wizard_state(self, chat_id: str) -> dict | None:
@@ -1685,6 +1928,7 @@ class TelegramBotService:
                 return
 
         self._pending_command_by_chat.pop(ctx.telegram_chat_id, None)
+        self.router.tasks.clear_chat_pending_command(chat_id=ctx.telegram_chat_id)
         if token == "project_add":
             state = {"kind": token, "step": "key", "data": {}}
         elif token == "schedule_add":
@@ -2099,6 +2343,17 @@ class TelegramBotService:
                 snapshot=snapshot,
                 recent_projects=(result.metadata or {}).get("recent_projects"),
             )
+        if command == "/use" and (result.metadata or {}).get("projects_panel"):
+            metadata = result.metadata or {}
+            ordered_keys = metadata.get("projects_ordered_keys")
+            active_key = metadata.get("projects_active_key")
+            recent_keys = metadata.get("recent_projects")
+            if isinstance(ordered_keys, list):
+                return self.views.projects_panel(
+                    active_key=active_key if isinstance(active_key, str) else None,
+                    recent_keys=[item for item in (recent_keys or []) if isinstance(item, str)],
+                    ordered_keys=[item for item in ordered_keys if isinstance(item, str)],
+                ).reply_markup
         if command in {"/health", "/version", "/update-check", "/logs", "/logs-clear"}:
             return self.views.service_panel().reply_markup
         if command == "/schedule-list":
@@ -2121,6 +2376,13 @@ class TelegramBotService:
         if command == "/task-current":
             task = (result.metadata or {}).get("current_task")
             return self.views.current_task_markup(task if isinstance(task, TaskRecord) else None)
+        if command in {"/ask", "/do", "/resume", "/approve", "/reject", "/task-output"}:
+            task_id = (result.metadata or {}).get("task_id")
+            status = (result.metadata or {}).get("status")
+            return self.views.task_result_markup(
+                task_id=task_id if isinstance(task_id, int) else None,
+                status=str(status) if status is not None else None,
+            )
         if command in {
             "/autopilots",
             "/autopilot",

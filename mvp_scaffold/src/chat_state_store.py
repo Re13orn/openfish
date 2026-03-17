@@ -241,6 +241,62 @@ class ChatStateStore:
         value = str(row["codex_model"]).strip()
         return value or None
 
+    def get_chat_pending_command(self, *, chat_id: str) -> str | None:
+        connection = self.db.get_connection()
+        try:
+            row = connection.execute(
+                """
+                SELECT pending_command
+                FROM chat_context
+                WHERE telegram_chat_id = ?
+                """,
+                (chat_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            logger.debug("pending_command column not available when loading pending command.")
+            return None
+        if row is None or not row["pending_command"]:
+            return None
+        value = str(row["pending_command"]).strip()
+        return value or None
+
+    def set_chat_pending_command(self, *, chat_id: str, user_id: int, command: str) -> None:
+        normalized = command.strip()
+        if not normalized:
+            raise ValueError("Pending command must not be empty.")
+        connection = self.db.get_connection()
+        try:
+            connection.execute(
+                """
+                INSERT INTO chat_context (telegram_chat_id, user_id, pending_command)
+                VALUES (?, ?, ?)
+                ON CONFLICT(telegram_chat_id) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    pending_command = excluded.pending_command,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (chat_id, user_id, normalized),
+            )
+            connection.commit()
+        except sqlite3.OperationalError:
+            logger.debug("pending_command column not available when storing pending command.")
+
+    def clear_chat_pending_command(self, *, chat_id: str) -> None:
+        connection = self.db.get_connection()
+        try:
+            connection.execute(
+                """
+                UPDATE chat_context
+                SET pending_command = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_chat_id = ?
+                """,
+                (chat_id,),
+            )
+            connection.commit()
+        except sqlite3.OperationalError:
+            logger.debug("pending_command column not available when clearing pending command.")
+
     def set_chat_codex_model(self, *, chat_id: str, user_id: int, model: str) -> None:
         normalized = model.strip()
         if not normalized:
@@ -367,6 +423,16 @@ class ChatStateStore:
         if now - sent_at > timedelta(seconds=max_age_seconds):
             return None
         return str(row["last_outbound_message_id"]) if row["last_outbound_message_id"] else None
+
+    def list_all_telegram_chat_ids(self) -> list[str]:
+        """Return all known Telegram chat IDs (used for broadcasting system alerts)."""
+        try:
+            rows = self.db.get_connection().execute(
+                "SELECT DISTINCT telegram_chat_id FROM chat_context"
+            ).fetchall()
+            return [str(row["telegram_chat_id"]) for row in rows]
+        except sqlite3.OperationalError:
+            return []
 
     def _parse_sqlite_timestamp(self, value: str) -> datetime | None:
         try:

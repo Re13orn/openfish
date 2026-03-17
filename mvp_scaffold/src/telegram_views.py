@@ -28,14 +28,35 @@ class TelegramViewFactory:
     MENU_SCHEDULE = "定时"
     MENU_MORE = "更多"
     MENU_HELP = "帮助"
+    MENU_CURRENT_TASK = "当前任务"
+    MENU_CANCEL_TASK = "取消任务"
+    MENU_APPROVE = "批准"
+    MENU_REJECT = "拒绝"
 
-    def main_menu_markup(self) -> ReplyKeyboardMarkup:
-        return ReplyKeyboardMarkup(
-            [
-                [self.MENU_PROJECTS, self.MENU_ASK, self.MENU_DO],
-                [self.MENU_STATUS, self.MENU_RESUME, self.MENU_DIFF],
+    def main_menu_markup(self, *, snapshot: StatusSnapshot | None = None) -> ReplyKeyboardMarkup:
+        rows = [
+            [self.MENU_PROJECTS, self.MENU_ASK, self.MENU_DO],
+            [self.MENU_STATUS, self.MENU_RESUME, self.MENU_DIFF],
+            [self.MENU_SCHEDULE, self.MENU_MORE, self.MENU_HELP],
+        ]
+        if snapshot is not None and snapshot.pending_approval:
+            rows = [
+                [self.MENU_PROJECTS, self.MENU_ASK, self.MENU_APPROVE],
+                [self.MENU_REJECT, self.MENU_CURRENT_TASK, self.MENU_STATUS],
                 [self.MENU_SCHEDULE, self.MENU_MORE, self.MENU_HELP],
-            ],
+            ]
+        elif snapshot is not None and snapshot.active_task is not None and snapshot.active_task.status in {
+            "created",
+            "running",
+            "waiting_approval",
+        }:
+            rows = [
+                [self.MENU_PROJECTS, self.MENU_ASK, self.MENU_CANCEL_TASK],
+                [self.MENU_CURRENT_TASK, self.MENU_STATUS, self.MENU_RESUME],
+                [self.MENU_SCHEDULE, self.MENU_MORE, self.MENU_HELP],
+            ]
+        return ReplyKeyboardMarkup(
+            rows,
             resize_keyboard=True,
             one_time_keyboard=False,
             selective=False,
@@ -139,7 +160,10 @@ class TelegramViewFactory:
                         InlineKeyboardButton(text="批准+备注", callback_data=approve_prompt_callback),
                         InlineKeyboardButton(text="拒绝+原因", callback_data=reject_prompt_callback),
                     ],
-                    [InlineKeyboardButton(text="查看状态", callback_data="approval:status")],
+                    [
+                        InlineKeyboardButton(text="问更多", callback_data="approval:more"),
+                        InlineKeyboardButton(text="查看状态", callback_data="approval:status"),
+                    ],
                 ]
             ),
         )
@@ -565,15 +589,25 @@ class TelegramViewFactory:
 
     def current_task_markup(self, task: TaskRecord | None) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
-        if task is not None and task.status in {"created", "running", "waiting_approval"}:
+        if task is not None and task.status == "waiting_approval":
+            rows.append(
+                [
+                    InlineKeyboardButton(text="批准", callback_data="approval:approve"),
+                    InlineKeyboardButton(text="拒绝", callback_data="approval:reject"),
+                    InlineKeyboardButton(text="问更多", callback_data="approval:more"),
+                ]
+            )
+            rows.append([InlineKeyboardButton(text=f"查看完整输出 #{task.id}", callback_data=f"task:output:{task.id}")])
+        elif task is not None and task.status in {"created", "running"}:
             rows.append([InlineKeyboardButton(text=f"取消 #{task.id}", callback_data=f"task:cancel:{task.id}")])
         elif task is not None:
             rows.append(
                 [
                     InlineKeyboardButton(text="继续", callback_data="status:resume"),
-                    InlineKeyboardButton(text="查看任务列表", callback_data="cmd:tasks"),
+                    InlineKeyboardButton(text=f"查看完整输出 #{task.id}", callback_data=f"task:output:{task.id}"),
                 ]
             )
+            rows.append([InlineKeyboardButton(text="查看任务列表", callback_data="cmd:tasks")])
         else:
             rows.append(
                 [
@@ -581,6 +615,34 @@ class TelegramViewFactory:
                     InlineKeyboardButton(text="执行", callback_data="status:do"),
                 ]
             )
+        rows.append(
+            [
+                InlineKeyboardButton(text="查看状态", callback_data="cmd:status"),
+                InlineKeyboardButton(text="更多操作", callback_data="panel:more"),
+            ]
+        )
+        return InlineKeyboardMarkup(rows)
+
+    def task_result_markup(self, *, task_id: int | None, status: str | None) -> InlineKeyboardMarkup:
+        rows: list[list[InlineKeyboardButton]] = []
+        normalized_status = status or "unknown"
+        if normalized_status == "waiting_approval":
+            rows.append(
+                [
+                    InlineKeyboardButton(text="批准", callback_data="approval:approve"),
+                    InlineKeyboardButton(text="拒绝", callback_data="approval:reject"),
+                    InlineKeyboardButton(text="问更多", callback_data="approval:more"),
+                ]
+            )
+        elif normalized_status in {"completed", "failed", "cancelled", "rejected"}:
+            rows.append(
+                [
+                    InlineKeyboardButton(text="继续执行", callback_data="status:resume"),
+                    InlineKeyboardButton(text="当前任务", callback_data="cmd:task_current"),
+                ]
+            )
+        if task_id is not None:
+            rows.append([InlineKeyboardButton(text=f"查看完整输出 #{task_id}", callback_data=f"task:output:{task_id}")])
         rows.append(
             [
                 InlineKeyboardButton(text="查看状态", callback_data="cmd:status"),
