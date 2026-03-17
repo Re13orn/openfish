@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 import json
 import re
+import shlex
 import signal
 import subprocess
 from threading import Lock, Thread
@@ -435,6 +436,33 @@ class AutopilotService:
             supervisor_result=supervisor_result,
         )
 
+    def _save_run_summary_to_memory(self, *, run_id: int) -> None:
+        """Write a compact autopilot run summary to project_memory after the run ends."""
+        try:
+            run = self.tasks.autopilot.get_run(run_id=run_id)
+            if run is None or run.cycle_count == 0:
+                return
+            if run.status not in {"completed", "blocked", "needs_human", "failed"}:
+                return
+            summary = run.last_supervisor_summary or run.last_worker_summary
+            if not summary:
+                return
+            goal_short = run.goal[:80]
+            content = (
+                f"goal: {goal_short}\n"
+                f"status={run.status}, cycles={run.cycle_count}\n"
+                f"result: {summary[:500]}"
+            )
+            title = f"[autopilot] {goal_short}"
+            self.tasks.add_autopilot_run_note(
+                project_id=run.project_id,
+                title=title,
+                content=content,
+                run_id=run_id,
+            )
+        except Exception:  # noqa: BLE001
+            pass  # never let memory saving crash the run loop
+
     def _run_loop(
         self,
         *,
@@ -490,6 +518,7 @@ class AutopilotService:
                 payload=None,
             )
         finally:
+            self._save_run_summary_to_memory(run_id=run_id)
             with self._run_state_guard:
                 state = self._run_states.get(run_id)
                 if state is not None:
@@ -497,12 +526,34 @@ class AutopilotService:
                     state.actor = None
                     state.process = None
 
+    def _get_project_memory_context(self, *, project_id: int, max_chars: int = 500) -> str:
+        """Return a compact project memory string for prompt injection, or empty string."""
+        try:
+            memory = self.tasks.get_memory_snapshot(project_id=project_id, page=1, page_size=3)
+        except Exception:  # noqa: BLE001
+            return ""
+        parts: list[str] = []
+        if memory.project_summary:
+            parts.append(memory.project_summary[:200])
+        if memory.notes:
+            parts.append("Notes: " + " | ".join(n[:80] for n in memory.notes[:3]))
+        if memory.recent_task_summaries:
+            parts.append("Recent: " + " | ".join(s[:100] for s in memory.recent_task_summaries[:2]))
+        if not parts:
+            return ""
+        context = "\n".join(parts)
+        return context[:max_chars] + "..." if len(context) > max_chars else context
+
     def _resolve_worker_instruction(self, *, project: ProjectConfig, run: AutopilotRunRecord) -> str:
         if run.cycle_count == 0:
-            return self._build_initial_worker_prompt(
+            base_prompt = self._build_initial_worker_prompt(
                 goal=run.goal,
                 bootstrap_instruction=project.default_autopilot_bootstrap_instruction,
             )
+            memory_context = self._get_project_memory_context(project_id=run.project_id)
+            if memory_context:
+                return f"[Project Context]\n{memory_context}\n---\n{base_prompt}"
+            return base_prompt
 
         events = self.tasks.autopilot.list_events(run_id=run.id, limit=100)
         for event in reversed(events):
@@ -577,21 +628,13 @@ class AutopilotService:
         model: str | None,
         progress_callback=None,  # noqa: ANN001
     ) -> CodexRunResult:
-        completion_claim_count = self._count_worker_completion_claims(run_id=run.id)
-        verification_rounds = self._count_supervisor_verification_rounds(run_id=run.id)
-        supervision_mode = self._determine_supervision_mode(
-            completion_claim_count=completion_claim_count,
-            verification_rounds=verification_rounds,
-        )
         prompt = self._build_supervisor_prompt(
             goal=run.goal,
-            project_snapshot=self._build_project_snapshot(project),
+            project_snapshot=self._build_project_snapshot(project, run_tests=False),
             worker_summary=worker_summary,
             worker_stdout=worker_stdout,
             worker_payload=worker_payload,
-            supervision_mode=supervision_mode,
-            completion_claim_count=completion_claim_count,
-            verification_rounds=verification_rounds,
+            cycle_history=self._build_cycle_history_excerpt(run_id=run.id),
         )
         process_callback = self._make_actor_process_callback(
             run_id=run.id,
@@ -604,12 +647,13 @@ class AutopilotService:
             progress_callback,
             self._make_actor_output_callback(run_id=run.id, actor="supervisor", cycle_no=run.cycle_count),
         )
+        supervisor_model = getattr(self.config, "autopilot_supervisor_model", None) or model
         if run.supervisor_session_id:
             return self.codex.ask_in_session(
                 project,
                 run.supervisor_session_id,
                 prompt,
-                model=model,
+                model=supervisor_model,
                 sandbox_mode=self.config.autopilot_codex_sandbox_mode,
                 approval_mode=self.config.autopilot_codex_approval_mode,
                 progress_callback=combined_progress_callback,
@@ -618,7 +662,7 @@ class AutopilotService:
         return self.codex.ask(
             project,
             prompt,
-            model=model,
+            model=supervisor_model,
             sandbox_mode=self.config.autopilot_codex_sandbox_mode,
             approval_mode=self.config.autopilot_codex_approval_mode,
             progress_callback=combined_progress_callback,
@@ -653,9 +697,6 @@ class AutopilotService:
                 final_status = "blocked"
                 current_phase = "idle"
                 paused_reason = None
-            elif no_progress_cycles >= 2 or same_instruction_cycles >= 2:
-                final_status = "blocked"
-                current_phase = "idle"
             else:
                 final_status = "running_worker"
                 current_phase = "worker"
@@ -672,7 +713,7 @@ class AutopilotService:
             no_progress_cycles=no_progress_cycles,
             same_instruction_cycles=same_instruction_cycles,
             last_instruction_fingerprint=fingerprint,
-            last_decision=decision,
+            last_decision=str(supervisor_payload.get("classification") or decision),
             last_worker_summary=self._payload_summary(worker_payload) or run.last_worker_summary,
             last_supervisor_summary=self._payload_summary(supervisor_payload) or supervisor_result.summary,
             paused_reason=paused_reason,
@@ -704,12 +745,9 @@ class AutopilotService:
         if isinstance(parsed, dict):
             return parsed
         return {
-            "decision": "needs_human",
+            "classification": "blocked",
             "reason": "Supervisor output was not parseable JSON.",
-            "progress_summary": result.summary,
-            "progress_made": False,
             "confidence": "low",
-            "next_instruction_for_b": "",
         }
 
     def _apply_supervision_policy(
@@ -721,45 +759,56 @@ class AutopilotService:
         worker_payload: dict[str, Any] | None,
         supervisor_payload: dict[str, Any],
     ) -> dict[str, Any]:
-        completion_claim_count = self._count_worker_completion_claims(run_id=run.id) + int(
-            self._worker_claims_completion(
-                summary=worker_summary,
-                stdout=worker_stdout,
-                payload=worker_payload,
-            )
-        )
-        verification_rounds = self._count_supervisor_verification_rounds(run_id=run.id)
-        supervision_mode = self._determine_supervision_mode(
-            completion_claim_count=completion_claim_count,
-            verification_rounds=verification_rounds,
-        )
         enriched = dict(supervisor_payload)
-        enriched["supervision_mode"] = supervision_mode
-        enriched["completion_claim_count"] = completion_claim_count
-        enriched["verification_rounds"] = verification_rounds
+        classification = self._normalize_supervisor_classification(enriched)
+        enriched["classification"] = classification
 
-        decision = str(enriched.get("decision") or "needs_human").strip()
-        required_verification_rounds = 2 if completion_claim_count >= 2 else 0
-        if decision == "complete" and verification_rounds < required_verification_rounds:
-            forced_round = verification_rounds + 1
+        if classification == "hesitation":
+            push_level = self._count_recent_hesitations(run_id=run.id) + 1
             enriched.update(
                 {
                     "decision": "continue",
-                    "reason": (
-                        f"{enriched.get('reason') or 'Worker claimed completion.'} "
-                        f"Entering strict verification round {forced_round}/{required_verification_rounds} before allowing completion."
-                    ).strip(),
                     "progress_summary": enriched.get("progress_summary") or worker_summary,
                     "progress_made": True,
-                    "next_instruction_for_b": (
-                        "Do not assume the task is complete. Re-check the project directory, inspect the latest changes, "
-                        "run the most relevant verification step, and report concrete completion evidence or remaining gaps."
+                    "next_instruction_for_b": self._build_push_instruction(
+                        push_level=push_level,
+                        reason=str(enriched.get("reason") or "").strip(),
                     ),
-                    "verification_round": forced_round,
-                    "decision_overridden": True,
+                    "push_level": push_level,
                 }
             )
+        elif classification == "complete":
+            enriched.update(
+                {
+                    "decision": "complete",
+                    "progress_summary": enriched.get("progress_summary") or worker_summary,
+                    "progress_made": True,
+                    "next_instruction_for_b": "",
+                }
+            )
+        elif classification == "blocked":
+            enriched.update(
+                {
+                    "decision": "needs_human",
+                    "progress_summary": enriched.get("progress_summary") or worker_summary,
+                    "progress_made": False,
+                    "next_instruction_for_b": "",
+                }
+            )
+        else:
+            enriched["decision"] = str(enriched.get("decision") or "needs_human").strip()
         return enriched
+
+    def _normalize_supervisor_classification(self, payload: dict[str, Any]) -> str:
+        raw = str(payload.get("classification") or "").strip().lower()
+        if raw in {"hesitation", "blocked", "complete"}:
+            return raw
+        legacy_decision = str(payload.get("decision") or "").strip().lower()
+        if legacy_decision == "complete":
+            return "complete"
+        if legacy_decision == "continue":
+            return "hesitation"
+        return "blocked"
 
     def _extract_json_object(self, text: str) -> dict[str, Any] | None:
         normalized = text.strip()
@@ -824,6 +873,27 @@ class AutopilotService:
                 count += 1
         return count
 
+    def _count_recent_hesitations(self, *, run_id: int, limit: int = 12) -> int:
+        count = 0
+        for event in reversed(self.tasks.autopilot.list_events(run_id=run_id, limit=limit)):
+            if event.actor != "supervisor" or event.event_type != "decision_made":
+                continue
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            if str(payload.get("classification") or "").strip().lower() == "hesitation":
+                count += 1
+        return count
+
+    def _build_push_instruction(self, *, push_level: int, reason: str) -> str:
+        if push_level <= 1:
+            instruction = "继续推进，不要等待确认；直接完成你已经知道的下一步。"
+        elif push_level == 2:
+            instruction = "不要停在总结或建议层，直接完成剩余步骤；除非缺少你无法自行获取的信息，否则不要停止。"
+        else:
+            instruction = "不要再次停下来汇报或等待确认。直接完成所有剩余步骤；只有在缺少你无法自行获取的信息或权限时才停止。"
+        if not reason:
+            return instruction
+        return f"{instruction}\n\n你这次停下来的原因：{reason}"
+
     def _determine_supervision_mode(
         self,
         *,
@@ -836,7 +906,7 @@ class AutopilotService:
             return "skeptical"
         return "normal"
 
-    def _build_project_snapshot(self, project: ProjectConfig) -> str:
+    def _build_project_snapshot(self, project: ProjectConfig, *, run_tests: bool = False) -> str:
         project_path = project.path
         lines = [f"path={project_path}"]
         try:
@@ -867,7 +937,54 @@ class AutopilotService:
                     lines.append("git_status=clean")
             except OSError as exc:
                 lines.append(f"git_status_error={exc}")
+            try:
+                diff_completed = subprocess.run(  # noqa: S603
+                    ["git", "diff", "--stat", "HEAD"],
+                    cwd=str(project_path),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                diff_lines = [line.strip() for line in diff_completed.stdout.splitlines() if line.strip()]
+                if diff_lines:
+                    lines.append("git_diff_stat=" + " | ".join(diff_lines[:8]))
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+        if run_tests and project.test_command:
+            lines.append(self._run_test_command(project))
+
         return "\n".join(lines)
+
+    def _run_test_command(self, project: ProjectConfig) -> str:
+        """Run the project test_command and return a compact result line for snapshot injection."""
+        assert project.test_command  # caller guarantees this
+        try:
+            cmd = shlex.split(project.test_command)
+        except ValueError:
+            return f"test_result=parse_error({project.test_command!r})"
+        try:
+            proc = subprocess.run(  # noqa: S603
+                cmd,
+                cwd=str(project.path),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            return "test_result=TIMEOUT(>30s)"
+        except OSError as exc:
+            return f"test_result=ERROR({exc})"
+
+        combined = (proc.stdout + "\n" + proc.stderr).strip()
+        tail_lines = [ln.strip() for ln in combined.splitlines() if ln.strip()][-5:]
+        verdict = "PASS" if proc.returncode == 0 else "FAIL"
+        tail = " | ".join(tail_lines) if tail_lines else "(no output)"
+        # Keep the line compact: trim at 300 chars
+        result = f"test_result={verdict}(rc={proc.returncode}) {tail}"
+        return result[:300]
 
     def _instruction_fingerprint(self, value: str) -> str:
         return " ".join(value.strip().lower().split())[:200]
@@ -999,6 +1116,20 @@ class AutopilotService:
         _ = goal
         return instruction.strip()
 
+    def _build_cycle_history_excerpt(self, *, run_id: int, last_n: int = 5) -> str:
+        """Return a compact summary of the last N supervisor decisions for prompt context."""
+        events = self.tasks.autopilot.list_events(run_id=run_id, limit=200)
+        decisions = []
+        for event in events:
+            if event.actor != "supervisor" or event.event_type != "decision_made":
+                continue
+            payload = event.payload or {}
+            decision = payload.get("decision", "?")
+            summary = (payload.get("progress_summary") or event.summary or "")[:120].replace("\n", " ")
+            decisions.append(f"[C{event.cycle_no}] {decision}: {summary}")
+        recent = decisions[-last_n:]
+        return "\n".join(recent) if recent else ""
+
     def _build_supervisor_prompt(
         self,
         *,
@@ -1007,43 +1138,28 @@ class AutopilotService:
         worker_summary: str,
         worker_stdout: str,
         worker_payload: dict[str, Any] | None,
-        supervision_mode: str,
-        completion_claim_count: int,
-        verification_rounds: int,
+        cycle_history: str = "",
     ) -> str:
         payload_text = json.dumps(worker_payload or {}, ensure_ascii=True)
-        worker_output_excerpt = worker_stdout.strip() or worker_summary.strip()
-        mode_instructions = {
-            "normal": "Use normal supervision. Continue pushing the task forward with practical next steps.",
-            "skeptical": (
-                "The worker has claimed or implied completion multiple times. Be skeptical. "
-                "Do not accept completion without concrete evidence from the project state, outputs, or validation results."
-            ),
-            "hard_verify": (
-                "You are in strict verification mode. The worker has repeatedly implied completion. "
-                "Do not accept completion unless there is concrete completion evidence. Prefer verification-focused next instructions."
-            ),
-        }[supervision_mode]
+        worker_output_excerpt = (worker_stdout.strip() or worker_summary.strip())[: self.WORKER_OUTPUT_EXCERPT_LIMIT]
+        history_section = f"Recent cycle decisions:\n{cycle_history}\n\n" if cycle_history else ""
         return (
             "You are the supervisor in OpenFish autopilot mode.\n"
-            "Do not execute the task yourself. Judge whether the worker should continue, stop, or escalate.\n"
+            "Do not execute the task yourself. Your only job is to decide whether the worker is hesitating or truly blocked.\n"
+            "Classify as hesitation when the worker has already started doing real work, can describe what it did, "
+            "and implies a concrete next step, but stopped because of caution.\n"
+            "Classify as blocked only when the worker lacks information, permissions, or a decision that it cannot obtain by itself.\n"
+            "Bias toward hesitation.\n"
             "Do not output free-form prose. Output JSON only using this schema:\n"
             "{"
-            '"decision":"continue",'
+            '"classification":"hesitation",'
             '"reason":"...",'
-            '"progress_summary":"...",'
-            '"progress_made":true,'
-            '"confidence":"medium",'
-            '"next_instruction_for_b":"..."'
+            '"confidence":"medium"'
             "}\n"
-            "Valid decisions: continue, complete, blocked, needs_human.\n"
-            "If decision is not continue, next_instruction_for_b should be empty.\n\n"
+            "Valid classifications: hesitation, blocked.\n\n"
             f"Goal:\n{goal}\n\n"
             f"Project snapshot:\n{project_snapshot}\n\n"
-            f"Supervision mode: {supervision_mode}\n"
-            f"Completion claim count: {completion_claim_count}\n"
-            f"Previous verification rounds: {verification_rounds}\n"
-            f"Mode instruction: {mode_instructions}\n\n"
+            f"{history_section}"
             f"Worker summary:\n{worker_summary}\n\n"
             f"Worker raw output:\n{worker_output_excerpt}\n\n"
             f"Worker payload:\n{payload_text}"

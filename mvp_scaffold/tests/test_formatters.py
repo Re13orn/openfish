@@ -387,7 +387,7 @@ def test_format_autopilot_status_surfaces_near_blocked_signals() -> None:
 
     assert "【Autopilot】" in text
     assert "结论: 接近阻塞" in text
-    assert "关注点: 最近一轮无进展；最近指令开始重复；接近轮次上限" in text
+    assert "关注点: 接近轮次上限" in text
 
 
 def test_format_autopilot_status_surfaces_bootstrap_state_before_first_cycle() -> None:

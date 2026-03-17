@@ -247,7 +247,7 @@ def test_step_run_executes_worker_then_supervisor(tmp_path: Path) -> None:
     assert service.codex.last_supervisor_prompt is not None
     assert "Project snapshot:" in service.codex.last_supervisor_prompt
     assert "path=/tmp" in service.codex.last_supervisor_prompt
-    assert "Supervision mode: normal" in service.codex.last_supervisor_prompt
+    assert '"classification":"hesitation"' in service.codex.last_supervisor_prompt
     assert "Worker raw output:" in service.codex.last_supervisor_prompt
     assert "opened policy scopes page" in service.codex.last_supervisor_prompt
     events = tasks.autopilot.list_events(run_id=run.id)
@@ -383,7 +383,8 @@ def test_step_run_prefers_latest_human_takeover_instruction(tmp_path: Path) -> N
         run_id=first.id,
     )
 
-    assert service.codex.last_worker_instruction == "不要再分析，直接修 auth tests 并跑定向 pytest"
+    assert "不要再分析，直接修 auth tests 并跑定向 pytest" in service.codex.last_worker_instruction
+    assert "Overall goal" not in service.codex.last_worker_instruction
 
 
 def test_takeover_run_can_restart_blocked_run(tmp_path: Path) -> None:
@@ -435,7 +436,9 @@ def test_step_run_uses_supervisor_instruction_as_plain_followup_prompt(tmp_path:
     ).run
 
     assert second.cycle_count == 2
-    assert service.codex.last_worker_instruction == "run tests next"
+    assert service.codex.last_worker_instruction.startswith("继续推进，不要等待确认")
+    assert "run tests next" not in service.codex.last_worker_instruction
+    assert "Overall goal" not in service.codex.last_worker_instruction
 
 
 def test_step_run_fallback_followup_prompt_does_not_require_structured_output(tmp_path: Path) -> None:
@@ -458,16 +461,17 @@ def test_step_run_fallback_followup_prompt_does_not_require_structured_output(tm
         project=ProjectConfig(key="demo", name="Demo", path=Path("/tmp")),
         run=service.get_run(run_id=run.id),  # type: ignore[arg-type]
     )
-    assert instruction == "继续推进任务。"
+    assert "继续推进任务。" in instruction
+    assert "Overall goal" not in instruction
 
 
-def test_supervisor_forces_verification_rounds_after_repeated_completion_claims(tmp_path: Path) -> None:
+def test_supervisor_escalates_push_language_after_repeated_hesitation(tmp_path: Path) -> None:
     tasks, _ = _setup_service(tmp_path)
     config = SimpleNamespace(
         autopilot_codex_sandbox_mode="danger-full-access",
         autopilot_codex_approval_mode="never",
     )
-    service = AutopilotService(tasks=tasks, codex=CompletionClaimCodexStub(), config=config)
+    service = AutopilotService(tasks=tasks, codex=CodexStub(), config=config)
     run = service.create_run(
         project_id=1,
         chat_id="chat-1",
@@ -478,18 +482,18 @@ def test_supervisor_forces_verification_rounds_after_repeated_completion_claims(
     tasks.autopilot.append_event(
         run_id=run.id,
         cycle_no=1,
-        actor="worker",
-        event_type="stage_completed",
-        summary="done",
-        payload=None,
+        actor="supervisor",
+        event_type="decision_made",
+        summary="继续推进",
+        payload={"classification": "hesitation", "decision": "continue"},
     )
     tasks.autopilot.append_event(
         run_id=run.id,
         cycle_no=2,
-        actor="worker",
-        event_type="stage_completed",
-        summary="finished",
-        payload=None,
+        actor="supervisor",
+        event_type="decision_made",
+        summary="继续推进",
+        payload={"classification": "hesitation", "decision": "continue"},
     )
 
     result = service.step_run(
@@ -498,15 +502,14 @@ def test_supervisor_forces_verification_rounds_after_repeated_completion_claims(
     )
 
     assert result.run.status == "running_worker"
-    assert result.run.last_decision == "continue"
+    assert result.run.last_decision == "hesitation"
     assert result.supervisor_payload is not None
-    assert result.supervisor_payload["supervision_mode"] == "hard_verify"
-    assert result.supervisor_payload["decision_overridden"] is True
-    assert result.supervisor_payload["verification_round"] == 1
-    assert "Do not assume the task is complete" in result.supervisor_payload["next_instruction_for_b"]
+    assert result.supervisor_payload["classification"] == "hesitation"
+    assert result.supervisor_payload["push_level"] == 3
+    assert "不要再次停下来汇报或等待确认" in result.supervisor_payload["next_instruction_for_b"]
 
 
-def test_historical_completion_claims_are_detected_from_worker_raw_output_excerpt(tmp_path: Path) -> None:
+def test_legacy_complete_decision_still_allows_terminal_completion(tmp_path: Path) -> None:
     tasks, _ = _setup_service(tmp_path)
     config = SimpleNamespace(
         autopilot_codex_sandbox_mode="danger-full-access",
@@ -520,32 +523,15 @@ def test_historical_completion_claims_are_detected_from_worker_raw_output_excerp
         goal="持续推进支付修复",
     )
 
-    tasks.autopilot.append_event(
-        run_id=run.id,
-        cycle_no=1,
-        actor="worker",
-        event_type="stage_completed",
-        summary="progress update",
-        payload={"raw_output_excerpt": "all done, finished, nothing left"},
-    )
-    tasks.autopilot.append_event(
-        run_id=run.id,
-        cycle_no=2,
-        actor="worker",
-        event_type="stage_completed",
-        summary="another update",
-        payload={"raw_output_excerpt": "completed and verified"},
-    )
-
     result = service.step_run(
         project=ProjectConfig(key="demo", name="Demo", path=Path("/tmp")),
         run_id=run.id,
     )
 
     assert result.supervisor_payload is not None
-    assert result.supervisor_payload["completion_claim_count"] >= 3
-    assert result.supervisor_payload["supervision_mode"] == "hard_verify"
-    assert result.supervisor_payload["decision_overridden"] is True
+    assert result.supervisor_payload["classification"] == "complete"
+    assert result.supervisor_payload["decision"] == "complete"
+    assert result.run.status == "completed"
 
 
 def test_step_run_allows_single_step_from_paused_and_returns_to_paused(tmp_path: Path) -> None:

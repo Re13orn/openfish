@@ -582,10 +582,6 @@ def _autopilot_verdict(
     if run.status == "paused":
         return ("已暂停", run.paused_reason or "用户暂停", "可执行 /autopilot-resume 恢复，或执行 /autopilot-stop 停止。")
     concerns: list[str] = []
-    if run.no_progress_cycles >= 1:
-        concerns.append("最近一轮无进展")
-    if run.same_instruction_cycles >= 1:
-        concerns.append("最近指令开始重复")
     if run.cycle_count >= max(1, run.max_cycles - 5):
         concerns.append("接近轮次上限")
     if not concerns:
