@@ -8,6 +8,45 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - No unreleased changes yet.
 
+## [1.3.0] - 2026-03-17
+
+### Added
+
+- Natural-language-first Telegram routing for common requests:
+  - ask
+  - do
+  - autopilot
+  - note
+  - schedule creation
+  - project switching
+  - GitHub clone
+  - GitHub repository import
+- Clarify flow for ambiguous plain-text requests so the user can choose whether the request is a question, an execution task, an Autopilot run, or a schedule.
+- Persistent pending-command state across service restarts.
+- Telegram task follow-up actions for:
+  - viewing full output
+  - viewing diffs
+  - retrying
+  - continuing
+- Persistent Autopilot raw-stream storage and `/autopilot-log`.
+- `v1.3.0` release notes artifact in `docs/releases/v1.3.0.md`.
+
+### Changed
+
+- Telegram interaction now defaults toward natural language and buttons instead of command memorization.
+- `/schedule-add` flows are more mobile-friendly through guided wizard steps for daily and interval schedules.
+- `/use` without arguments now behaves like a project-selection panel instead of only returning syntax help.
+- Telegram home dashboard became the primary live status surface and now includes Autopilot state.
+- Automatic duplicate live cards were reduced so task and Autopilot activity no longer fragment into as many competing live messages.
+- Autopilot button routing is now consistently run-specific.
+
+### Fixed
+
+- Loss of pending one-shot input mode after service restart.
+- Telegram responsiveness under Autopilot load by allowing concurrent update handling.
+- Ambiguous or multi-project natural-language requests that previously stopped at project selection and required the user to repeat the original request.
+- Cases where Autopilot actions from list/detail panels could target the wrong run.
+
 ## [1.2.0] - 2026-03-15
 
 ### Added
