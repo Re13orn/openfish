@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 import random
+import re
 import shlex
 from threading import Lock
 import time
@@ -17,7 +18,7 @@ from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, 
 from telegram.request import HTTPXRequest
 
 from src import telegram_messages
-from src.formatters import format_autopilot_status, format_current_task, format_home, format_upload_received
+from src.formatters import format_current_task, format_home, format_upload_received
 from src.models import CommandContext, CommandResult, ProjectTemplatePreset
 from src.progress_reporter import ProgressReporter
 from src.telegram_sink import TelegramMessageSink, TelegramSendSpec
@@ -215,6 +216,368 @@ class TelegramBotService:
         "/retry",
         "/schedule-run",
     }
+    _NATURAL_LANGUAGE_QUESTION_PREFIXES = (
+        "为什么",
+        "怎么",
+        "如何",
+        "是什么",
+        "是多少",
+        "哪里",
+        "哪个",
+        "哪些",
+        "是否",
+        "能否",
+        "可否",
+        "请问",
+        "帮我看看",
+        "帮我分析",
+        "解释一下",
+        "说明一下",
+    )
+    _NATURAL_LANGUAGE_AUTOPILOT_MARKERS = (
+        "autopilot",
+        "自动推进",
+        "自己继续",
+        "自己跑",
+        "持续推进",
+        "不用等我",
+        "一直做完",
+    )
+    _NATURAL_LANGUAGE_NOTE_PREFIXES = ("记住", "记一下", "记录", "备注", "note ")
+    _NATURAL_LANGUAGE_PROJECT_SWITCH_MARKERS = (
+        "切到",
+        "切换到",
+        "切换项目",
+        "使用项目",
+        "switch to",
+        "use project",
+    )
+    _NATURAL_LANGUAGE_SCHEDULE_MARKERS = (
+        "每天",
+        "每周",
+        "每隔",
+        "定时",
+        "提醒我",
+        "提醒 ",
+        "schedule",
+    )
+    _NATURAL_LANGUAGE_GITHUB_CLONE_MARKERS = (
+        "克隆",
+        "clone",
+        "下载仓库",
+        "github.com/",
+    )
+    _NATURAL_LANGUAGE_DO_MARKERS = (
+        "帮我把",
+        "请把",
+        "修复",
+        "整理",
+        "生成",
+        "实现",
+        "检查",
+        "分析",
+        "跑",
+        "执行",
+        "更新",
+        "创建",
+        "删除",
+        "部署",
+        "测试",
+        "收集",
+        "汇总",
+        "导出",
+    )
+    _NATURAL_LANGUAGE_CLARIFY_MARKERS = (
+        "看下这个",
+        "看一下这个",
+        "处理一下",
+        "帮我处理一下",
+        "帮我弄一下",
+        "弄一下",
+        "搞一下",
+        "继续",
+    )
+
+    @staticmethod
+    def _clip_text(text: str | None, limit: int = 120) -> str:
+        normalized = (text or "").strip()
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: limit - 3] + "..."
+
+    def _looks_like_question(self, text: str) -> bool:
+        normalized = text.strip()
+        if not normalized:
+            return False
+        lowered = normalized.lower()
+        if normalized.endswith(("?", "？")):
+            return True
+        if any(normalized.startswith(prefix) for prefix in self._NATURAL_LANGUAGE_QUESTION_PREFIXES):
+            return True
+        return lowered.startswith("what ") or lowered.startswith("why ") or lowered.startswith("how ")
+
+    def _classify_natural_language_command(self, text: str) -> str:
+        normalized = text.strip()
+        lowered = normalized.lower()
+        if any(marker in lowered for marker in self._NATURAL_LANGUAGE_AUTOPILOT_MARKERS):
+            return "/autopilot"
+        if any(normalized.startswith(prefix) for prefix in self._NATURAL_LANGUAGE_NOTE_PREFIXES):
+            return "/note"
+        if self._looks_like_question(normalized):
+            return "/ask"
+        return "/do"
+
+    def _looks_like_project_switch_request(self, text: str) -> bool:
+        lowered = text.strip().lower()
+        return any(marker in lowered for marker in self._NATURAL_LANGUAGE_PROJECT_SWITCH_MARKERS)
+
+    def _looks_like_schedule_request(self, text: str) -> bool:
+        lowered = text.strip().lower()
+        return any(marker in lowered for marker in self._NATURAL_LANGUAGE_SCHEDULE_MARKERS)
+
+    def _extract_github_clone_command(self, text: str) -> str | None:
+        normalized = text.strip()
+        lowered = normalized.lower()
+        if not any(marker in lowered for marker in self._NATURAL_LANGUAGE_GITHUB_CLONE_MARKERS):
+            return None
+        repo_match = re.search(r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", normalized)
+        if repo_match is None:
+            repo_match = re.search(r"\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\b", normalized)
+        repo_input = self._extract_github_repo_input(normalized)
+        if repo_input is None or repo_match is None:
+            return None
+        target_match = re.search(r"(?:到|放到|保存到|into|to)\s*([A-Za-z0-9_./-]+)", normalized[repo_match.end() :], re.IGNORECASE)
+        if target_match is not None:
+            target_name = target_match.group(1).rstrip(").,，。")
+            return f"/github-clone {shlex.quote(repo_input)} {shlex.quote(target_name)}"
+        return f"/github-clone {shlex.quote(repo_input)}"
+
+    def _extract_github_repo_input(self, text: str) -> str | None:
+        normalized = text.strip()
+        repo_match = re.search(r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", normalized)
+        if repo_match is None:
+            repo_match = re.search(r"\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\b", normalized)
+        if repo_match is None:
+            return None
+        return repo_match.group(0).rstrip(").,，。")
+
+    def _looks_like_project_import_request(self, text: str) -> bool:
+        normalized = text.strip()
+        lowered = normalized.lower()
+        repo_input = self._extract_github_repo_input(normalized)
+        if repo_input is None:
+            return False
+        explicit_clone = any(marker in lowered for marker in ("克隆", "clone", "下载仓库"))
+        if explicit_clone:
+            return False
+        if normalized == repo_input:
+            return True
+        return any(marker in normalized for marker in ("管理这个仓库", "导入这个仓库", "作为新项目", "新项目"))
+
+    def _derive_project_key_from_repo(self, repo_input: str) -> str:
+        slug = repo_input.rstrip("/").split("/")[-1]
+        if slug.endswith(".git"):
+            slug = slug[:-4]
+        normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", slug).strip("-._").lower()
+        return normalized or "project"
+
+    async def _start_project_import_wizard_from_repo(
+        self,
+        message,
+        ctx: CommandContext,
+        *,
+        repo_input: str,
+    ) -> None:  # noqa: ANN001
+        user = self.router.tasks.ensure_user(ctx)
+        key = self._derive_project_key_from_repo(repo_input)
+        state = {
+            "kind": "project_add",
+            "step": "path",
+            "data": {
+                "key": key,
+                "name": key,
+                "source_repo": repo_input,
+            },
+        }
+        self.router.tasks.set_chat_wizard_state(
+            chat_id=ctx.telegram_chat_id,
+            user_id=user.id,
+            state=state,
+        )
+        await self._send_wizard_prompt(
+            message,
+            state,
+            preface=(
+                f"已识别为项目导入请求：{repo_input}\n"
+                f"建议项目 key: {key}\n"
+                "先完成项目创建，确认后会自动下载这个仓库。"
+            ),
+            context="sending project import wizard prompt",
+        )
+
+    def _build_natural_language_note_command(self, text: str) -> str:
+        normalized = text.strip()
+        content = normalized
+        for prefix in self._NATURAL_LANGUAGE_NOTE_PREFIXES:
+            if normalized.startswith(prefix):
+                content = normalized[len(prefix) :].lstrip(" ：:，,")
+                break
+        category = "general"
+        if any(marker in content for marker in ("报错", "错误", "异常", "失败")):
+            category = "error"
+        elif any(marker in content for marker in ("规范", "约定", "风格", "不要")):
+            category = "convention"
+        elif any(marker in content for marker in ("决定", "结论", "方案", "最终")):
+            category = "decision"
+        elif any(marker in content for marker in ("事实", "地址", "接口", "账号", "密码", "域名")):
+            category = "fact"
+        if category != "general":
+            for marker in {
+                "error": ("报错", "错误", "异常", "失败"),
+                "convention": ("规范", "约定", "风格"),
+                "decision": ("决定", "结论", "方案", "最终"),
+                "fact": ("事实", "地址", "接口", "账号", "密码", "域名"),
+            }[category]:
+                if content.startswith(marker):
+                    content = content[len(marker) :].lstrip(" ：:，,")
+                    break
+        if not content:
+            content = normalized
+        if category == "general":
+            return f"/note {content}"
+        return f"/note {category} {content}"
+
+    def _needs_natural_language_clarification(self, text: str) -> bool:
+        normalized = text.strip()
+        lowered = normalized.lower()
+        if not normalized:
+            return False
+        if self._looks_like_question(normalized):
+            return False
+        if self._looks_like_project_switch_request(normalized):
+            return False
+        if self._looks_like_schedule_request(normalized):
+            return False
+        if self._extract_github_clone_command(normalized) is not None:
+            return False
+        if any(marker in lowered for marker in self._NATURAL_LANGUAGE_AUTOPILOT_MARKERS):
+            return False
+        if any(normalized.startswith(prefix) for prefix in self._NATURAL_LANGUAGE_NOTE_PREFIXES):
+            return False
+        if any(marker in normalized for marker in self._NATURAL_LANGUAGE_CLARIFY_MARKERS):
+            return True
+        if any(marker in normalized for marker in self._NATURAL_LANGUAGE_DO_MARKERS):
+            return False
+        if len(normalized) <= 8:
+            return True
+        return len(normalized) <= 18 and " " not in normalized
+
+    def _match_project_keys_in_text(self, text: str) -> list[str]:
+        projects = getattr(self.router, "projects", None)
+        if projects is None or not hasattr(projects, "list_keys"):
+            return []
+        lowered = text.strip().lower()
+        matches: list[str] = []
+        for key in projects.list_keys():
+            if key and key.lower() in lowered and key not in matches:
+                matches.append(key)
+        return matches
+
+    async def _start_schedule_wizard_from_natural_language(
+        self,
+        message,
+        ctx: CommandContext,
+        raw_text: str,
+    ) -> None:  # noqa: ANN001
+        await self._start_wizard(
+            message,
+            ctx=ctx,
+            token="schedule_add",
+            preface=f"已识别为定时任务请求：{raw_text}",
+        )
+
+    async def _ensure_project_for_natural_language(self, message, ctx: CommandContext) -> bool:  # noqa: ANN001
+        tasks = getattr(self.router, "tasks", None)
+        projects = getattr(self.router, "projects", None)
+        if tasks is None or projects is None:
+            return True
+        user = tasks.ensure_user(ctx)
+        active_key = tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+        if active_key:
+            return True
+        available = list(projects.list_keys()) if hasattr(projects, "list_keys") else []
+        if not available:
+            return True
+        recent = [key for key in tasks.list_recent_project_keys(user_id=user.id) if key in available]
+        selected_key: str | None = None
+        if len(available) == 1:
+            selected_key = available[0]
+        elif len(recent) == 1:
+            selected_key = recent[0]
+        if selected_key:
+            tasks.set_active_project(user.id, selected_key, ctx.telegram_chat_id)
+            await self._send_text(
+                message,
+                f"已自动切换到项目: {selected_key}",
+                context="sending inferred project selection",
+                reply_markup=self._main_menu_markup(),
+            )
+            return True
+        await self._send_projects_panel(message, ctx)
+        return False
+
+    async def _defer_natural_language_command_for_project_selection(
+        self,
+        message,
+        ctx: CommandContext,
+        *,
+        command_text: str | None,
+        original_text: str,
+        intent: str | None = None,
+    ) -> None:  # noqa: ANN001
+        tasks = getattr(self.router, "tasks", None)
+        if tasks is None:
+            return
+        user = tasks.ensure_user(ctx)
+        state = {
+            "kind": "natural_project_route",
+            "step": "pick_project",
+            "data": {
+                "command_text": command_text,
+                "original_text": original_text,
+                "intent": intent,
+            },
+        }
+        tasks.set_chat_wizard_state(chat_id=ctx.telegram_chat_id, user_id=user.id, state=state)
+        await self._send_text(
+            message,
+            f"请先选择项目，我会继续这条请求：{original_text}",
+            context="sending natural-language project selection hint",
+            reply_markup=self._main_menu_markup(),
+        )
+
+    async def _start_natural_language_clarify(
+        self,
+        message,
+        ctx: CommandContext,
+        raw_text: str,
+    ) -> None:  # noqa: ANN001
+        user = self.router.tasks.ensure_user(ctx)
+        state = {
+            "kind": "natural_clarify",
+            "step": "choose",
+            "data": {"original_text": raw_text},
+        }
+        self.router.tasks.set_chat_wizard_state(
+            chat_id=ctx.telegram_chat_id,
+            user_id=user.id,
+            state=state,
+        )
+        await self._send_wizard_prompt(
+            message,
+            state,
+            context="sending natural-language clarify prompt",
+        )
 
     def __init__(self, config, router) -> None:
         self.config = config
@@ -509,6 +872,74 @@ class TelegramBotService:
                     self.router.tasks.clear_chat_pending_command(chat_id=command_context.telegram_chat_id)
                 if pending_command:
                     raw_text = f"{pending_command} {raw_text}"
+                else:
+                    if self._looks_like_project_import_request(raw_text):
+                        repo_input = self._extract_github_repo_input(raw_text)
+                        if repo_input is not None:
+                            self._clear_input_modes(command_context.telegram_chat_id)
+                            await self._start_project_import_wizard_from_repo(
+                                message,
+                                command_context,
+                                repo_input=repo_input,
+                            )
+                            return
+                    github_clone_command = self._extract_github_clone_command(raw_text)
+                    if github_clone_command is not None:
+                        if not await self._ensure_project_for_natural_language(message, command_context):
+                            await self._defer_natural_language_command_for_project_selection(
+                                message,
+                                command_context,
+                                command_text=github_clone_command,
+                                original_text=raw_text,
+                                intent="/github-clone",
+                            )
+                            return
+                        self._clear_input_modes(command_context.telegram_chat_id)
+                        await self._execute_command(message, command_context, github_clone_command)
+                        return
+                    if self._needs_natural_language_clarification(raw_text):
+                        self._clear_input_modes(command_context.telegram_chat_id)
+                        await self._start_natural_language_clarify(message, command_context, raw_text)
+                        return
+                    if self._looks_like_project_switch_request(raw_text):
+                        matched_keys = self._match_project_keys_in_text(raw_text)
+                        if len(matched_keys) == 1:
+                            self._clear_input_modes(command_context.telegram_chat_id)
+                            await self._execute_command(message, command_context, f"/use {matched_keys[0]}")
+                            return
+                        await self._send_projects_panel(message, command_context)
+                        return
+                    if self._looks_like_schedule_request(raw_text):
+                        if not await self._ensure_project_for_natural_language(message, command_context):
+                            await self._defer_natural_language_command_for_project_selection(
+                                message,
+                                command_context,
+                                command_text=None,
+                                original_text=raw_text,
+                                intent="schedule_add",
+                            )
+                            return
+                        self._clear_input_modes(command_context.telegram_chat_id)
+                        await self._start_schedule_wizard_from_natural_language(
+                            message,
+                            command_context,
+                            raw_text,
+                        )
+                        return
+                    classified_command = self._classify_natural_language_command(raw_text)
+                    if not await self._ensure_project_for_natural_language(message, command_context):
+                        await self._defer_natural_language_command_for_project_selection(
+                            message,
+                            command_context,
+                            command_text=f"{classified_command} {raw_text}",
+                            original_text=raw_text,
+                            intent=classified_command,
+                        )
+                        return
+                    if classified_command == "/note":
+                        raw_text = self._build_natural_language_note_command(raw_text)
+                    else:
+                        raw_text = f"{classified_command} {raw_text}"
 
             command = raw_text.split(" ", 1)[0].split("@", 1)[0]
             effective_command = command if raw_text.startswith("/") else "/ask"
@@ -705,6 +1136,23 @@ class TelegramBotService:
             return False
         project_key = data.split(":", 1)[1]
         await self._execute_command(message, base_ctx, f"/use {project_key}")
+        state = self._get_wizard_state(base_ctx.telegram_chat_id)
+        if state is not None and str(state.get("kind")) == "natural_project_route":
+            data_payload = state.get("data") or {}
+            command_text = str(data_payload.get("command_text") or "").strip()
+            intent = str(data_payload.get("intent") or "").strip()
+            original_text = str(data_payload.get("original_text") or "").strip()
+            self.router.tasks.clear_chat_wizard_state(chat_id=base_ctx.telegram_chat_id)
+            await self._send_text(
+                message,
+                f"已切换到项目 {project_key}，继续执行刚才的请求。",
+                context="sending natural-language project resume hint",
+                reply_markup=self._main_menu_markup(),
+            )
+            if command_text:
+                await self._execute_command(message, base_ctx, command_text)
+            elif intent == "schedule_add" and original_text:
+                await self._start_schedule_wizard_from_natural_language(message, base_ctx, original_text)
         return True
 
     async def _handle_status_callback(self, message, base_ctx: CommandContext, data: str) -> bool:  # noqa: ANN001
@@ -866,6 +1314,12 @@ class TelegramBotService:
         if not data.startswith("panel:"):
             return False
         panel = data.split(":", 1)[1]
+        if panel.startswith("autopilot_run:"):
+            run_id = panel.split(":", 1)[1]
+            if not run_id.isdigit():
+                return False
+            await self._send_autopilot_run_panel(message, base_ctx, run_id=int(run_id))
+            return True
         mapping = {
             "projects": lambda: self._send_projects_panel(message, base_ctx),
             "schedule": lambda: self._send_schedule_panel(message, base_ctx),
@@ -919,6 +1373,50 @@ class TelegramBotService:
         if token.startswith("reject:"):
             approval_id = token.split(":", 1)[1]
             await self._start_approval_note_wizard(message, ctx=ctx, action="reject", approval_id_text=approval_id)
+            return
+        if token.startswith("autopilot_takeover:"):
+            run_id = token.split(":", 1)[1].strip()
+            if not run_id.isdigit():
+                await self._send_text(
+                    message,
+                    "Autopilot run 参数无效，请重新打开卡片。",
+                    context="sending invalid autopilot takeover prompt",
+                    reply_markup=self._main_menu_markup(),
+                )
+                return
+            command = f"/autopilot-takeover {run_id}"
+            self.router.tasks.clear_chat_wizard_state(chat_id=chat_id)
+            user = self.router.tasks.ensure_user(ctx)
+            self._pending_command_by_chat[chat_id] = command
+            self.router.tasks.set_chat_pending_command(chat_id=chat_id, user_id=user.id, command=command)
+            hint = f"请输入新的高层指令。下一条消息将按 /autopilot-takeover {run_id} 执行。"
+            autopilot = getattr(self.router, "autopilot", None)
+            if autopilot is not None and hasattr(autopilot, "get_run"):
+                run = autopilot.get_run(run_id=int(run_id))
+                if run is not None:
+                    lines = [
+                        f"人工接管 Run #{run.id}",
+                        f"状态: {run.status}",
+                        f"轮次: {run.cycle_count}/{run.max_cycles}",
+                    ]
+                    if run.last_decision:
+                        lines.append(f"最近判定: {run.last_decision}")
+                    if run.last_supervisor_summary:
+                        lines.append(
+                            f"A 最近摘要: {self._clip_text(run.last_supervisor_summary, 100)}"
+                        )
+                    if run.last_worker_summary:
+                        lines.append(
+                            f"B 最近摘要: {self._clip_text(run.last_worker_summary, 100)}"
+                        )
+                    lines.append(f"下一条消息将按 /autopilot-takeover {run_id} 执行。")
+                    hint = "\n".join(lines)
+            await self._send_text(
+                message,
+                telegram_messages.prompt_mode_hint(hint),
+                context="sending prompt mode hint",
+                reply_markup=self._main_menu_markup(),
+            )
             return
 
         if token in self._WIZARD_TOKENS:
@@ -1082,7 +1580,13 @@ class TelegramBotService:
                 current_task_card_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await current_task_card_task
-                await self._refresh_current_task_card(message, command_context, force=True)
+                user = self.router.tasks.ensure_user(command_context)
+                await self._refresh_home_dashboard(
+                    message,
+                    user_id=user.id,
+                    chat_id=command_context.telegram_chat_id,
+                    force=True,
+                )
             if progress_task is not None:
                 progress_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -1169,14 +1673,8 @@ class TelegramBotService:
         return command in self._CURRENT_TASK_CARD_COMMANDS
 
     async def _track_current_task_card(self, message, command_context: CommandContext) -> None:  # noqa: ANN001
-        last_signature: tuple[object, ...] | None = None
         last_home_signature: tuple[object, ...] | None = None
         while True:
-            last_signature = await self._refresh_current_task_card(
-                message,
-                command_context,
-                previous_signature=last_signature,
-            )
             user = self.router.tasks.ensure_user(command_context)
             last_home_signature = await self._refresh_home_dashboard(
                 message,
@@ -1244,6 +1742,22 @@ class TelegramBotService:
         snapshot = tasks.get_status_snapshot(user_id, chat_id)
         recent_keys = tasks.list_recent_project_keys(user_id=user_id)
         current_model = tasks.get_chat_codex_model(chat_id=chat_id)
+        autopilot = getattr(self.router, "autopilot", None)
+        autopilot_run = None
+        autopilot_runtime = None
+        if (
+            autopilot is not None
+            and snapshot.active_project_key is not None
+            and hasattr(autopilot, "get_latest_run_for_project")
+        ):
+            try:
+                project_id = tasks.get_project_id(snapshot.active_project_key)
+            except KeyError:
+                project_id = None
+            if project_id is not None:
+                autopilot_run = autopilot.get_latest_run_for_project(project_id=project_id)
+                if autopilot_run is not None and hasattr(autopilot, "get_runtime_snapshot"):
+                    autopilot_runtime = autopilot.get_runtime_snapshot(run_id=autopilot_run.id)
         signature = (
             snapshot.active_project_key,
             getattr(snapshot.active_task, "id", None),
@@ -1257,6 +1771,13 @@ class TelegramBotService:
             snapshot.most_recent_task_summary,
             current_model,
             tuple(recent_keys[:4]),
+            getattr(autopilot_run, "id", None),
+            getattr(autopilot_run, "status", None),
+            getattr(autopilot_run, "cycle_count", None),
+            getattr(autopilot_run, "last_decision", None),
+            getattr(autopilot_runtime, "actor", None),
+            getattr(autopilot_runtime, "thread_alive", None),
+            getattr(autopilot_runtime, "output_version", None),
         )
         if previous_signature is None:
             previous_signature = self._home_dashboard_signatures.get(chat_id)
@@ -1270,6 +1791,8 @@ class TelegramBotService:
                     snapshot=snapshot,
                     current_model=current_model,
                     recent_project_keys=recent_keys,
+                    autopilot_run=autopilot_run,
+                    autopilot_runtime=autopilot_runtime,
                 ),
                 context=context,
                 reply_markup=self.views.home_markup(snapshot=snapshot, recent_projects=recent_keys),
@@ -1342,29 +1865,10 @@ class TelegramBotService:
             if run is None:
                 return
             runtime = autopilot.get_runtime_snapshot(run_id=run_id)
-            events = autopilot.list_events(run_id=run_id, limit=10)
             raw_output_lines = autopilot.get_recent_output(run_id=run_id, limit=10)
             if not raw_output_lines:
                 return
             target = _ChatTarget(chat_id=chat_id, bot=self._app.bot)
-            status_context = f"autopilot live {chat_id}:{run_id}"
-            await self.sink.send(
-                target,
-                TelegramSendSpec(
-                    text=format_autopilot_status(
-                        run=run,
-                        events=events,
-                        runtime=runtime,
-                        raw_output_lines=raw_output_lines[-6:],
-                    ),
-                    context=status_context,
-                    reply_markup=self.views.autopilot_run_markup(run),
-                    edit_context=status_context,
-                    edit_window_seconds=float(
-                        getattr(self.config, "telegram_autopilot_edit_window_seconds", 300.0)
-                    ),
-                ),
-            )
             await self._refresh_home_dashboard(
                 target,
                 user_id=run.created_by_user_id,
@@ -1477,6 +1981,38 @@ class TelegramBotService:
             spec,
             context="sending autopilot panel",
             edit_context="sending autopilot panel",
+            edit_window_seconds=float(getattr(self.config, "telegram_autopilot_edit_window_seconds", 300.0)),
+        )
+
+    async def _send_autopilot_run_panel(
+        self,
+        message,  # noqa: ANN001
+        ctx: CommandContext,
+        *,
+        run_id: int,
+    ) -> None:
+        run = None
+        if getattr(self.router, "autopilot", None) is not None:
+            user = self.router.tasks.ensure_user(ctx)
+            active_key = self.router.tasks.get_active_project_key(user.id, ctx.telegram_chat_id)
+            if active_key:
+                try:
+                    project_id = self.router.tasks.get_project_id(active_key)
+                except KeyError:
+                    project_id = None
+                if project_id is not None:
+                    candidate = self.router.autopilot.get_run(run_id=run_id)
+                    if candidate is not None and candidate.project_id == project_id:
+                        run = candidate
+        if run is None:
+            await self._send_autopilot_panel(message, ctx)
+            return
+        spec = self.views.autopilot_panel(run, recent_runs=[run])
+        await self._send_view_spec(
+            message,
+            spec,
+            context=f"sending autopilot run panel {run_id}",
+            edit_context=f"sending autopilot run panel {run_id}",
             edit_window_seconds=float(getattr(self.config, "telegram_autopilot_edit_window_seconds", 300.0)),
         )
 
@@ -1864,6 +2400,14 @@ class TelegramBotService:
             await self._handle_wizard_input(message, ctx, state, data.rsplit(":", 1)[1])
             await self._clear_inline_keyboard(message)
             return
+        if data.startswith("wizard:trigger:"):
+            await self._handle_wizard_input(message, ctx, state, data.rsplit(":", 1)[1])
+            await self._clear_inline_keyboard(message)
+            return
+        if data.startswith("wizard:clarify:"):
+            await self._handle_natural_clarify_choice(message, ctx, state, data.rsplit(":", 1)[1])
+            await self._clear_inline_keyboard(message)
+            return
         if data.startswith("wizard:template:"):
             await self._handle_wizard_input(message, ctx, state, data.split(":", 2)[2])
             await self._clear_inline_keyboard(message)
@@ -1932,7 +2476,7 @@ class TelegramBotService:
         if token == "project_add":
             state = {"kind": token, "step": "key", "data": {}}
         elif token == "schedule_add":
-            state = {"kind": token, "step": "time", "data": {}}
+            state = {"kind": token, "step": "trigger", "data": {}}
         elif token in {"approve_note", "reject_note"} and pending is not None:
             state = {
                 "kind": token,
@@ -1971,6 +2515,12 @@ class TelegramBotService:
 
         if kind == "schedule_add":
             return telegram_messages.schedule_add_prompt(step=step, data=data)
+        if kind == "natural_clarify":
+            return (
+                "我还不能确定你是想提问、执行任务、启动 Autopilot，还是创建定时任务。\n"
+                f"原始请求: {data.get('original_text')}\n"
+                "请选择一个动作。"
+            )
         if kind == "approve_note":
             return telegram_messages.approval_note_prompt(step=step, data=data, action="approve")
         if kind == "reject_note":
@@ -2039,6 +2589,27 @@ class TelegramBotService:
                 )
 
         if kind == "schedule_add":
+            if step == "trigger":
+                return InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(text="每天定时", callback_data="wizard:trigger:daily"),
+                            InlineKeyboardButton(text="每隔一段时间", callback_data="wizard:trigger:interval"),
+                        ],
+                        [InlineKeyboardButton(text="取消", callback_data="wizard:cancel")],
+                    ]
+                )
+            if step == "interval":
+                return InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(text="30m", callback_data="wizard:trigger:30m"),
+                            InlineKeyboardButton(text="1h", callback_data="wizard:trigger:1h"),
+                            InlineKeyboardButton(text="2h", callback_data="wizard:trigger:2h"),
+                        ],
+                        [InlineKeyboardButton(text="取消", callback_data="wizard:cancel")],
+                    ]
+                )
             if step == "mode":
                 return InlineKeyboardMarkup(
                     [
@@ -2056,6 +2627,21 @@ class TelegramBotService:
                         InlineKeyboardButton(text="取消", callback_data="wizard:cancel"),
                     ]]
                 )
+
+        if kind == "natural_clarify":
+            return InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(text="提问", callback_data="wizard:clarify:ask"),
+                        InlineKeyboardButton(text="执行", callback_data="wizard:clarify:do"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="Autopilot", callback_data="wizard:clarify:autopilot"),
+                        InlineKeyboardButton(text="定时任务", callback_data="wizard:clarify:schedule"),
+                    ],
+                    [InlineKeyboardButton(text="取消", callback_data="wizard:cancel")],
+                ]
+            )
 
         if kind == "approve_note":
             if step == "note":
@@ -2117,6 +2703,79 @@ class TelegramBotService:
             context=context,
         )
 
+    async def _handle_natural_clarify_choice(
+        self,
+        message,
+        ctx: CommandContext,
+        state: dict,
+        choice: str,
+    ) -> None:  # noqa: ANN001
+        if str(state.get("kind")) != "natural_clarify":
+            return
+        original_text = str((state.get("data") or {}).get("original_text") or "").strip()
+        self.router.tasks.clear_chat_wizard_state(chat_id=ctx.telegram_chat_id)
+        if not original_text:
+            await self._send_text(
+                message,
+                "这条请求已过期，请重新发送。",
+                context="sending expired natural clarify request",
+                reply_markup=self._main_menu_markup(),
+            )
+            return
+        if choice == "schedule":
+            if not await self._ensure_project_for_natural_language(message, ctx):
+                await self._defer_natural_language_command_for_project_selection(
+                    message,
+                    ctx,
+                    command_text=None,
+                    original_text=original_text,
+                    intent="schedule_add",
+                )
+                return
+            await self._start_schedule_wizard_from_natural_language(message, ctx, original_text)
+            return
+        command = {
+            "ask": "/ask",
+            "do": "/do",
+            "autopilot": "/autopilot",
+        }.get(choice)
+        if command is None:
+            await self._send_text(
+                message,
+                "未知选择，请重新发送请求。",
+                context="sending invalid natural clarify choice",
+                reply_markup=self._main_menu_markup(),
+            )
+            return
+        if not await self._ensure_project_for_natural_language(message, ctx):
+            await self._defer_natural_language_command_for_project_selection(
+                message,
+                ctx,
+                command_text=f"{command} {original_text}",
+                original_text=original_text,
+                intent=command,
+            )
+            return
+        await self._execute_command(message, ctx, f"{command} {original_text}")
+
+    async def _execute_project_add_with_optional_repo_import(
+        self,
+        message,
+        ctx: CommandContext,
+        state: dict,
+        command_text: str,
+    ) -> None:  # noqa: ANN001
+        repo_input = str((state.get("data") or {}).get("source_repo") or "").strip()
+        command = command_text.split(" ", 1)[0].split("@", 1)[0]
+        result = await self._dispatch_router_command(message, ctx, command=command)
+        if await self._maybe_start_wizard_from_result(message, ctx, result):
+            return
+        await self._send_command_result(message, command, ctx, result)
+        if not repo_input:
+            return
+        if result.reply_text.startswith("项目已新增并切换") or result.reply_text.startswith("项目已重新启用并切换"):
+            await self._execute_command(message, ctx, f"/github-clone {shlex.quote(repo_input)}")
+
     async def _handle_wizard_input(
         self,
         message,
@@ -2140,7 +2799,23 @@ class TelegramBotService:
             if lowered in {item.lower() for item in self._WIZARD_CONFIRM_TOKENS}:
                 command_text = self._wizard_command(state)
                 self.router.tasks.clear_chat_wizard_state(chat_id=ctx.telegram_chat_id)
-                await self._execute_command(message, ctx, command_text)
+                if str(state.get("kind")) == "project_add" and (state.get("data") or {}).get("source_repo"):
+                    command_context = CommandContext(
+                        telegram_user_id=ctx.telegram_user_id,
+                        telegram_chat_id=ctx.telegram_chat_id,
+                        telegram_message_id=ctx.telegram_message_id,
+                        text=command_text,
+                        telegram_username=ctx.telegram_username,
+                        telegram_display_name=ctx.telegram_display_name,
+                    )
+                    await self._execute_project_add_with_optional_repo_import(
+                        message,
+                        command_context,
+                        state,
+                        command_text,
+                    )
+                else:
+                    await self._execute_command(message, ctx, command_text)
                 return True
             await self._send_wizard_prompt(
                 message,
@@ -2231,6 +2906,19 @@ class TelegramBotService:
             return None
 
         if kind == "schedule_add":
+            if step == "trigger":
+                if lowered == "daily":
+                    data["schedule_type"] = "daily"
+                    return {"kind": kind, "step": "time", "data": data}
+                if lowered == "interval":
+                    data["schedule_type"] = "interval"
+                    return {"kind": kind, "step": "interval", "data": data}
+                if lowered in {"30m", "1h", "2h"}:
+                    data["schedule_type"] = "interval"
+                    text = lowered
+                    step = "interval"
+                else:
+                    return None
             if step == "time":
                 hour_text, sep, minute_text = text.partition(":")
                 if sep != ":":
@@ -2243,6 +2931,30 @@ class TelegramBotService:
                 if hour < 0 or hour > 23 or minute < 0 or minute > 59:
                     return None
                 data["hhmm"] = f"{hour:02d}:{minute:02d}"
+                return {"kind": kind, "step": "mode", "data": data}
+            if step == "interval":
+                interval_text = text.strip().lower()
+                interval_minutes: int | None = None
+                if interval_text.endswith("m"):
+                    try:
+                        interval_minutes = int(interval_text[:-1])
+                    except ValueError:
+                        interval_minutes = None
+                elif interval_text.endswith("h"):
+                    try:
+                        interval_minutes = int(interval_text[:-1]) * 60
+                    except ValueError:
+                        interval_minutes = None
+                else:
+                    minute_match = re.fullmatch(r"(\\d+)\\s*分钟", interval_text)
+                    hour_match = re.fullmatch(r"(\\d+)\\s*小时", interval_text)
+                    if minute_match:
+                        interval_minutes = int(minute_match.group(1))
+                    elif hour_match:
+                        interval_minutes = int(hour_match.group(1)) * 60
+                if interval_minutes is None or interval_minutes < 1:
+                    return None
+                data["interval_minutes"] = interval_minutes
                 return {"kind": kind, "step": "mode", "data": data}
             if step == "mode":
                 if lowered not in {"ask", "do", "/ask", "/do"}:
@@ -2290,6 +3002,12 @@ class TelegramBotService:
                 parts.append(shlex.quote(str(data["name"])))
             return " ".join(parts)
         if kind == "schedule_add":
+            if data.get("schedule_type") == "interval":
+                interval_minutes = int(data["interval_minutes"])
+                interval_text = (
+                    f"{interval_minutes // 60}h" if interval_minutes % 60 == 0 else f"{interval_minutes}m"
+                )
+                return f"/schedule-add every {interval_text} {data['mode']} {data['text']}"
             return f"/schedule-add {data['hhmm']} {data['mode']} {data['text']}"
         if kind == "approve_note":
             note = str(data.get("note") or "").strip()

@@ -69,6 +69,11 @@ class WizardTasksStub:
         _ = chat_id
         return self.active_project_key
 
+    def set_active_project(self, user_id: int, project_key: str, chat_id: str | None = None) -> None:
+        _ = user_id
+        _ = chat_id
+        self.active_project_key = project_key
+
     def get_project_id(self, project_key: str) -> int:
         _ = project_key
         return 101
@@ -207,6 +212,7 @@ class WizardRouterStub:
         self.autopilot = SimpleNamespace(
             get_latest_run_for_project=lambda project_id: latest_run,
             list_runs_for_project=lambda project_id, limit=6: [latest_run][:limit],
+            get_run=lambda run_id: latest_run if run_id == latest_run.id else None,
         )
 
     def handle(self, ctx):  # noqa: ANN001, ANN201
@@ -738,6 +744,163 @@ def test_project_add_path_step_has_default_button() -> None:
     assert rows[0][0].text == "默认目录"
     assert rows[0][0].callback_data == "wizard:default"
     assert rows[0][1].text == "取消"
+
+
+def test_schedule_add_trigger_step_has_daily_and_interval_buttons() -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+
+    markup = service._wizard_markup({"kind": "schedule_add", "step": "trigger", "data": {}})
+    rows = markup.inline_keyboard
+
+    assert rows[0][0].callback_data == "wizard:trigger:daily"
+    assert rows[0][1].callback_data == "wizard:trigger:interval"
+
+
+def test_schedule_add_interval_flow_builds_interval_command() -> None:
+    config = SimpleNamespace(
+        telegram_bot_token="dummy",
+        poll_interval_seconds=1,
+        max_telegram_message_length=3500,
+    )
+    router = WizardRouterStub()
+    service = TelegramBotService(config=config, router=router)
+
+    state = {"kind": "schedule_add", "step": "trigger", "data": {}}
+    state = service._advance_wizard_state(state, "interval")
+    assert state == {"kind": "schedule_add", "step": "interval", "data": {"schedule_type": "interval"}}
+
+    state = service._advance_wizard_state(state, "30m")
+    assert state == {
+        "kind": "schedule_add",
+        "step": "mode",
+        "data": {"schedule_type": "interval", "interval_minutes": 30},
+    }
+
+    state = service._advance_wizard_state(state, "do")
+    state = service._advance_wizard_state(state, "检查服务状态")
+
+    assert state == {
+        "kind": "schedule_add",
+        "step": "confirm",
+        "data": {
+            "schedule_type": "interval",
+            "interval_minutes": 30,
+            "mode": "do",
+            "text": "检查服务状态",
+        },
+    }
+    assert service._wizard_command(state) == "/schedule-add every 30m do 检查服务状态"
+
+
+def test_on_text_message_starts_project_import_wizard_from_bare_github_repo(monkeypatch) -> None:
+    router = WizardRouterStub()
+    router.tasks.active_project_key = None
+    router.projects = SimpleNamespace(default_project_root=Path("/tmp/projects"), list_keys=lambda: [])
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    message = MessageStub([object()])
+    message.text = "https://github.com/openai/openai-python"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    prompts: list[str] = []
+
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
+        _ = message
+        _ = context
+        _ = command
+        _ = edit_context
+        _ = edit_window_seconds
+        prompts.append(spec.text)
+        return True
+
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert router.tasks.state == {
+        "kind": "project_add",
+        "step": "path",
+        "data": {
+            "key": "openai-python",
+            "name": "openai-python",
+            "source_repo": "https://github.com/openai/openai-python",
+        },
+    }
+    assert any("建议项目 key: openai-python" in text for text in prompts)
+
+
+def test_project_add_confirm_with_source_repo_runs_project_add_then_clone(monkeypatch) -> None:
+    router = WizardRouterStub()
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    state = {
+        "kind": "project_add",
+        "step": "confirm",
+        "data": {
+            "key": "openai-python",
+            "path": "",
+            "name": "openai-python",
+            "source_repo": "https://github.com/openai/openai-python",
+        },
+    }
+    message = MessageStub([object()])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+    dispatched: list[tuple[str, str]] = []
+
+    async def fake_dispatch(message, command_context, *, command: str):  # noqa: ANN001, ANN202
+        _ = message
+        dispatched.append((command, command_context.text))
+        return CommandResult("项目已新增并切换。\n项目: openai-python", metadata={})
+
+    async def fake_send_command_result(message, command, command_context, result):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command
+        _ = command_context
+        _ = result
+        return True
+
+    async def fake_execute_command(message, command_context, command):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command_context
+        dispatched.append(("execute", command))
+        return None
+
+    monkeypatch.setattr(service, "_dispatch_router_command", fake_dispatch)
+    monkeypatch.setattr(service, "_send_command_result", fake_send_command_result)
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+
+    handled = asyncio.run(service._handle_wizard_input(message, ctx, state, "确认"))
+
+    assert handled is True
+    assert dispatched[0] == ("/project-add", "/project-add openai-python openai-python")
+    assert dispatched[1] == ("execute", "/github-clone https://github.com/openai/openai-python")
 
 
 def test_wizard_default_callback_advances_project_add(monkeypatch) -> None:
@@ -1292,6 +1455,7 @@ def test_flush_autopilot_stream_update_sends_live_status_card_and_raw_stream(mon
     )
     router.autopilot = SimpleNamespace(
         get_run=lambda run_id: run,
+        get_latest_run_for_project=lambda project_id: run,
         get_runtime_snapshot=lambda run_id: SimpleNamespace(
             thread_alive=True,
             actor="worker",
@@ -1351,14 +1515,12 @@ def test_flush_autopilot_stream_update_sends_live_status_card_and_raw_stream(mon
 
     asyncio.run(service._flush_autopilot_stream_update(run_id=3, chat_id="1"))
 
-    assert len(sent_specs) == 3
-    assert sent_specs[0].context == "autopilot live 1:3"
-    assert "【Autopilot】" in sent_specs[0].text
-    assert "A 状态:" in sent_specs[0].text
-    assert sent_specs[1].context == "live home dashboard 1"
-    assert "【控制台】" in sent_specs[1].text
-    assert sent_specs[2].context == "autopilot raw 1:3"
-    assert "Autopilot 原始流" in sent_specs[2].text
+    assert len(sent_specs) == 2
+    assert sent_specs[0].context == "live home dashboard 1"
+    assert "【控制台】" in sent_specs[0].text
+    assert "Autopilot:" in sent_specs[0].text
+    assert sent_specs[1].context == "autopilot raw 1:3"
+    assert "Autopilot 原始流" in sent_specs[1].text
 
 
 def test_send_model_panel_contains_model_buttons(monkeypatch) -> None:
@@ -1736,6 +1898,80 @@ def test_approval_more_callback_opens_current_task(monkeypatch) -> None:
     assert executed == ["/task-current"]
 
 
+def test_prompt_autopilot_takeover_callback_sets_targeted_pending_command(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    sent: list[str] = []
+
+    async def fake_send_text(message, text: str, **kwargs) -> bool:  # noqa: ANN001, ANN202
+        _ = message
+        _ = kwargs
+        sent.append(text)
+        return True
+
+    service.router.tasks.pending_command = None
+    message = MessageStub([object()])
+    base_ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+    monkeypatch.setattr(service, "_send_text", fake_send_text)
+
+    asyncio.run(service._handle_prompt_callback(message, base_ctx, "prompt:autopilot_takeover:1"))
+
+    assert service.router.tasks.pending_command == "/autopilot-takeover 1"
+    assert any("人工接管 Run #1" in text for text in sent)
+    assert any("状态: running_worker" in text for text in sent)
+    assert any("最近判定: continue" in text for text in sent)
+    assert any("/autopilot-takeover 1" in text for text in sent)
+
+
+def test_panel_autopilot_run_callback_opens_targeted_run_panel(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+            telegram_autopilot_edit_window_seconds=300.0,
+        ),
+        router=WizardRouterStub(),
+    )
+    captured = {}
+
+    async def fake_send_view_spec(message, spec, *, context: str, edit_context=None, edit_window_seconds=None, command=None):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command
+        captured["text"] = spec.text
+        captured["context"] = context
+        captured["edit_context"] = edit_context
+        captured["edit_window_seconds"] = edit_window_seconds
+        return True
+
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
+    message = MessageStub([object()])
+    base_ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+
+    asyncio.run(service._handle_panel_callback(message, base_ctx, "panel:autopilot_run:1"))
+
+    assert captured["context"] == "sending autopilot run panel 1"
+    assert "最新 Run: #1" in captured["text"]
+
+
 def test_session_detail_callback_executes_session_command(monkeypatch) -> None:
     config = SimpleNamespace(
         telegram_bot_token="dummy",
@@ -1995,6 +2231,577 @@ def test_on_text_message_sends_typing_for_plain_text_question() -> None:
     assert message.chat_actions == ["typing"]
 
 
+def test_on_text_message_routes_plain_question_to_ask(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    message = MessageStub([object()])
+    message.text = "帮我看看这个报错"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    captured = {}
+
+    async def fake_dispatch(message, command_context, *, command: str):  # noqa: ANN001, ANN202
+        _ = message
+        captured["command"] = command
+        captured["text"] = command_context.text
+        return CommandResult("ok")
+
+    async def fake_send_command_result(message, command, command_context, result):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command
+        _ = command_context
+        _ = result
+        return True
+
+    monkeypatch.setattr(service, "_dispatch_router_command", fake_dispatch)
+    monkeypatch.setattr(service, "_send_command_result", fake_send_command_result)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert captured["command"] == "/ask"
+    assert captured["text"] == "/ask 帮我看看这个报错"
+
+
+def test_on_text_message_starts_clarify_for_ambiguous_text(monkeypatch) -> None:
+    router = WizardRouterStub()
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    message = MessageStub([object()])
+    message.text = "处理一下"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    prompts: list[str] = []
+
+    async def fake_send_view_spec(message, spec, *, context: str, command=None, edit_context=None, edit_window_seconds=None) -> bool:  # noqa: ANN001, ANN202
+        _ = message
+        _ = context
+        _ = command
+        _ = edit_context
+        _ = edit_window_seconds
+        prompts.append(spec.text)
+        return True
+
+    monkeypatch.setattr(service, "_send_view_spec", fake_send_view_spec)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert router.tasks.state == {
+        "kind": "natural_clarify",
+        "step": "choose",
+        "data": {"original_text": "处理一下"},
+    }
+    assert any("我还不能确定你是想提问、执行任务、启动 Autopilot" in text for text in prompts)
+
+
+def test_on_text_message_routes_plain_action_to_do(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    message = MessageStub([object()])
+    message.text = "帮我把昨天的日志整理成报告"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    captured = {}
+
+    async def fake_dispatch(message, command_context, *, command: str):  # noqa: ANN001, ANN202
+        _ = message
+        captured["command"] = command
+        captured["text"] = command_context.text
+        return CommandResult("ok")
+
+    async def fake_send_command_result(message, command, command_context, result):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command
+        _ = command_context
+        _ = result
+        return True
+
+    monkeypatch.setattr(service, "_dispatch_router_command", fake_dispatch)
+    monkeypatch.setattr(service, "_send_command_result", fake_send_command_result)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert captured["command"] == "/do"
+    assert captured["text"] == "/do 帮我把昨天的日志整理成报告"
+
+
+def test_on_text_message_routes_autopilot_request(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    message = MessageStub([object()])
+    message.text = "自己继续跑，不用等我，持续推进直到完成"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    captured = {}
+
+    async def fake_dispatch(message, command_context, *, command: str):  # noqa: ANN001, ANN202
+        _ = message
+        captured["command"] = command
+        captured["text"] = command_context.text
+        return CommandResult("ok")
+
+    async def fake_send_command_result(message, command, command_context, result):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command
+        _ = command_context
+        _ = result
+        return True
+
+    monkeypatch.setattr(service, "_dispatch_router_command", fake_dispatch)
+    monkeypatch.setattr(service, "_send_command_result", fake_send_command_result)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert captured["command"] == "/autopilot"
+    assert captured["text"] == "/autopilot 自己继续跑，不用等我，持续推进直到完成"
+
+
+def test_on_text_message_routes_github_clone_request(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    message = MessageStub([object()])
+    message.text = "帮我克隆 https://github.com/openai/openai-python 到 vendor/openai-python"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    executed: list[str] = []
+
+    async def fake_execute_command(message, command_context, command):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command_context
+        executed.append(command)
+        return None
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert executed == ["/github-clone https://github.com/openai/openai-python vendor/openai-python"]
+
+
+def test_on_text_message_routes_natural_language_note_with_category(monkeypatch) -> None:
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=WizardRouterStub(),
+    )
+    message = MessageStub([object()])
+    message.text = "记一下规范：不要直接改生产配置"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    captured = {}
+
+    async def fake_dispatch(message, command_context, *, command: str):  # noqa: ANN001, ANN202
+        _ = message
+        captured["command"] = command
+        captured["text"] = command_context.text
+        return CommandResult("ok")
+
+    async def fake_send_command_result(message, command, command_context, result):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command
+        _ = command_context
+        _ = result
+        return True
+
+    monkeypatch.setattr(service, "_dispatch_router_command", fake_dispatch)
+    monkeypatch.setattr(service, "_send_command_result", fake_send_command_result)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert captured["command"] == "/note"
+    assert captured["text"] == "/note convention 不要直接改生产配置"
+
+
+def test_on_text_message_routes_project_switch_request(monkeypatch) -> None:
+    router = WizardRouterStub()
+    router.tasks.active_project_key = None
+    router.projects = SimpleNamespace(list_keys=lambda: ["demo", "ops"])
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    message = MessageStub([object()])
+    message.text = "切换到 ops 项目"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    executed: list[str] = []
+
+    async def fake_execute_command(message, command_context, command):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command_context
+        executed.append(command)
+        return None
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert executed == ["/use ops"]
+
+
+def test_on_text_message_routes_schedule_request_to_wizard(monkeypatch) -> None:
+    router = WizardRouterStub()
+    router.tasks.active_project_key = "demo"
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    message = MessageStub([object()])
+    message.text = "每隔30分钟检查服务状态"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    started: dict[str, object] = {}
+
+    async def fake_start_schedule_wizard(message, command_context, raw_text):  # noqa: ANN001, ANN202
+        _ = message
+        started["chat_id"] = command_context.telegram_chat_id
+        started["raw_text"] = raw_text
+        return None
+
+    monkeypatch.setattr(service, "_start_schedule_wizard_from_natural_language", fake_start_schedule_wizard)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert started == {"chat_id": "1", "raw_text": "每隔30分钟检查服务状态"}
+
+
+def test_handle_natural_clarify_choice_executes_selected_command(monkeypatch) -> None:
+    router = WizardRouterStub()
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    message = MessageStub([object()])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+    executed: list[str] = []
+
+    async def fake_execute_command(message, command_context, command):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command_context
+        executed.append(command)
+        return None
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+
+    asyncio.run(
+        service._handle_natural_clarify_choice(
+            message,
+            ctx,
+            {"kind": "natural_clarify", "step": "choose", "data": {"original_text": "处理一下昨天的日志"}},
+            "do",
+        )
+    )
+
+    assert executed == ["/do 处理一下昨天的日志"]
+
+
+def test_use_callback_resumes_deferred_schedule_request(monkeypatch) -> None:
+    router = WizardRouterStub()
+    router.tasks.state = {
+        "kind": "natural_project_route",
+        "step": "pick_project",
+        "data": {
+            "command_text": None,
+            "original_text": "每隔30分钟检查服务状态",
+            "intent": "schedule_add",
+        },
+    }
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    message = MessageStub([object()])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+    executed: list[str] = []
+    started: list[str] = []
+
+    async def fake_execute_command(message, command_context, command):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command_context
+        executed.append(command)
+        return None
+
+    async def fake_start_schedule_wizard(message, command_context, raw_text):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command_context
+        started.append(raw_text)
+        return None
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+    monkeypatch.setattr(service, "_start_schedule_wizard_from_natural_language", fake_start_schedule_wizard)
+
+    handled = asyncio.run(service._handle_use_callback(message, ctx, "use:ops"))
+
+    assert handled is True
+    assert executed == ["/use ops"]
+    assert started == ["每隔30分钟检查服务状态"]
+    assert router.tasks.state is None
+
+
+def test_on_text_message_auto_selects_single_project_for_natural_language(monkeypatch) -> None:
+    router = WizardRouterStub()
+    router.tasks.active_project_key = None
+    router.projects = SimpleNamespace(list_keys=lambda: ["demo"])
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    message = MessageStub([object()])
+    message.text = "帮我把昨天的日志整理成报告"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    sent: list[str] = []
+    captured = {}
+
+    async def fake_send_text(message, text: str, **kwargs) -> bool:  # noqa: ANN001, ANN202
+        _ = message
+        _ = kwargs
+        sent.append(text)
+        return True
+
+    async def fake_dispatch(message, command_context, *, command: str):  # noqa: ANN001, ANN202
+        _ = message
+        captured["command"] = command
+        captured["text"] = command_context.text
+        return CommandResult("ok")
+
+    async def fake_send_command_result(message, command, command_context, result):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command
+        _ = command_context
+        _ = result
+        return True
+
+    monkeypatch.setattr(service, "_send_text", fake_send_text)
+    monkeypatch.setattr(service, "_dispatch_router_command", fake_dispatch)
+    monkeypatch.setattr(service, "_send_command_result", fake_send_command_result)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert router.tasks.active_project_key == "demo"
+    assert any("已自动切换到项目: demo" in text for text in sent)
+    assert captured["command"] == "/do"
+
+
+def test_on_text_message_shows_projects_panel_when_project_is_ambiguous(monkeypatch) -> None:
+    router = WizardRouterStub()
+    router.tasks.active_project_key = None
+    router.tasks.recent_projects = ["demo", "ops"]
+    router.projects = SimpleNamespace(list_keys=lambda: ["demo", "ops"])
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    message = MessageStub([object()])
+    message.text = "帮我把昨天的日志整理成报告"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    opened = {"projects_panel": False, "dispatched": False}
+
+    async def fake_send_projects_panel(message, command_context):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command_context
+        opened["projects_panel"] = True
+        return None
+
+    async def fake_dispatch(message, command_context, *, command: str):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command_context
+        _ = command
+        opened["dispatched"] = True
+        return CommandResult("ok")
+
+    monkeypatch.setattr(service, "_send_projects_panel", fake_send_projects_panel)
+    monkeypatch.setattr(service, "_dispatch_router_command", fake_dispatch)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert opened["projects_panel"] is True
+    assert opened["dispatched"] is False
+
+
+def test_on_text_message_defers_natural_language_request_when_project_is_ambiguous(monkeypatch) -> None:
+    router = WizardRouterStub()
+    router.tasks.active_project_key = None
+    router.tasks.recent_projects = ["demo", "ops"]
+    router.projects = SimpleNamespace(list_keys=lambda: ["demo", "ops"])
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    message = MessageStub([object()])
+    message.text = "帮我把昨天的日志整理成报告"
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_user=SimpleNamespace(id=123, username="owner", full_name="Owner"),
+        effective_chat=SimpleNamespace(id=1),
+    )
+
+    async def fake_send_projects_panel(message, command_context):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command_context
+        return None
+
+    monkeypatch.setattr(service, "_send_projects_panel", fake_send_projects_panel)
+
+    asyncio.run(service._on_text_message(update, SimpleNamespace()))
+
+    assert router.tasks.state == {
+        "kind": "natural_project_route",
+        "step": "pick_project",
+        "data": {
+            "command_text": "/do 帮我把昨天的日志整理成报告",
+            "original_text": "帮我把昨天的日志整理成报告",
+            "intent": "/do",
+        },
+    }
+
+
+def test_use_callback_resumes_deferred_natural_language_request(monkeypatch) -> None:
+    router = WizardRouterStub()
+    router.tasks.state = {
+        "kind": "natural_project_route",
+        "step": "pick_project",
+        "data": {
+            "command_text": "/do 帮我把昨天的日志整理成报告",
+            "original_text": "帮我把昨天的日志整理成报告",
+        },
+    }
+    service = TelegramBotService(
+        config=SimpleNamespace(
+            telegram_bot_token="dummy",
+            poll_interval_seconds=1,
+            max_telegram_message_length=3500,
+        ),
+        router=router,
+    )
+    message = MessageStub([object()])
+    ctx = SimpleNamespace(
+        telegram_user_id="123",
+        telegram_chat_id="1",
+        telegram_message_id="10",
+        telegram_username="owner",
+        telegram_display_name="Owner",
+    )
+    executed: list[str] = []
+
+    async def fake_execute_command(message, command_context, command):  # noqa: ANN001, ANN202
+        _ = message
+        _ = command_context
+        executed.append(command)
+        return None
+
+    monkeypatch.setattr(service, "_execute_command", fake_execute_command)
+
+    handled = asyncio.run(service._handle_use_callback(message, ctx, "use:ops"))
+
+    assert handled is True
+    assert executed == ["/use ops", "/do 帮我把昨天的日志整理成报告"]
+    assert router.tasks.state is None
+
+
 def test_dispatch_router_command_keeps_typing_heartbeat_during_wait() -> None:
     class SlowRouterStub(WizardRouterStub):
         def handle(self, ctx):  # noqa: ANN001, ANN201
@@ -2074,7 +2881,6 @@ def test_dispatch_router_command_stream_mode_sends_progress_updates(monkeypatch)
     asyncio.run(service._dispatch_router_command(message, ctx, command="/do"))
 
     progress_contexts = {context for context, _, edit_context in captured if edit_context}
-    assert "sending current task card" in progress_contexts
     assert "live home dashboard 1" in progress_contexts
     stream_progress_contexts = [context for context in progress_contexts if context.startswith("stream progress 1:/do:")]
     assert len(stream_progress_contexts) == 1
@@ -2365,9 +3171,9 @@ def test_reply_markup_for_autopilot_result_uses_autopilot_controls() -> None:
     )
 
     rows = markup.inline_keyboard
-    assert any(button.callback_data == "prompt:autopilot_takeover" for row in rows for button in row)
-    assert any(button.callback_data == "cmd:autopilot_pause" for row in rows for button in row)
-    assert any(button.callback_data == "cmd:autopilot_stop" for row in rows for button in row)
+    assert any(button.callback_data == "prompt:autopilot_takeover:1" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_pause:1" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_stop:1" for row in rows for button in row)
 
 
 def test_reply_markup_for_use_without_argument_returns_projects_panel() -> None:
@@ -2414,3 +3220,5 @@ def test_reply_markup_for_task_result_includes_output_button() -> None:
     )
 
     assert any(button.callback_data == "task:output:21" for row in markup.inline_keyboard for button in row)
+    assert any(button.callback_data == "status:diff" for row in markup.inline_keyboard for button in row)
+    assert any(button.callback_data == "prompt:retry" for row in markup.inline_keyboard for button in row)

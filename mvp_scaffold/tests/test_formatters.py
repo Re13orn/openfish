@@ -141,6 +141,64 @@ def test_format_home_uses_dashboard_layout() -> None:
     assert "最近项目: ops" in text
 
 
+def test_format_home_includes_autopilot_summary() -> None:
+    snapshot = StatusSnapshot(
+        active_project_key="demo",
+        active_project_name="Demo",
+        project_path="/tmp/demo",
+        current_branch="main",
+        repo_dirty=False,
+        last_codex_session_id="sess-1",
+        most_recent_task_summary=None,
+        recent_failed_summary=None,
+        pending_approval=False,
+        next_schedule_id=None,
+        next_schedule_hhmm=None,
+        next_step=None,
+    )
+    run = AutopilotRunRecord(
+        id=5,
+        project_id=101,
+        chat_id="1",
+        created_by_user_id=1,
+        goal="持续推进支付修复",
+        status="running_worker",
+        supervisor_session_id="sess-a",
+        worker_session_id="sess-b",
+        current_phase="worker",
+        cycle_count=2,
+        max_cycles=100,
+        no_progress_cycles=0,
+        same_instruction_cycles=0,
+        last_instruction_fingerprint="run tests next",
+        last_decision="continue",
+        last_worker_summary="已修改支付回调",
+        last_supervisor_summary="继续测试",
+        paused_reason=None,
+        stopped_by_user_id=None,
+    )
+    runtime = AutopilotRuntimeSnapshot(
+        run_id=5,
+        actor="worker",
+        pid=1234,
+        process_started_at=time.time() - 20,
+        thread_alive=True,
+        output_version=3,
+        last_output_at=time.time(),
+    )
+
+    text = format_home(
+        snapshot=snapshot,
+        current_model="o3",
+        recent_project_keys=["demo", "ops"],
+        autopilot_run=run,
+        autopilot_runtime=runtime,
+    )
+
+    assert "Autopilot: #5 · running_worker · worker" in text
+    assert "Autopilot 运行:" in text
+
+
 def test_format_context_explains_continuation_session() -> None:
     snapshot = StatusSnapshot(
         active_project_key="demo",

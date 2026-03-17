@@ -244,6 +244,8 @@ def format_home(
     snapshot: StatusSnapshot,
     current_model: str | None,
     recent_project_keys: list[str] | None = None,
+    autopilot_run: AutopilotRunRecord | None = None,
+    autopilot_runtime: AutopilotRuntimeSnapshot | None = None,
 ) -> str:
     """Render the Telegram home/control panel summary."""
 
@@ -258,10 +260,21 @@ def format_home(
         "服务: 在线",
         f"项目: {active_project}",
         f"任务: {task_line}",
+    ]
+    if autopilot_run is not None:
+        autopilot_line = f"Autopilot: #{autopilot_run.id} · {autopilot_run.status}"
+        if autopilot_runtime is not None and autopilot_runtime.actor:
+            autopilot_line += f" · {autopilot_runtime.actor}"
+        lines.append(autopilot_line)
+        if autopilot_runtime is not None and autopilot_runtime.process_started_at is not None:
+            lines.append(f"Autopilot 运行: {_format_elapsed(autopilot_runtime.process_started_at)}")
+    lines.extend(
+        [
         f"模型: {current_model or '默认'}",
         f"会话: {snapshot.last_codex_session_id or '暂无'}",
         f"审批: {'待处理' if snapshot.pending_approval else '无'}",
-    ]
+        ]
+    )
     if snapshot.next_schedule_id and snapshot.next_schedule_hhmm:
         lines.append(f"定时: #{snapshot.next_schedule_id} {snapshot.next_schedule_hhmm}")
     else:
@@ -270,6 +283,11 @@ def format_home(
         lines.append(f"下一步: {_clip(snapshot.next_step, 100)}")
     elif snapshot.active_project_key is None:
         lines.append("下一步: 先切换项目，再直接提问或执行任务。")
+    elif autopilot_run is not None:
+        if autopilot_run.status in {"paused", "blocked", "needs_human", "failed", "stopped"}:
+            lines.append("下一步: 查看 Autopilot 状态；必要时人工接管。")
+        else:
+            lines.append("下一步: 查看首页控制台或 Autopilot 面板，等待自治推进。")
     elif snapshot.active_task is not None:
         lines.append("下一步: 查看当前任务，或等待执行完成。")
     else:
