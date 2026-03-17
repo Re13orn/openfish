@@ -1,10 +1,14 @@
 """Persistence helpers for project runtime state and project memory."""
 
+import logging
 import sqlite3
 from typing import Any
 
 from src.db import Database
 from src.models import ProjectConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectStateStore:
@@ -236,12 +240,126 @@ class ProjectStateStore:
             (project_id,),
         ).fetchone()
 
-    def add_project_note(self, *, project_id: int, content: str, title: str | None = None) -> None:
+    def add_project_note(
+        self,
+        *,
+        project_id: int,
+        content: str,
+        title: str | None = None,
+        category: str = "general",
+        max_notes: int = 30,
+    ) -> None:
+        connection = self.db.get_connection()
+        try:
+            # Auto-prune: keep only the newest (max_notes - 1) non-pinned notes before inserting.
+            connection.execute(
+                """
+                DELETE FROM project_memory
+                WHERE id IN (
+                    SELECT id FROM project_memory
+                    WHERE project_id = ?
+                      AND memory_type = 'owner_note'
+                      AND is_pinned = 0
+                    ORDER BY id ASC
+                    LIMIT -1 OFFSET ?
+                )
+                """,
+                (project_id, max_notes - 1),
+            )
+            connection.execute(
+                """
+                INSERT INTO project_memory (project_id, memory_type, title, content, source, is_pinned, category)
+                VALUES (?, 'owner_note', ?, ?, 'telegram_note', 0, ?)
+                """,
+                (project_id, title, content, category),
+            )
+        except sqlite3.OperationalError:
+            logger.debug("project_memory.category column not available; storing note without category.")
+            connection.execute(
+                """
+                DELETE FROM project_memory
+                WHERE id IN (
+                    SELECT id FROM project_memory
+                    WHERE project_id = ?
+                      AND memory_type = 'owner_note'
+                      AND is_pinned = 0
+                    ORDER BY id ASC
+                    LIMIT -1 OFFSET ?
+                )
+                """,
+                (project_id, max_notes - 1),
+            )
+            connection.execute(
+                """
+                INSERT INTO project_memory (project_id, memory_type, title, content, source, is_pinned)
+                VALUES (?, 'owner_note', ?, ?, 'telegram_note', 0)
+                """,
+                (project_id, title, content),
+            )
+        connection.commit()
+
+    def add_autopilot_run_note(
+        self,
+        *,
+        project_id: int,
+        title: str,
+        content: str,
+        run_id: int,
+        max_notes: int = 20,
+    ) -> None:
+        """Persist an autopilot run summary into project_memory, capping at max_notes entries."""
         connection = self.db.get_connection()
         connection.execute(
             """
+            DELETE FROM project_memory
+            WHERE id IN (
+                SELECT id FROM project_memory
+                WHERE project_id = ?
+                  AND memory_type = 'task_summary'
+                  AND source = 'autopilot'
+                ORDER BY id DESC
+                LIMIT -1 OFFSET ?
+            )
+            """,
+            (project_id, max_notes - 1),
+        )
+        connection.execute(
+            """
             INSERT INTO project_memory (project_id, memory_type, title, content, source, is_pinned)
-            VALUES (?, 'owner_note', ?, ?, 'telegram_note', 0)
+            VALUES (?, 'task_summary', ?, ?, 'autopilot', 0)
+            """,
+            (project_id, title, content),
+        )
+        connection.commit()
+
+    def add_task_completion_note(
+        self,
+        *,
+        project_id: int,
+        title: str,
+        content: str,
+        max_notes: int = 20,
+    ) -> None:
+        """Write a /do task summary into project_memory, capped at max_notes entries."""
+        connection = self.db.get_connection()
+        connection.execute(
+            """
+            DELETE FROM project_memory
+            WHERE id IN (
+                SELECT id FROM project_memory
+                WHERE project_id = ?
+                  AND memory_type = 'task_summary'
+                  AND source = 'task'
+                ORDER BY id DESC
+                LIMIT -1 OFFSET ?
+            )
+            """,
+            (project_id, max_notes - 1),
+        )
+        connection.execute(
+            """
+            INSERT INTO project_memory (project_id, memory_type, title, content, source, is_pinned)
+            VALUES (?, 'task_summary', ?, ?, 'task', 0)
             """,
             (project_id, title, content),
         )
@@ -271,12 +389,15 @@ class ProjectStateStore:
         total_task_summaries = int(
             connection.execute(
                 """
-                SELECT COUNT(*)
-                FROM tasks
-                WHERE project_id = ?
-                  AND latest_summary IS NOT NULL
+                SELECT COUNT(*) FROM (
+                    SELECT id FROM tasks
+                    WHERE project_id = ? AND latest_summary IS NOT NULL
+                    UNION ALL
+                    SELECT id FROM project_memory
+                    WHERE project_id = ? AND memory_type = 'task_summary'
+                )
                 """,
-                (project_id,),
+                (project_id, project_id),
             ).fetchone()[0]
         )
         total_note_pages = max(1, (total_notes + normalized_page_size - 1) // normalized_page_size)
@@ -286,29 +407,53 @@ class ProjectStateStore:
         )
         normalized_page = min(requested_page, max(total_note_pages, total_task_pages))
         offset = (normalized_page - 1) * normalized_page_size
-        note_rows = connection.execute(
-            """
-            SELECT content
-            FROM project_memory
-            WHERE project_id = ?
-              AND memory_type = 'owner_note'
-            ORDER BY id DESC
-            LIMIT ?
-            OFFSET ?
-            """,
-            (project_id, normalized_page_size, offset),
-        ).fetchall()
+        try:
+            note_rows = connection.execute(
+                """
+                SELECT
+                    CASE WHEN COALESCE(category, 'general') != 'general'
+                         THEN '[' || category || '] ' || content
+                         ELSE content
+                    END AS content
+                FROM project_memory
+                WHERE project_id = ?
+                  AND memory_type = 'owner_note'
+                ORDER BY id DESC
+                LIMIT ?
+                OFFSET ?
+                """,
+                (project_id, normalized_page_size, offset),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            logger.debug("project_memory.category column not available when loading memory snapshot.")
+            note_rows = connection.execute(
+                """
+                SELECT content
+                FROM project_memory
+                WHERE project_id = ?
+                  AND memory_type = 'owner_note'
+                ORDER BY id DESC
+                LIMIT ?
+                OFFSET ?
+                """,
+                (project_id, normalized_page_size, offset),
+            ).fetchall()
         task_rows = connection.execute(
             """
-            SELECT latest_summary
-            FROM tasks
-            WHERE project_id = ?
-              AND latest_summary IS NOT NULL
-            ORDER BY id DESC
+            SELECT summary, created_at FROM (
+                SELECT latest_summary AS summary, updated_at AS created_at
+                FROM tasks
+                WHERE project_id = ? AND latest_summary IS NOT NULL
+                UNION ALL
+                SELECT content AS summary, created_at
+                FROM project_memory
+                WHERE project_id = ? AND memory_type = 'task_summary'
+            )
+            ORDER BY created_at DESC
             LIMIT ?
             OFFSET ?
             """,
-            (project_id, normalized_page_size, offset),
+            (project_id, project_id, normalized_page_size, offset),
         ).fetchall()
         summary_row = connection.execute(
             """
@@ -324,7 +469,7 @@ class ProjectStateStore:
         return {
             "notes": [str(row["content"]) for row in note_rows],
             "recent_task_summaries": [
-                str(row["latest_summary"]) for row in task_rows if row["latest_summary"]
+                str(row["summary"]) for row in task_rows if row["summary"]
             ],
             "project_summary": str(summary_row["content"]) if summary_row else None,
             "page": normalized_page,

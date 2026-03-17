@@ -218,6 +218,7 @@ class TelegramBotService:
         self._app_loop: asyncio.AbstractEventLoop | None = None
         self._pending_command_by_chat: dict[str, str] = {}
         self._autopilot_stream_tasks: dict[int, asyncio.Task[None]] = {}
+        self._notification_poll_task: asyncio.Task[None] | None = None
         autopilot = getattr(router, "autopilot", None)
         if autopilot is not None and hasattr(autopilot, "set_raw_output_observer"):
             autopilot.set_raw_output_observer(self._on_autopilot_raw_output)
@@ -282,15 +283,17 @@ class TelegramBotService:
                 getattr(self.config, "telegram_get_updates_pool_timeout_seconds", 30.0)
             ),
         )
-        return (
+        builder = (
             ApplicationBuilder()
             .token(self.config.telegram_bot_token)
             .request(request)
             .get_updates_request(get_updates_request)
             .concurrent_updates(int(getattr(self.config, "telegram_concurrent_updates", 32)))
             .post_init(self._on_post_init)
-            .build()
         )
+        if hasattr(builder, "post_shutdown"):
+            builder = builder.post_shutdown(self._on_post_shutdown)
+        return builder.build()
 
     def _register_handlers(self, app: Application) -> None:
         app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, self._on_text_message))
@@ -301,6 +304,33 @@ class TelegramBotService:
     async def _on_post_init(self, app: Application) -> None:
         self._app_loop = asyncio.get_running_loop()
         await self._deliver_pending_system_notifications(app)
+        if self._notification_poll_task is not None:
+            self._notification_poll_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._notification_poll_task
+        self._notification_poll_task = asyncio.create_task(self._notification_poll_loop(app))
+
+    async def _on_post_shutdown(self, app: Application) -> None:
+        _ = app
+        task = self._notification_poll_task
+        self._notification_poll_task = None
+        if task is None:
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    async def _notification_poll_loop(self, app: Application) -> None:
+        """Periodically deliver queued system notifications (e.g. health alerts)."""
+        try:
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    await self._deliver_pending_system_notifications(app)
+                except Exception:
+                    logger.warning("Periodic notification delivery failed.", exc_info=True)
+        except asyncio.CancelledError:
+            raise
 
     async def _deliver_pending_system_notifications(self, app: Application) -> None:
         tasks = getattr(self.router, "tasks", None)
@@ -310,7 +340,10 @@ class TelegramBotService:
         if not pending:
             return
         for item in pending:
-            text = self._system_notification_text(item.notification_kind)
+            text = self._system_notification_text(
+                item.notification_kind,
+                payload=getattr(item, "payload", None),
+            )
             if text is None:
                 tasks.delete_system_notification(notification_id=item.id)
                 continue
@@ -330,7 +363,7 @@ class TelegramBotService:
                 continue
             tasks.delete_system_notification(notification_id=item.id)
 
-    def _system_notification_text(self, kind: str) -> str | None:
+    def _system_notification_text(self, kind: str, payload: dict | None = None) -> str | None:
         version_text = ""
         update_service = getattr(self.router, "update_service", None)
         if update_service is not None:
@@ -344,6 +377,12 @@ class TelegramBotService:
             return f"OpenFish 已重启完成。{version_text}".rstrip()
         if kind == "update_completed":
             return f"OpenFish 已更新并重启完成。{version_text}".rstrip()
+        if kind == "scheduler_restarted":
+            msg = (payload or {}).get("message") or "调度器意外重启"
+            return f"[健康告警] {msg}"
+        if kind == "health_alert":
+            msg = (payload or {}).get("message") or "系统健康异常"
+            return f"[健康告警] {msg}"
         return None
 
     async def _on_application_error(

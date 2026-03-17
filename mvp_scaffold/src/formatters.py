@@ -139,7 +139,7 @@ def format_help(mode: str = "verbose") -> str:
         "/last\n"
         "/retry [附加说明]\n"
         "/memory\n"
-        "/note <text>\n"
+        "/note [fact|error|convention|decision] <text>\n"
         "/skills\n"
         "/skill-install <source>\n"
         "/mcp [name]\n"
@@ -667,6 +667,8 @@ def format_health(
     pending_approval: bool,
     current_model: str | None,
     session_id: str | None,
+    scheduler_alive: bool | None = None,
+    scheduler_restart_count: int = 0,
 ) -> str:
     issues: list[str] = []
     if not codex_available:
@@ -677,16 +679,20 @@ def format_health(
         issues.append("当前未选择项目")
     if pending_approval:
         issues.append("有待处理审批")
+    if scheduler_alive is False:
+        issues.append("调度器线程已停止")
 
     if not issues:
         verdict = "良好"
-    elif not codex_available:
+    elif not codex_available or scheduler_alive is False:
         verdict = "阻塞"
     else:
         verdict = "需处理"
 
     if not codex_available:
         next_step = "先确认 codex 可执行，再重新运行 /health。"
+    elif scheduler_alive is False:
+        next_step = "调度器线程已停止（已自动重启尝试中），如持续异常请重启服务。"
     elif project_count == 0:
         next_step = "先创建或导入项目，再开始使用。"
     elif active_project_key is None:
@@ -698,6 +704,9 @@ def format_health(
     else:
         next_step = "服务正常，可直接提问、执行任务或查看日志。"
 
+    scheduler_label = {True: "运行中", False: "已停止", None: "未知"}[scheduler_alive]
+    if scheduler_restart_count > 0:
+        scheduler_label += f" (重启{scheduler_restart_count}次)"
     lines = [
         "服务: 在线",
         f"结论: {verdict}",
@@ -705,6 +714,7 @@ def format_health(
         f"分支: {branch}",
         f"提交: {commit}",
         f"Codex: {'可用' if codex_available else '不可用'}",
+        f"调度器: {scheduler_label}",
         f"项目数: {project_count}",
         f"当前项目: {active_project_key or '未选择'}",
         f"当前任务: {active_task_summary or '空闲'}",
@@ -1003,7 +1013,7 @@ def format_upload_policy(*, enabled: bool, max_size_bytes: int, allowed_extensio
 
 
 def format_project_busy() -> str:
-    return "当前项目已有任务在执行中，请稍后重试。可用 /status 查看状态。"
+    return "当前项目已有任务在执行中，请稍后重试。\n可用 /status 查看进度，完成后再继续。"
 
 
 def format_skills_list(
@@ -1147,10 +1157,10 @@ def format_update_check(
     return "\n".join(lines)
 
 
-def format_schedule_added(*, schedule_id: int, hhmm: str, command_type: str, request_text: str) -> str:
+def format_schedule_added(*, schedule_id: int, trigger_label: str, command_type: str, request_text: str) -> str:
     return (
         f"定期任务已创建: #{schedule_id}\n"
-        f"时间: {hhmm}\n"
+        f"触发: {trigger_label}\n"
         f"类型: /{command_type}\n"
         f"内容: {_clip(request_text, 120)}"
     )
@@ -1162,12 +1172,13 @@ def format_schedule_list(items: list[tuple[int, str, bool, str, str, str | None]
 
     lines = ["定期任务："]
     for item in items:
-        schedule_id, hhmm, enabled, command_type, request_text, last_status = item
+        schedule_id, trigger_label, enabled, command_type, request_text, last_status = item
         status_text = f" | 上次: {last_status}" if last_status else ""
         enabled_text = "启用" if enabled else "暂停"
-        lines.append(f"- #{schedule_id} {hhmm} /{command_type} [{enabled_text}]{status_text}")
+        lines.append(f"- #{schedule_id} {trigger_label} /{command_type} [{enabled_text}]{status_text}")
         lines.append(f"  {_clip(request_text, 80)}")
-    lines.append("新增: /schedule-add <HH:MM> <ask|do> <text>")
+    lines.append("新增(每日): /schedule-add <HH:MM> <ask|do> <text>")
+    lines.append("新增(间隔): /schedule-add every <N>m|<N>h <ask|do> <text>")
     lines.append("控制: /schedule-run <id> /schedule-pause <id> /schedule-enable <id>")
     return "\n".join(lines)
 

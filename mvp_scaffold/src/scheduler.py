@@ -29,6 +29,12 @@ class ScheduledTaskService:
         self.missed_run_policy = missed_run_policy if missed_run_policy in {"skip", "catchup_once"} else "skip"
         self._stop_event = Event()
         self._thread: Thread | None = None
+        self._restart_count: int = 0
+        self._queue_health_alert = getattr(tasks, "queue_health_alert_all_chats", None)
+
+    @property
+    def restart_count(self) -> int:
+        return self._restart_count
 
     def start(self) -> None:
         if not self.enabled:
@@ -37,7 +43,7 @@ class ScheduledTaskService:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._thread = Thread(target=self._run_loop, name="scheduled-task-service", daemon=True)
+        self._thread = Thread(target=self._supervised_loop, name="scheduled-task-service", daemon=True)
         self._thread.start()
         logger.info("Scheduled task service started.")
 
@@ -47,12 +53,39 @@ class ScheduledTaskService:
             self._thread.join(timeout=2.0)
         logger.info("Scheduled task service stopped.")
 
-    def _run_loop(self) -> None:
+    def is_alive(self) -> bool:
+        """Return True if the background polling thread is running."""
+        if not self.enabled:
+            return True  # disabled intentionally, not a fault
+        return self._thread is not None and self._thread.is_alive()
+
+    def _supervised_loop(self) -> None:
+        """Outer watchdog: restarts _run_loop if it exits unexpectedly."""
         while not self._stop_event.is_set():
             try:
-                self.poll_once()
+                self._run_loop()
             except Exception:
-                logger.exception("Unexpected scheduler poll failure.")
+                logger.exception("Scheduler _run_loop crashed unexpectedly.")
+            if self._stop_event.is_set():
+                break
+            self._restart_count += 1
+            logger.warning(
+                "Scheduler thread restarting (restart #%d).",
+                self._restart_count,
+            )
+            try:
+                if callable(self._queue_health_alert):
+                    self._queue_health_alert(
+                        message=f"调度器意外崩溃并已自动重启（第 {self._restart_count} 次），请检查日志。",
+                        kind="scheduler_restarted",
+                    )
+            except Exception:
+                logger.warning("Failed to queue scheduler restart health alert.", exc_info=True)
+            self._stop_event.wait(5)
+
+    def _run_loop(self) -> None:
+        while not self._stop_event.is_set():
+            self.poll_once()
             self._stop_event.wait(self.poll_interval_seconds)
 
     def poll_once(self) -> None:
