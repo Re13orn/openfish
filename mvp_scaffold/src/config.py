@@ -60,6 +60,7 @@ class AppConfig:
     codex_default_approval_mode: str
     autopilot_codex_sandbox_mode: str
     autopilot_codex_approval_mode: str
+    autopilot_supervisor_model: str | None
     codex_command_timeout_seconds: int
     codex_background_terminal_wait_timeout_seconds: int
     codex_home: Path
@@ -159,6 +160,7 @@ def load_config() -> AppConfig:
         codex_default_approval_mode=os.getenv("CODEX_DEFAULT_APPROVAL_MODE", "never"),
         autopilot_codex_sandbox_mode=os.getenv("AUTOPILOT_CODEX_SANDBOX_MODE", "danger-full-access"),
         autopilot_codex_approval_mode=os.getenv("AUTOPILOT_CODEX_APPROVAL_MODE", "never"),
+        autopilot_supervisor_model=os.getenv("AUTOPILOT_SUPERVISOR_MODEL", "gpt-5.1-codex-mini") or None,
         codex_command_timeout_seconds=int(os.getenv("CODEX_COMMAND_TIMEOUT_SECONDS", "1800")),
         codex_background_terminal_wait_timeout_seconds=int(
             os.getenv("CODEX_BACKGROUND_TERMINAL_WAIT_TIMEOUT_SECONDS", "120")

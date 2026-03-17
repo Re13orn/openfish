@@ -79,6 +79,7 @@ class Application:
             enabled=self.config.enable_scheduler,
             missed_run_policy=self.config.schedule_missed_run_policy,
         )
+        self.router.set_scheduler(self.scheduler)
         self.bot = TelegramBotService(config=config, router=self.router)
 
     def run(self) -> None:

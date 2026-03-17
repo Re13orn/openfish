@@ -1581,6 +1581,20 @@ def test_autopilot_takeover_restarts_loop_with_new_instruction() -> None:
     assert audit.events[-1][0] == audit_events.AUTOPILOT_TAKEOVER
 
 
+def test_autopilot_takeover_accepts_explicit_run_id() -> None:
+    tasks = TasksStub()
+    audit = AuditStub()
+    codex = CodexStub(_codex_result("unused", ok=True))
+    autopilot = AutopilotStub()
+    router = _build_router(tasks, audit, codex, autopilot=autopilot)
+
+    result = router.handle(_ctx("/autopilot-takeover #1 直接继续收尾并跑验证"))
+
+    assert "动作: takeover" in result.reply_text
+    assert autopilot.takeover_instructions == ["直接继续收尾并跑验证"]
+    assert autopilot.started_run_ids == [1]
+
+
 def test_autopilot_takeover_can_restart_blocked_run() -> None:
     tasks = TasksStub()
     audit = AuditStub()

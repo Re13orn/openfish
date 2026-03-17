@@ -349,7 +349,9 @@ def test_task_result_markup_includes_output_button() -> None:
 
     rows = markup.inline_keyboard
     assert rows[0][0].callback_data == "status:resume"
-    assert rows[1][0].callback_data == "task:output:21"
+    assert rows[0][1].callback_data == "status:diff"
+    assert rows[1][0].callback_data == "prompt:retry"
+    assert rows[2][0].callback_data == "task:output:21"
 
 
 def test_status_result_markup_prefers_current_task_button_for_active_task() -> None:
@@ -468,10 +470,11 @@ def test_autopilot_run_markup_exposes_pause_and_stop_for_running_run() -> None:
     markup = factory.autopilot_run_markup(run)
 
     rows = markup.inline_keyboard
-    assert any(button.callback_data == "cmd:autopilot_context" for row in rows for button in row)
-    assert any(button.callback_data == "prompt:autopilot_takeover" for row in rows for button in row)
-    assert any(button.callback_data == "cmd:autopilot_pause" for row in rows for button in row)
-    assert any(button.callback_data == "cmd:autopilot_stop" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_context:1" for row in rows for button in row)
+    assert any(button.callback_data == "prompt:autopilot_takeover:1" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_pause:1" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_stop:1" for row in rows for button in row)
+    assert any(button.callback_data == "panel:autopilot_run:1" for row in rows for button in row)
 
 
 def test_autopilot_run_markup_exposes_single_step_when_paused() -> None:
@@ -501,8 +504,8 @@ def test_autopilot_run_markup_exposes_single_step_when_paused() -> None:
     markup = factory.autopilot_run_markup(run)
 
     rows = markup.inline_keyboard
-    assert any(button.callback_data == "cmd:autopilot_step" for row in rows for button in row)
-    assert any(button.callback_data == "cmd:autopilot_resume" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_step:1" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_resume:1" for row in rows for button in row)
 
 
 def test_autopilot_run_markup_exposes_takeover_for_blocked_run() -> None:
@@ -532,9 +535,9 @@ def test_autopilot_run_markup_exposes_takeover_for_blocked_run() -> None:
     markup = factory.autopilot_run_markup(run)
 
     rows = markup.inline_keyboard
-    assert any(button.callback_data == "cmd:autopilot_context" for row in rows for button in row)
-    assert any(button.callback_data == "cmd:autopilot_log" for row in rows for button in row)
-    assert any(button.callback_data == "prompt:autopilot_takeover" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_context:1" for row in rows for button in row)
+    assert any(button.callback_data == "cmd:autopilot_log:1" for row in rows for button in row)
+    assert any(button.callback_data == "prompt:autopilot_takeover:1" for row in rows for button in row)
 
 
 def test_autopilot_panel_shows_latest_run_summary() -> None:
@@ -644,7 +647,7 @@ def test_autopilot_runs_markup_exposes_targeted_management_actions() -> None:
     assert any(button.callback_data == "cmd:autopilot_context:2" for row in rows for button in row)
     assert any(button.callback_data == "cmd:autopilot_log:2" for row in rows for button in row)
     assert any(button.callback_data == "cmd:autopilot_resume:2" for row in rows for button in row)
-    assert any(button.callback_data == "prompt:autopilot_takeover" for row in rows for button in row)
+    assert any(button.callback_data == "prompt:autopilot_takeover:1" for row in rows for button in row)
 
 
 def test_autopilot_panel_shows_recent_runs_summary() -> None:

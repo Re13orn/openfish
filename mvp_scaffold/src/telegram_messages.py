@@ -111,6 +111,7 @@ def project_add_prompt(
 
     path_text = data.get("path") or "默认根目录"
     name_text = data.get("name") or data.get("key") or "未设置"
+    source_repo = data.get("source_repo")
     template_name = data.get("template_name") or "未使用"
     if template_name in template_map:
         template_name = f"{template_name} ({template_map[template_name].name})"
@@ -131,20 +132,30 @@ def project_add_prompt(
         f"Autopilot 目标: {goal_text}\n"
         f"首轮启动: {bootstrap_text}\n"
         f"名称: {name_text}\n"
+        f"源仓库: {source_repo or '未设置'}\n"
         "回复“确认”执行，回复“取消”放弃。"
     )
 
 
 def schedule_add_prompt(step: str, data: dict) -> str:
+    trigger_text = (
+        f"每隔 {data.get('interval_minutes')} 分钟"
+        if data.get("schedule_type") == "interval"
+        else data.get("hhmm")
+    )
+    if step == "trigger":
+        return "定时任务向导 1/5\n请选择触发方式：每天定时，或每隔一段时间。"
     if step == "time":
-        return "定时任务向导 1/4\n请输入执行时间，格式 HH:MM。\n例如: 09:30"
+        return "定时任务向导 2/5\n请输入每日执行时间，格式 HH:MM。\n例如: 09:30"
+    if step == "interval":
+        return "定时任务向导 2/5\n请输入间隔，例如 30m、2h、30分钟、2小时。"
     if step == "mode":
-        return "定时任务向导 2/4\n请输入任务类型：ask 或 do。"
+        return "定时任务向导 3/5\n请输入任务类型：ask 或 do。"
     if step == "text":
-        return "定时任务向导 3/4\n请输入定时任务内容。"
+        return "定时任务向导 4/5\n请输入定时任务内容。"
     return (
-        "定时任务向导 4/4\n"
-        f"时间: {data.get('hhmm')}\n"
+        "定时任务向导 5/5\n"
+        f"触发: {trigger_text}\n"
         f"类型: {data.get('mode')}\n"
         f"内容: {data.get('text')}\n"
         "回复“确认”执行，回复“取消”放弃。"
