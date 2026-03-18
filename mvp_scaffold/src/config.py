@@ -156,7 +156,7 @@ def load_config() -> AppConfig:
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         codex_bin=os.getenv("CODEX_BIN", "codex"),
         codex_json_output=_parse_bool(os.getenv("CODEX_JSON_OUTPUT"), default=True),
-        codex_default_sandbox_mode=os.getenv("CODEX_DEFAULT_SANDBOX_MODE", "workspace-write"),
+        codex_default_sandbox_mode=os.getenv("CODEX_DEFAULT_SANDBOX_MODE", "danger-full-access"),
         codex_default_approval_mode=os.getenv("CODEX_DEFAULT_APPROVAL_MODE", "never"),
         autopilot_codex_sandbox_mode=os.getenv("AUTOPILOT_CODEX_SANDBOX_MODE", "danger-full-access"),
         autopilot_codex_approval_mode=os.getenv("AUTOPILOT_CODEX_APPROVAL_MODE", "never"),
