@@ -38,6 +38,7 @@ from src.handlers import (
 )
 from src.handlers._types import ActiveProjectContext, ActiveTaskExecution, DocumentUploadPlan
 from src.mcp_service import McpService
+from src.model_catalog import ModelCatalogService
 from src.models import CommandContext, CommandResult, ProjectConfig, UserRecord
 from src.project_registry import ProjectRegistry
 from src.redaction import redact_text
@@ -75,6 +76,7 @@ class CommandRouter(
         codex_sessions: CodexSessionService | None = None,
         github_repos: GitHubRepoService | None = None,
         autopilot_service: AutopilotService | None = None,
+        model_catalog_service: ModelCatalogService | None = None,
     ) -> None:
         self.config = config
         self.projects = projects
@@ -89,11 +91,20 @@ class CommandRouter(
         self.codex_sessions = codex_sessions
         self.github_repos = github_repos
         self.autopilot = autopilot_service
+        self.model_catalog = model_catalog_service
         self._scheduler = None
         self._project_locks: dict[int, LockType] = {}
         self._project_locks_guard = Lock()
         self._active_task_executions: dict[int, ActiveTaskExecution] = {}
         self._active_task_guard = Lock()
+
+    def list_available_models(self) -> list[str]:
+        if self.model_catalog is not None:
+            models = self.model_catalog.list_models()
+            if models:
+                return models
+        fallback = getattr(self.config, "codex_model_choices", ()) or ()
+        return [model for model in fallback if model]
 
     def set_scheduler(self, scheduler) -> None:  # noqa: ANN001
         """Wire in the scheduler after construction (avoids circular dependency)."""

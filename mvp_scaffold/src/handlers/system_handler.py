@@ -169,7 +169,7 @@ class _SystemHandler:
         current = self.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
         text = argument.strip()
         if not text or text.lower() == "show":
-            choices = ", ".join(getattr(self.config, "codex_model_choices", ()) or ()) or "未配置"
+            choices = ", ".join(self.list_available_models()) or "未发现（可手动输入）"
             return CommandResult(
                 f"当前模型: {current or '默认（跟随 Codex 配置）'}\n"
                 f"快捷可选: {choices}\n"

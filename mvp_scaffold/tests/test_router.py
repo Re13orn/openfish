@@ -160,6 +160,14 @@ class RepoStub:
         return "最近变更：\nM a.py"
 
 
+class ModelCatalogStub:
+    def __init__(self, models: list[str]) -> None:
+        self.models = models
+
+    def list_models(self) -> list[str]:
+        return list(self.models)
+
+
 class CodexStub:
     def __init__(self, run_result: CodexRunResult, resume_result: CodexRunResult | None = None) -> None:
         self.run_result = run_result
@@ -1275,6 +1283,7 @@ def _build_router(
     sessions: SessionsStub | None = None,
     github_repos: GitHubReposStub | None = None,
     autopilot: AutopilotStub | None = None,
+    model_catalog: ModelCatalogStub | None = None,
 ) -> CommandRouter:
     config = SimpleNamespace(
         allowed_telegram_user_ids={"123"},
@@ -1298,6 +1307,7 @@ def _build_router(
         codex_sessions=sessions,
         github_repos=github_repos or GitHubReposStub(),
         autopilot_service=autopilot,
+        model_catalog_service=model_catalog,
     )
 
 
@@ -2072,6 +2082,20 @@ def test_model_command_reset_clears_chat_model() -> None:
 
     assert result.reply_text == "当前会话模型已恢复为默认配置。"
     assert tasks.codex_model is None
+
+
+def test_model_show_uses_runtime_model_catalog() -> None:
+    tasks = TasksStub()
+    router = _build_router(
+        tasks,
+        AuditStub(),
+        CodexStub(_codex_result("unused", ok=True)),
+        model_catalog=ModelCatalogStub(["gpt-5.4", "gpt-5.1-codex-mini"]),
+    )
+
+    result = router.handle(_ctx("/model"))
+
+    assert "快捷可选: gpt-5.4, gpt-5.1-codex-mini" in result.reply_text
 
 
 def test_do_uses_selected_chat_model() -> None:

@@ -11,6 +11,7 @@ from src.codex_session_service import CodexSessionService
 from src.config import AppConfig, load_config
 from src.db import Database
 from src.github_repo_service import GitHubRepoService
+from src.model_catalog import ModelCatalogService
 from src.project_registry import ProjectRegistry
 from src.process_lock import ProcessLock, acquire_process_lock
 from src.repo_inspector import RepoInspector
@@ -38,6 +39,10 @@ class Application:
         self.audit = AuditLogger(self.db)
         self.approvals = ApprovalService()
         self.codex = CodexRunner(config)
+        self.model_catalog = ModelCatalogService(
+            codex_home=config.codex_home,
+            fallback_models=config.codex_model_choices,
+        )
         self.codex_sessions = CodexSessionService(db=self.db, codex_home=config.codex_home)
         self.skills = SkillsService(
             codex_bin=config.codex_bin,
@@ -71,6 +76,7 @@ class Application:
             codex_sessions=self.codex_sessions,
             github_repos=self.github_repos,
             autopilot_service=self.autopilot,
+            model_catalog_service=self.model_catalog,
         )
         self.scheduler = ScheduledTaskService(
             tasks=self.tasks,

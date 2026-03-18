@@ -1574,6 +1574,7 @@ def test_send_model_panel_contains_model_buttons(monkeypatch) -> None:
     )
     router = WizardRouterStub()
     router.tasks.codex_model = "o3"
+    router.list_available_models = lambda: ["gpt-5.4", "o3", "gpt-5.1-codex-mini"]  # type: ignore[attr-defined]
     service = TelegramBotService(config=config, router=router)
     captured = {}
 

@@ -2038,9 +2038,14 @@ class TelegramBotService:
 
     async def _send_model_panel(self, message, ctx: CommandContext) -> None:  # noqa: ANN001
         current_model = self.router.tasks.get_chat_codex_model(chat_id=ctx.telegram_chat_id)
+        model_choices_getter = getattr(self.router, "list_available_models", None)
+        if callable(model_choices_getter):
+            model_choices = model_choices_getter()
+        else:
+            model_choices = list(getattr(self.config, "codex_model_choices", ()) or ())
         spec = self.views.model_panel(
             current_model=current_model,
-            model_choices=list(getattr(self.config, "codex_model_choices", ()) or ()),
+            model_choices=model_choices,
         )
         await self._send_view_spec(
             message,
