@@ -1,1 +1,5 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Maintenance Mode Notice
+    url: https://github.com/Re13orn/openfish/blob/main/docs/PAUSE_AND_RESTART_CHECKLIST.md
+    about: OpenFish is paused for new feature development. Check scope and restart notes first.

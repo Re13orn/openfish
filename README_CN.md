@@ -24,6 +24,19 @@
 OpenFish 面向一个可信 Owner，让你离开工位时也能继续通过 Telegram 控制本地 Codex 工作流。
 代码、执行、审批、运行状态、审计日志都保留在你的机器上。
 
+## 维护模式（暂停迭代）
+
+从 2026-03-19 起，OpenFish 进入维护模式，主线开发将转向新方向。
+
+- 当前仓库暂不规划新功能发布
+- 仍可能接收安全修复或阻断性问题修复
+- issue / PR 依然欢迎，但响应节奏可能较慢
+
+开始新工作前建议先看：
+
+- [暂停与重启清单](docs/PAUSE_AND_RESTART_CHECKLIST.md)
+- [下一阶段方向说明](docs/NEXT_DIRECTION.md)
+
 ## v1.3.0 这次重点
 
 - Telegram 默认入口改成自然语言优先：普通文本会先路由到 ask、do、autopilot、note、schedule、digest、项目切换、GitHub 仓库导入等路径

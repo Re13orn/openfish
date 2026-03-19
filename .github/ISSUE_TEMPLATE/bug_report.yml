@@ -6,6 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
+        OpenFish is currently in maintenance mode (paused for new feature development).
+        Critical breakage and security-impact bugs are prioritized.
+
         Thanks for reporting a bug. Please include enough detail to reproduce it.
 
   - type: textarea

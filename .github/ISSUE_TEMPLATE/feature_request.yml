@@ -6,6 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
+        OpenFish is in maintenance mode.
+        Most feature requests will be tracked for future direction rather than immediate implementation.
+
         Please keep proposals aligned with OpenFish principles: single-user, local-first, conservative by default.
 
   - type: textarea
