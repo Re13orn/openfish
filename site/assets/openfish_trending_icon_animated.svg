@@ -1,0 +1,70 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#07121a"/>
+      <stop offset="100%" stop-color="#0b1018"/>
+    </linearGradient>
+    <linearGradient id="neon" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#77ffd9"/>
+      <stop offset="50%" stop-color="#45d7ff"/>
+      <stop offset="100%" stop-color="#7b9bff"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <clipPath id="clip">
+      <circle cx="256" cy="256" r="220"/>
+    </clipPath>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="206" fill="none" stroke="#183345" stroke-width="2"/>
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#123142" stroke-width="1.5" opacity="0.7"/>
+
+  <g clip-path="url(#clip)" opacity="0.18">
+    <rect x="48" y="120" width="420" height="10" fill="#7ef0ff">
+      <animate attributeName="y" values="120;338;120" dur="6.2s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+
+  <path d="M132 206 L98 256 L132 306" stroke="#56d6ff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+  <path d="M380 206 L414 256 L380 306" stroke="#86f2b8" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+
+  <g filter="url(#glow)">
+    <path d="M178 256
+             C208 180, 323 172, 378 228
+             C392 242, 400 248, 410 256
+             C400 264, 392 270, 378 284
+             C323 340, 208 332, 178 256Z"
+          fill="url(#neon)">
+      <animateTransform attributeName="transform" type="translate" values="0 0; 6 -2; 0 0; -5 2; 0 0" dur="5s" repeatCount="indefinite"/>
+    </path>
+
+    <path d="M156 256 L108 222 L124 256 L108 290 Z"
+          fill="#08121a" stroke="url(#neon)" stroke-width="8" stroke-linejoin="round">
+      <animateTransform attributeName="transform" type="rotate" values="0 156 256; -8 156 256; 0 156 256; 8 156 256; 0 156 256" dur="1.7s" repeatCount="indefinite"/>
+    </path>
+
+    <path d="M214 236 H315" stroke="#edfffd" stroke-width="10" stroke-linecap="round"/>
+    <path d="M204 256 H326" stroke="#edfffd" stroke-width="10" stroke-linecap="round"/>
+    <path d="M214 276 H298" stroke="#edfffd" stroke-width="10" stroke-linecap="round"/>
+
+    <circle cx="348" cy="256" r="9" fill="#08131a"/>
+    <circle cx="351" cy="252.5" r="2.5" fill="#edfffd">
+      <animate attributeName="opacity" values="1;1;0.15;1;1" dur="4s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <g fill="#7ef0ff" filter="url(#glow)">
+    <circle cx="256" cy="82" r="5"><animate attributeName="r" values="5;8;5" dur="2.4s" repeatCount="indefinite"/></circle>
+    <circle cx="390" cy="152" r="5"><animate attributeName="r" values="5;7;5" dur="3.2s" repeatCount="indefinite"/></circle>
+    <circle cx="390" cy="360" r="5"><animate attributeName="r" values="5;7;5" dur="2.8s" repeatCount="indefinite"/></circle>
+    <circle cx="256" cy="430" r="5"><animate attributeName="r" values="5;8;5" dur="2.9s" repeatCount="indefinite"/></circle>
+    <circle cx="122" cy="360" r="5"><animate attributeName="r" values="5;7;5" dur="3.1s" repeatCount="indefinite"/></circle>
+    <circle cx="122" cy="152" r="5"><animate attributeName="r" values="5;7;5" dur="2.7s" repeatCount="indefinite"/></circle>
+  </g>
+</svg>
