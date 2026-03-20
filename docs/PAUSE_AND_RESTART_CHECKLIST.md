@@ -10,7 +10,7 @@ Last updated: 2026-03-19
 
 ## 2. Communicate Repository Status
 
-- keep `README.md` and `README_CN.md` maintenance-mode notice at top section
+- keep `README.md` and `README_CN.md` status messaging aligned with the current project direction
 - keep issue/PR templates aligned with pause state
 - clarify support scope: critical and security fixes only (if applicable)
 

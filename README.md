@@ -24,19 +24,6 @@
 OpenFish lets one trusted owner control local Codex work from Telegram.
 Code, execution, approvals, runtime state, and audit logs stay on your machine.
 
-## Maintenance Mode (Paused)
-
-As of March 19, 2026, OpenFish is in maintenance mode while development moves to a new direction.
-
-- no planned feature releases on this repository for now
-- security or critical-breakage fixes may still be accepted
-- PRs and issues are still welcome, but response time can be slow
-
-Before opening new work, read:
-
-- [Pause and Restart Checklist](docs/PAUSE_AND_RESTART_CHECKLIST.md)
-- [Next Direction Notes](docs/NEXT_DIRECTION.md)
-
 ## What's New in v1.3.0
 
 - natural-language-first Telegram entry: plain text now routes to ask, do, autopilot, note, schedule, digest, project switch, GitHub clone/import, or a clarification step

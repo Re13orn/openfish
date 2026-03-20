@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenFish - Telegram-Driven Local Codex Assistant</title>
+    <meta name="description" content="Single-user, Telegram-driven, local-first Codex assistant. Control local Codex work from Telegram.">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700;800&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Manrope', 'Noto Sans SC', 'sans-serif'],
+                        mono: ['IBM Plex Mono', 'monospace'],
+                    },
+                    colors: {
+                        tgblue: '#2AABEE',
+                        tgdark: '#229ED9',
+                        darkbg: '#07111f',
+                        cardbg: '#102033',
+                        ink: '#d8e3ef',
+                        accent: '#f59e0b',
+                    },
+                    boxShadow: {
+                        glow: '0 20px 60px rgba(42, 171, 238, 0.18)',
+                    },
+                    animation: {
+                        float: 'float 4s ease-in-out infinite',
+                        pulseSoft: 'pulseSoft 3.2s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-12px)' },
+                        },
+                        pulseSoft: {
+                            '0%, 100%': { opacity: '0.65' },
+                            '50%': { opacity: '1' },
+                        },
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+
+        body {
+            background:
+                radial-gradient(circle at top left, rgba(42, 171, 238, 0.16), transparent 28%),
+                radial-gradient(circle at 85% 10%, rgba(245, 158, 11, 0.12), transparent 24%),
+                linear-gradient(180deg, #07111f 0%, #081324 35%, #050c16 100%);
+        }
+
+        .gradient-text {
+            background: linear-gradient(110deg, #7dd3fc 0%, #2AABEE 45%, #fbbf24 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .glass {
+            background: rgba(8, 18, 33, 0.72);
+            backdrop-filter: blur(18px);
+        }
+
+        .lang-toggle.active {
+            background: #2AABEE;
+            color: white;
+            border-color: rgba(125, 211, 252, 0.55);
+            box-shadow: 0 8px 24px rgba(42, 171, 238, 0.25);
+        }
+    </style>
+</head>
+<body class="text-ink font-sans antialiased selection:bg-tgblue selection:text-white">
+    <nav class="sticky top-0 z-40 w-full border-b border-slate-800/80 glass">
+        <div class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+            <a href="#top" class="flex items-center gap-3">
+                <i class="fa-solid fa-fish-fins text-2xl text-tgblue"></i>
+                <span class="text-xl font-extrabold tracking-tight text-white">OpenFish</span>
+            </a>
+            <div class="flex items-center gap-2 md:gap-5">
+                <a href="#about" class="hidden text-sm font-medium text-slate-300 transition hover:text-white md:block" data-i18n="navAbout">About</a>
+                <a href="#features" class="hidden text-sm font-medium text-slate-300 transition hover:text-white md:block" data-i18n="navFeatures">Features</a>
+                <a href="#install" class="hidden text-sm font-medium text-slate-300 transition hover:text-white md:block" data-i18n="navInstall">Install</a>
+                <div class="flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/80 p-1">
+                    <button type="button" class="lang-toggle active rounded-full px-3 py-1 text-xs font-semibold text-slate-300 transition" data-lang-button="en">EN</button>
+                    <button type="button" class="lang-toggle rounded-full px-3 py-1 text-xs font-semibold text-slate-300 transition" data-lang-button="zh">中文</button>
+                </div>
+                <a href="https://github.com/Re13orn/openfish" target="_blank" rel="noreferrer" class="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/80 px-4 py-2 text-white transition hover:border-slate-500 hover:bg-slate-800">
+                    <i class="fa-brands fa-github"></i>
+                    <span class="text-sm font-semibold">GitHub</span>
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <main id="top">
+        <section class="px-4 pb-20 pt-20 sm:px-6 lg:px-8">
+            <div class="mx-auto max-w-6xl">
+                <div class="grid items-center gap-12 lg:grid-cols-[1.15fr_0.85fr]">
+                    <div>
+                        <div class="mb-5 inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-100">
+                            <span class="inline-block h-2 w-2 rounded-full bg-cyan-300 animate-pulseSoft"></span>
+                            <span data-i18n="heroEyebrow">Telegram-driven, local-first coding control</span>
+                        </div>
+                        <h1 class="max-w-3xl text-4xl font-extrabold leading-tight text-white sm:text-5xl lg:text-6xl" data-i18n-html="heroTitle">
+                            Single-user, local-first<br><span class="gradient-text">Codex assistant</span>
+                        </h1>
+                        <p class="mt-6 max-w-2xl text-lg leading-8 text-slate-300" data-i18n-html="heroBody">
+                            Control local Codex work from <strong class="text-tgblue"><i class="fa-brands fa-telegram"></i> Telegram</strong>. Code, execution, approvals, and audit logs stay on your machine.
+                        </p>
+                        <div class="mt-8 flex flex-wrap gap-2">
+                            <img src="https://img.shields.io/pypi/v/openfish" alt="PyPI" class="h-6">
+                            <img src="https://img.shields.io/badge/License-MIT-1f6feb" alt="License" class="h-6">
+                            <img src="https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white" alt="Python" class="h-6">
+                            <img src="https://img.shields.io/badge/Powered%20by-Codex%20CLI-d97706" alt="Powered by Codex" class="h-6">
+                        </div>
+                        <div class="mt-10 flex flex-col gap-4 sm:flex-row">
+                            <a href="#install" class="flex items-center justify-center gap-2 rounded-2xl bg-tgblue px-8 py-3.5 font-semibold text-white shadow-glow transition hover:bg-tgdark">
+                                <i class="fa-solid fa-terminal"></i>
+                                <span data-i18n="heroPrimaryCta">Get Started</span>
+                            </a>
+                            <a href="https://pypi.org/project/openfish/" target="_blank" rel="noreferrer" class="flex items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-900/70 px-8 py-3.5 font-semibold text-white transition hover:border-slate-500 hover:bg-slate-800">
+                                <i class="fa-brands fa-python"></i>
+                                <span data-i18n="heroSecondaryCta">View on PyPI</span>
+                            </a>
+                        </div>
+                    </div>
+
+                    <div class="relative">
+                        <div class="absolute -left-6 top-6 h-28 w-28 rounded-full bg-cyan-400/10 blur-3xl"></div>
+                        <div class="absolute -right-4 bottom-10 h-36 w-36 rounded-full bg-amber-400/10 blur-3xl"></div>
+                        <div class="relative overflow-hidden rounded-[2rem] border border-slate-700/80 bg-slate-950/70 p-6 shadow-glow">
+                            <div class="mb-5 flex items-center justify-between">
+                                <div class="flex items-center gap-3">
+                                    <div class="flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 animate-float">
+                                        <i class="fa-solid fa-fish-fins text-3xl text-tgblue"></i>
+                                    </div>
+                                    <div>
+                                        <div class="text-sm uppercase tracking-[0.28em] text-slate-500" data-i18n="consoleLabel">Live Console</div>
+                                        <div class="text-xl font-bold text-white" data-i18n="consoleTitle">Mobile control surface</div>
+                                    </div>
+                                </div>
+                                <span class="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300" data-i18n="consoleStatus">Owner only</span>
+                            </div>
+                            <div class="space-y-3 rounded-3xl border border-slate-800 bg-[#08101b] p-4 font-mono text-sm text-slate-200">
+                                <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
+                                    <div class="mb-1 text-xs uppercase tracking-[0.28em] text-slate-500">Telegram</div>
+                                    <div data-i18n="consolePrompt">"Every 30 minutes check service health."</div>
+                                </div>
+                                <div class="grid gap-3 sm:grid-cols-2">
+                                    <div class="rounded-2xl border border-cyan-400/15 bg-cyan-400/5 p-3">
+                                        <div class="text-xs uppercase tracking-[0.28em] text-cyan-200/70" data-i18n="consoleRouteLabel">Routing</div>
+                                        <div class="mt-1 text-cyan-100" data-i18n="consoleRouteValue">schedule wizard</div>
+                                    </div>
+                                    <div class="rounded-2xl border border-amber-300/15 bg-amber-300/5 p-3">
+                                        <div class="text-xs uppercase tracking-[0.28em] text-amber-200/70" data-i18n="consoleControlLabel">Controls</div>
+                                        <div class="mt-1 text-amber-100" data-i18n="consoleControlValue">approve, pause, takeover</div>
+                                    </div>
+                                </div>
+                                <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-3 text-slate-300" data-i18n-html="consoleFooter">
+                                    One home dashboard, project-aware context, and human-in-the-loop controls for long-running work.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="about" class="border-y border-slate-800/70 bg-slate-950/35 px-4 py-16 sm:px-6 lg:px-8">
+            <div class="mx-auto max-w-6xl">
+                <div class="mb-10 max-w-2xl">
+                    <h2 class="text-3xl font-bold text-white" data-i18n="aboutTitle">What OpenFish is for</h2>
+                    <p class="mt-3 text-slate-400" data-i18n="aboutBody">Built for one trusted owner who wants to keep execution local while still managing AI work from a phone.</p>
+                </div>
+                <div class="grid gap-8 md:grid-cols-2">
+                    <div class="rounded-[1.75rem] border border-slate-700 bg-cardbg p-8">
+                        <h3 class="mb-6 flex items-center gap-3 text-xl font-bold text-white">
+                            <i class="fa-solid fa-check-circle text-emerald-400"></i>
+                            <span data-i18n="fitTitle">OpenFish is designed for</span>
+                        </h3>
+                        <ul class="space-y-4 text-slate-200">
+                            <li class="flex items-start gap-3"><i class="fa-solid fa-user mt-1 text-slate-500"></i><span data-i18n="fit1">Single-user operation</span></li>
+                            <li class="flex items-start gap-3"><i class="fa-solid fa-folder-tree mt-1 text-slate-500"></i><span data-i18n="fit2">Project-scoped continuity</span></li>
+                            <li class="flex items-start gap-3"><i class="fa-solid fa-shield-halved mt-1 text-slate-500"></i><span data-i18n="fit3">Conservative local execution</span></li>
+                            <li class="flex items-start gap-3"><i class="fa-solid fa-mobile-screen mt-1 text-slate-500"></i><span data-i18n="fit4">Mobile-friendly Telegram control</span></li>
+                        </ul>
+                    </div>
+                    <div class="rounded-[1.75rem] border border-dashed border-slate-700 bg-slate-950/55 p-8">
+                        <h3 class="mb-6 flex items-center gap-3 text-xl font-bold text-slate-300">
+                            <i class="fa-solid fa-xmark-circle text-rose-400"></i>
+                            <span data-i18n="notTitle">OpenFish is not</span>
+                        </h3>
+                        <ul class="space-y-4 text-slate-400">
+                            <li class="flex items-start gap-3"><i class="fa-solid fa-users mt-1"></i><span data-i18n="not1">A multi-user bot platform</span></li>
+                            <li class="flex items-start gap-3"><i class="fa-solid fa-globe mt-1"></i><span data-i18n="not2">A public remote shell</span></li>
+                            <li class="flex items-start gap-3"><i class="fa-solid fa-cloud mt-1"></i><span data-i18n="not3">A cloud orchestration layer</span></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="features" class="px-4 py-20 sm:px-6 lg:px-8">
+            <div class="mx-auto max-w-7xl">
+                <div class="mb-14 text-center">
+                    <h2 class="text-3xl font-bold text-white" data-i18n="featuresTitle">Core capabilities</h2>
+                    <p class="mx-auto mt-3 max-w-2xl text-slate-400" data-i18n="featuresBody">A focused control layer for local Codex workflows instead of a generic remote shell.</p>
+                </div>
+                <div class="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+                    <article class="rounded-[1.5rem] border border-slate-800 bg-cardbg p-6 transition hover:border-cyan-400/40 hover:-translate-y-1">
+                        <i class="fa-brands fa-telegram mb-4 text-3xl text-tgblue"></i>
+                        <h3 class="mb-2 text-lg font-bold text-white" data-i18n="feature1Title">Natural-language Telegram entry</h3>
+                        <p class="text-sm leading-7 text-slate-400" data-i18n="feature1Body">Plain text routes to ask, do, autopilot, note, schedule, digest, or project switch without relying on strict slash commands.</p>
+                    </article>
+                    <article class="rounded-[1.5rem] border border-slate-800 bg-cardbg p-6 transition hover:border-cyan-400/40 hover:-translate-y-1">
+                        <i class="fa-solid fa-layer-group mb-4 text-3xl text-amber-300"></i>
+                        <h3 class="mb-2 text-lg font-bold text-white" data-i18n="feature2Title">Project and task lifecycle</h3>
+                        <p class="text-sm leading-7 text-slate-400" data-i18n="feature2Body">Create, switch, and manage project contexts quickly. Templates can bootstrap new work and trigger autopilot runs.</p>
+                    </article>
+                    <article class="rounded-[1.5rem] border border-slate-800 bg-cardbg p-6 transition hover:border-cyan-400/40 hover:-translate-y-1">
+                        <i class="fa-solid fa-lock mb-4 text-3xl text-emerald-400"></i>
+                        <h3 class="mb-2 text-lg font-bold text-white" data-i18n="feature3Title">Local-first privacy</h3>
+                        <p class="text-sm leading-7 text-slate-400" data-i18n="feature3Body">Code, logs, approvals, and runtime state stay on your machine so the owner keeps direct control of the environment.</p>
+                    </article>
+                    <article class="rounded-[1.5rem] border border-slate-800 bg-cardbg p-6 transition hover:border-cyan-400/40 hover:-translate-y-1">
+                        <i class="fa-solid fa-robot mb-4 text-3xl text-cyan-300"></i>
+                        <h3 class="mb-2 text-lg font-bold text-white" data-i18n="feature4Title">Autopilot mode</h3>
+                        <p class="text-sm leading-7 text-slate-400" data-i18n="feature4Body">Supervisor-worker execution with pause, resume, stop, raw-output review, and takeover actions from Telegram.</p>
+                    </article>
+                    <article class="rounded-[1.5rem] border border-slate-800 bg-cardbg p-6 transition hover:border-cyan-400/40 hover:-translate-y-1">
+                        <i class="fa-solid fa-clock mb-4 text-3xl text-pink-400"></i>
+                        <h3 class="mb-2 text-lg font-bold text-white" data-i18n="feature5Title">Scheduling and cron</h3>
+                        <p class="text-sm leading-7 text-slate-400" data-i18n="feature5Body">Turn chat instructions like "every 30 minutes check service health" into scheduled automation directly from Telegram.</p>
+                    </article>
+                    <article class="rounded-[1.5rem] border border-slate-800 bg-cardbg p-6 transition hover:border-cyan-400/40 hover:-translate-y-1">
+                        <i class="fa-brands fa-docker mb-4 text-3xl text-blue-400"></i>
+                        <h3 class="mb-2 text-lg font-bold text-white" data-i18n="feature6Title">Docker isolated runtime</h3>
+                        <p class="text-sm leading-7 text-slate-400" data-i18n="feature6Body">Use `openfish docker-init` to provision an isolated runtime for AI execution when you want tighter environment boundaries.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section class="bg-gradient-to-b from-transparent to-slate-950/55 px-4 py-16 sm:px-6 lg:px-8">
+            <div class="mx-auto max-w-5xl">
+                <div class="rounded-[2rem] border border-slate-800 bg-slate-950/65 p-8 shadow-glow md:p-10">
+                    <div class="mb-8 max-w-2xl">
+                        <h2 class="text-3xl font-bold text-white" data-i18n="autopilotTitle">How autopilot works</h2>
+                        <p class="mt-3 text-slate-400" data-i18n="autopilotBody">OpenFish uses a supervisor-worker loop with explicit human controls, instead of hiding long-running execution behind a black box.</p>
+                    </div>
+                    <div class="flex flex-col items-center gap-4">
+                        <div class="rounded-full border border-cyan-400/40 bg-cyan-400/10 px-6 py-2 font-semibold text-cyan-100" data-i18n-html="autopilotHuman">
+                            <i class="fa-solid fa-user mr-2"></i>Human (Telegram)
+                        </div>
+                        <div class="h-8 w-px bg-slate-700"></div>
+                        <div class="grid w-full gap-4 md:grid-cols-[1fr_auto_1fr] md:items-center">
+                            <div class="rounded-[1.5rem] border border-amber-400/25 bg-amber-400/10 px-6 py-5 text-center text-amber-100">
+                                <i class="fa-solid fa-eye mb-3 text-2xl"></i>
+                                <div class="text-lg font-bold" data-i18n="autopilotSupervisorTitle">Supervisor</div>
+                                <div class="mt-1 text-sm text-amber-100/80" data-i18n="autopilotSupervisorBody">Evaluates status and issues the next instruction.</div>
+                            </div>
+                            <div class="text-center text-sm uppercase tracking-[0.28em] text-slate-500" data-i18n="autopilotLoop">Loop</div>
+                            <div class="rounded-[1.5rem] border border-emerald-400/25 bg-emerald-400/10 px-6 py-5 text-center text-emerald-100">
+                                <i class="fa-solid fa-hammer mb-3 text-2xl"></i>
+                                <div class="text-lg font-bold" data-i18n="autopilotWorkerTitle">Worker</div>
+                                <div class="mt-1 text-sm text-emerald-100/80" data-i18n="autopilotWorkerBody">Executes tasks, returns output, and waits for the next step.</div>
+                            </div>
+                        </div>
+                        <div class="h-8 w-px bg-slate-700"></div>
+                        <div class="rounded-full border border-slate-700 bg-slate-900/80 px-6 py-3 text-sm text-slate-300" data-i18n-html="autopilotControls">
+                            Human controls: <code class="text-pink-400">/pause</code>, <code class="text-pink-400">/resume</code>, <code class="text-pink-400">/stop</code>, <code class="text-pink-400">/takeover</code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="install" class="px-4 py-24 sm:px-6 lg:px-8">
+            <div class="mx-auto max-w-4xl">
+                <div class="mb-10 text-center">
+                    <h2 class="text-3xl font-bold text-white" data-i18n="installTitle">Install and bootstrap</h2>
+                    <p class="mt-3 text-slate-400" data-i18n="installBody">Requires Python 3.12+. From install to first Telegram control panel in about a minute.</p>
+                </div>
+                <div class="overflow-hidden rounded-[1.75rem] border border-slate-800 bg-[#0d1117] shadow-2xl">
+                    <div class="flex items-center border-b border-slate-800 bg-[#161b22] px-4 py-3">
+                        <div class="flex gap-2">
+                            <div class="h-3 w-3 rounded-full bg-red-500/80"></div>
+                            <div class="h-3 w-3 rounded-full bg-yellow-500/80"></div>
+                            <div class="h-3 w-3 rounded-full bg-green-500/80"></div>
+                        </div>
+                        <div class="ml-4 text-xs font-mono text-slate-500">bash</div>
+                    </div>
+                    <div class="p-6 font-mono text-sm leading-8 text-slate-200">
+                        <div class="text-slate-500" data-i18n="installStep1"># 1. Install from PyPI</div>
+                        <div><span class="text-green-400">pip</span> install openfish</div>
+                        <br>
+                        <div class="text-slate-500" data-i18n="installStep2"># 2. Bootstrap and start</div>
+                        <div><span class="text-tgblue">openfish</span> install</div>
+                        <div><span class="text-tgblue">openfish</span> configure</div>
+                        <div><span class="text-tgblue">openfish</span> check</div>
+                        <div><span class="text-tgblue">openfish</span> start</div>
+                        <br>
+                        <div class="flex items-center gap-2 text-slate-400 animate-pulseSoft">
+                            <span>&gt;</span>
+                            <span data-i18n="installReady">System ready. Open Telegram and send /home.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="border-t border-slate-800/80 bg-[#040914] py-12 text-sm text-slate-500">
+        <div class="mx-auto grid max-w-7xl grid-cols-1 gap-8 px-4 text-center md:grid-cols-3 md:text-left">
+            <div>
+                <div class="mb-4 flex items-center justify-center gap-2 md:justify-start">
+                    <i class="fa-solid fa-fish-fins text-lg text-slate-600"></i>
+                    <span class="text-base font-bold text-slate-300">OpenFish</span>
+                </div>
+                <p data-i18n="footerTagline">Single-user, Telegram-driven, local-first Codex assistant.</p>
+            </div>
+            <div>
+                <h4 class="mb-4 font-semibold text-slate-300" data-i18n="footerResources">Resources</h4>
+                <ul class="space-y-2">
+                    <li><a href="https://github.com/Re13orn/openfish/blob/main/README.md" class="transition hover:text-tgblue" data-i18n="footerReadme">README</a></li>
+                    <li><a href="https://github.com/Re13orn/openfish/blob/main/README_CN.md" class="transition hover:text-tgblue" data-i18n="footerReadmeCn">Chinese README</a></li>
+                    <li><a href="https://github.com/Re13orn/openfish/blob/main/docs/%E5%AE%89%E8%A3%85%E9%83%A8%E7%BD%B2%E5%92%8C%E4%BD%BF%E7%94%A8%E6%89%8B%E5%86%8C.md" class="transition hover:text-tgblue" data-i18n="footerManual">Deployment manual</a></li>
+                    <li><a href="https://github.com/Re13orn/openfish/blob/main/docs/AUTOPILOT_WORKFLOW.md" class="transition hover:text-tgblue" data-i18n="footerWorkflow">Autopilot workflow</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4 class="mb-4 font-semibold text-slate-300" data-i18n="footerProject">Project</h4>
+                <ul class="space-y-2">
+                    <li><a href="https://github.com/Re13orn/openfish" class="transition hover:text-tgblue" data-i18n="footerGithub">GitHub repository</a></li>
+                    <li><a href="https://pypi.org/project/openfish/" class="transition hover:text-tgblue" data-i18n="footerPypi">PyPI package</a></li>
+                    <li><a href="https://github.com/Re13orn/openfish/blob/main/LICENSE" class="transition hover:text-tgblue" data-i18n="footerLicense">MIT license</a></li>
+                    <li><a href="https://github.com/Re13orn/openfish/blob/main/CHANGELOG.md" class="transition hover:text-tgblue" data-i18n="footerChangelog">Changelog</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="mx-auto mt-12 max-w-7xl border-t border-slate-800/50 px-4 pt-8 text-center">
+            <p data-i18n="footerCopyright">&copy; Re13orn. Open source under the MIT License.</p>
+        </div>
+    </footer>
+
+    <script>
+        const translations = {
+            en: {
+                pageTitle: 'OpenFish - Telegram-Driven Local Codex Assistant',
+                pageDescription: 'Single-user, Telegram-driven, local-first Codex assistant. Control local Codex work from Telegram.',
+                navAbout: 'About',
+                navFeatures: 'Features',
+                navInstall: 'Install',
+                heroEyebrow: 'Telegram-driven, local-first coding control',
+                heroTitle: 'Single-user, local-first<br><span class="gradient-text">Codex assistant</span>',
+                heroBody: 'Control local Codex work from <strong class="text-tgblue"><i class="fa-brands fa-telegram"></i> Telegram</strong>. Code, execution, approvals, and audit logs stay on your machine.',
+                heroPrimaryCta: 'Get Started',
+                heroSecondaryCta: 'View on PyPI',
+                consoleLabel: 'Live Console',
+                consoleTitle: 'Mobile control surface',
+                consoleStatus: 'Owner only',
+                consolePrompt: '"Every 30 minutes check service health."',
+                consoleRouteLabel: 'Routing',
+                consoleRouteValue: 'schedule wizard',
+                consoleControlLabel: 'Controls',
+                consoleControlValue: 'approve, pause, takeover',
+                consoleFooter: 'One home dashboard, project-aware context, and human-in-the-loop controls for long-running work.',
+                aboutTitle: 'What OpenFish is for',
+                aboutBody: 'Built for one trusted owner who wants to keep execution local while still managing AI work from a phone.',
+                fitTitle: 'OpenFish is designed for',
+                fit1: 'Single-user operation',
+                fit2: 'Project-scoped continuity',
+                fit3: 'Conservative local execution',
+                fit4: 'Mobile-friendly Telegram control',
+                notTitle: 'OpenFish is not',
+                not1: 'A multi-user bot platform',
+                not2: 'A public remote shell',
+                not3: 'A cloud orchestration layer',
+                featuresTitle: 'Core capabilities',
+                featuresBody: 'A focused control layer for local Codex workflows instead of a generic remote shell.',
+                feature1Title: 'Natural-language Telegram entry',
+                feature1Body: 'Plain text routes to ask, do, autopilot, note, schedule, digest, or project switch without relying on strict slash commands.',
+                feature2Title: 'Project and task lifecycle',
+                feature2Body: 'Create, switch, and manage project contexts quickly. Templates can bootstrap new work and trigger autopilot runs.',
+                feature3Title: 'Local-first privacy',
+                feature3Body: 'Code, logs, approvals, and runtime state stay on your machine so the owner keeps direct control of the environment.',
+                feature4Title: 'Autopilot mode',
+                feature4Body: 'Supervisor-worker execution with pause, resume, stop, raw-output review, and takeover actions from Telegram.',
+                feature5Title: 'Scheduling and cron',
+                feature5Body: 'Turn chat instructions like "every 30 minutes check service health" into scheduled automation directly from Telegram.',
+                feature6Title: 'Docker isolated runtime',
+                feature6Body: 'Use `openfish docker-init` to provision an isolated runtime for AI execution when you want tighter environment boundaries.',
+                autopilotTitle: 'How autopilot works',
+                autopilotBody: 'OpenFish uses a supervisor-worker loop with explicit human controls, instead of hiding long-running execution behind a black box.',
+                autopilotHuman: '<i class="fa-solid fa-user mr-2"></i>Human (Telegram)',
+                autopilotSupervisorTitle: 'Supervisor',
+                autopilotSupervisorBody: 'Evaluates status and issues the next instruction.',
+                autopilotLoop: 'Loop',
+                autopilotWorkerTitle: 'Worker',
+                autopilotWorkerBody: 'Executes tasks, returns output, and waits for the next step.',
+                autopilotControls: 'Human controls: <code class="text-pink-400">/pause</code>, <code class="text-pink-400">/resume</code>, <code class="text-pink-400">/stop</code>, <code class="text-pink-400">/takeover</code>',
+                installTitle: 'Install and bootstrap',
+                installBody: 'Requires Python 3.12+. From install to first Telegram control panel in about a minute.',
+                installStep1: '# 1. Install from PyPI',
+                installStep2: '# 2. Bootstrap and start',
+                installReady: 'System ready. Open Telegram and send /home.',
+                footerTagline: 'Single-user, Telegram-driven, local-first Codex assistant.',
+                footerResources: 'Resources',
+                footerReadme: 'README',
+                footerReadmeCn: 'Chinese README',
+                footerManual: 'Deployment manual',
+                footerWorkflow: 'Autopilot workflow',
+                footerProject: 'Project',
+                footerGithub: 'GitHub repository',
+                footerPypi: 'PyPI package',
+                footerLicense: 'MIT license',
+                footerChangelog: 'Changelog',
+                footerCopyright: '&copy; Re13orn. Open source under the MIT License.',
+            },
+            zh: {
+                pageTitle: 'OpenFish - Telegram 驱动的本地 Codex 助手',
+                pageDescription: '单用户、Telegram 驱动、本机优先的 Codex 助手。通过 Telegram 控制本地 Codex 工作流。',
+                navAbout: '介绍',
+                navFeatures: '能力',
+                navInstall: '安装',
+                heroEyebrow: 'Telegram 驱动，本机优先的编码控制台',
+                heroTitle: '单用户、本机优先的<br><span class="gradient-text">Codex 助手</span>',
+                heroBody: '通过 <strong class="text-tgblue"><i class="fa-brands fa-telegram"></i> Telegram</strong> 控制本地 Codex 工作。代码、执行、审批和审计日志都保留在你的机器上。',
+                heroPrimaryCta: '快速开始',
+                heroSecondaryCta: '查看 PyPI',
+                consoleLabel: '实时控制台',
+                consoleTitle: '手机上的控制面',
+                consoleStatus: '仅限 Owner',
+                consolePrompt: '“每 30 分钟检查一次服务健康状态。”',
+                consoleRouteLabel: '路由',
+                consoleRouteValue: '定时任务向导',
+                consoleControlLabel: '控制',
+                consoleControlValue: '审批、暂停、接管',
+                consoleFooter: '一个首页仪表盘，项目感知上下文，加上人类在环的长任务控制。',
+                aboutTitle: 'OpenFish 适合什么场景',
+                aboutBody: '它面向一个可信 Owner：希望执行仍然留在本地，同时能用手机持续管理 AI 工作流。',
+                fitTitle: 'OpenFish 适合',
+                fit1: '单用户使用',
+                fit2: '以项目为边界的连续工作',
+                fit3: '默认保守的本地执行',
+                fit4: '适合手机操作的 Telegram 控制',
+                notTitle: 'OpenFish 不做',
+                not1: '多用户 Bot 平台',
+                not2: '公网远程 Shell',
+                not3: '云端编排层',
+                featuresTitle: '核心能力',
+                featuresBody: '它是面向本地 Codex 工作流的控制层，不是一个泛化远程终端。',
+                feature1Title: '自然语言 Telegram 入口',
+                feature1Body: '普通文本就能路由到 ask、do、autopilot、note、schedule、digest 或项目切换，不依赖严格的斜杠命令。',
+                feature2Title: '项目与任务生命周期',
+                feature2Body: '快速创建、切换、管理项目上下文。模板可以直接启动新项目，也能顺手发起 autopilot。',
+                feature3Title: '本机优先隐私',
+                feature3Body: '代码、日志、审批和运行时状态都留在你的机器上，环境控制权始终在 Owner 手里。',
+                feature4Title: 'Autopilot 模式',
+                feature4Body: 'Supervisor-Worker 执行闭环，支持在 Telegram 中暂停、恢复、停止、查看原始输出和接管。',
+                feature5Title: '定时任务与 Cron',
+                feature5Body: '把“每 30 分钟检查服务状态”这样的聊天指令直接变成自动化任务。',
+                feature6Title: 'Docker 隔离运行时',
+                feature6Body: '需要更强边界时，可以用 `openfish docker-init` 初始化独立运行环境给 AI 执行。',
+                autopilotTitle: 'Autopilot 怎么工作',
+                autopilotBody: 'OpenFish 采用带显式人工控制的 Supervisor-Worker 循环，而不是把长任务藏在黑盒里。',
+                autopilotHuman: '<i class="fa-solid fa-user mr-2"></i>人类（Telegram）',
+                autopilotSupervisorTitle: '监督者',
+                autopilotSupervisorBody: '判断当前状态，并给出下一步指令。',
+                autopilotLoop: '循环',
+                autopilotWorkerTitle: '执行者',
+                autopilotWorkerBody: '执行任务、返回结果，并等待下一步。',
+                autopilotControls: '人工控制：<code class="text-pink-400">/pause</code>、<code class="text-pink-400">/resume</code>、<code class="text-pink-400">/stop</code>、<code class="text-pink-400">/takeover</code>',
+                installTitle: '安装与启动',
+                installBody: '要求 Python 3.12+。从安装到在 Telegram 里看到第一块控制面板，大约一分钟。',
+                installStep1: '# 1. 通过 PyPI 安装',
+                installStep2: '# 2. 初始化并启动',
+                installReady: '系统已就绪。打开 Telegram 并发送 /home。',
+                footerTagline: '单用户、Telegram 驱动、本机优先的 Codex 助手。',
+                footerResources: '资源',
+                footerReadme: '英文 README',
+                footerReadmeCn: '中文 README',
+                footerManual: '部署手册',
+                footerWorkflow: 'Autopilot 工作流',
+                footerProject: '项目',
+                footerGithub: 'GitHub 仓库',
+                footerPypi: 'PyPI 包',
+                footerLicense: 'MIT 协议',
+                footerChangelog: '更新日志',
+                footerCopyright: '&copy; Re13orn。基于 MIT License 开源。',
+            },
+        };
+
+        function applyLanguage(lang) {
+            const locale = translations[lang] ? lang : 'en';
+            const dict = translations[locale];
+
+            document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
+            document.title = dict.pageTitle;
+
+            const description = document.querySelector('meta[name="description"]');
+            if (description) {
+                description.setAttribute('content', dict.pageDescription);
+            }
+
+            document.querySelectorAll('[data-i18n]').forEach((node) => {
+                const key = node.dataset.i18n;
+                if (dict[key]) {
+                    node.textContent = dict[key];
+                }
+            });
+
+            document.querySelectorAll('[data-i18n-html]').forEach((node) => {
+                const key = node.dataset.i18nHtml;
+                if (dict[key]) {
+                    node.innerHTML = dict[key];
+                }
+            });
+
+            document.querySelectorAll('[data-lang-button]').forEach((button) => {
+                button.classList.toggle('active', button.dataset.langButton === locale);
+            });
+
+            localStorage.setItem('openfish-docs-lang', locale);
+        }
+
+        const savedLang = localStorage.getItem('openfish-docs-lang');
+        const browserLang = navigator.language && navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+        const initialLang = savedLang || browserLang;
+        applyLanguage(initialLang);
+
+        document.querySelectorAll('[data-lang-button]').forEach((button) => {
+            button.addEventListener('click', () => applyLanguage(button.dataset.langButton));
+        });
+    </script>
+</body>
+</html>
