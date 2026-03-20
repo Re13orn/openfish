@@ -7,6 +7,7 @@
 
 <p align="center">
   <a href="README_CN.md">中文版</a> |
+  <a href="https://re13orn.github.io/openfish/">Website</a> |
   <a href="https://pypi.org/project/openfish/">PyPI</a> |
   <a href="LICENSE">MIT License</a> |
   <a href="CONTRIBUTING.md">Contributing</a> |
